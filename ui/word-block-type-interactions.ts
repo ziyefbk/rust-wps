@@ -1,3 +1,5 @@
+import {withEmptyParagraphFontRendering} from './word-empty-paragraph-font';
+import {omitDefaultEmptyParagraphFont, validateEmptyParagraphFontDocument} from './word-empty-paragraph-font-model';
 import {InputRule, Node as TiptapNode, type Editor} from '@tiptap/core';
 import {closeHistory} from '@tiptap/pm/history';
 import {EditorState, Plugin, PluginKey, TextSelection, type Transaction} from '@tiptap/pm/state';
@@ -72,6 +74,7 @@ function inputHistoryPlugin(): Plugin<InputHistory> {
 // Replace only the two nodes' user interactions. Schema, HTML and upstream
 // programmatic commands remain unchanged; no duplicate node or keymap fallback.
 export function withWordBlockTypeInteractions(node: TiptapNode, options: WordBlockTypeInteractionOptions = {}): TiptapNode {
+  node = withEmptyParagraphFontRendering(node);
   if (node.name === 'paragraph') return node.extend({
     addKeyboardShortcuts() {return {'Mod-Alt-0': () => shortcut(this.editor, options, 0)};},
   });
@@ -86,6 +89,7 @@ export function withWordBlockTypeInteractions(node: TiptapNode, options: WordBlo
         handler: ({state, range, match}) => {
           if (unavailable(this.editor, options)) return null;
           try {
+            validateEmptyParagraphFontDocument(omitDefaultEmptyParagraphFont(state.doc.toJSON()));
             const $from = state.doc.resolve(range.from), $to = state.doc.resolve(range.to);
             if (!$from.sameParent($to) || range.from !== $from.start()
               || !['paragraph', 'heading'].includes($from.parent.type.name)

@@ -455,6 +455,7 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
 }
 
 pub(crate) struct DocxGeometryAudit {
+    pub empty_fonts: crate::empty_paragraph_fonts::Audit,
     pub compatibility: CompatibilityReport,
     pub tables: Vec<crate::table_widths::TableGeometry>,
     pub vertical_tables: crate::table_vertical::VerticalAudit,
@@ -960,7 +961,14 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             Vec::new()
         }
     };
+    let empty_fonts = if parts_have_content_types(bytes)? {
+        crate::empty_paragraph_fonts::analyze(bytes)
+    } else {
+        crate::empty_paragraph_fonts::Audit::default()
+    };
+    report.risks.extend(empty_fonts.warnings.iter().cloned());
     Ok(DocxGeometryAudit {
+        empty_fonts,
         compatibility: report,
         tables: table_widths,
         vertical_tables,
@@ -969,4 +977,11 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         paragraph_indents,
         contextual_spacing,
     })
+}
+
+fn parts_have_content_types(bytes: &[u8]) -> Result<bool> {
+    let archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+    Ok(archive
+        .file_names()
+        .any(|name| name.eq_ignore_ascii_case("[Content_Types].xml")))
 }

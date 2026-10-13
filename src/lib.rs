@@ -1,3 +1,4 @@
+mod empty_paragraph_fonts;
 mod image_dimensions;
 mod page_geometry;
 mod paragraph_contextual_spacing;

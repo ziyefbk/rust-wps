@@ -109,7 +109,7 @@ fn namespace(ns: ResolveResult<'_>) -> Ns {
         ResolveResult::Unknown(_) => Ns::Other,
     }
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Xml {
     ns: Ns,
     tag: String,
@@ -900,12 +900,12 @@ fn paragraph_layer(out: &mut ImageParagraph, props: &Xml) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum FontChoice {
     Literal(String),
     Theme(String),
 }
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct FontState {
     ascii: Option<FontChoice>,
     h_ansi: Option<FontChoice>,
@@ -1464,6 +1464,174 @@ fn analyze_inner(bytes: &[u8]) -> Result<Vec<ImageGeometry>> {
         package.crc_mismatched_parts().is_empty(),
         "Image package CRC mismatch"
     );
+    Ok(result)
+}
+
+/// Resolve only the Latin font of true-empty paragraph marks. Empty text runs
+/// are deliberately irrelevant. Unlike drawing lines, a direct pPr/rPr font
+/// overrides the style strut for an empty paragraph (independent LO probes).
+/// Reuse the bounded font parser, not the image-only paragraph semantics.
+pub(crate) fn resolve_empty_paragraph_fonts(
+    main: &[u8],
+    styles: &[u8],
+    theme: Option<&[u8]>,
+    body_indices: &[usize],
+) -> Result<Vec<Option<ImageParagraphFont>>> {
+    let document = xml(main)?;
+    ensure!(
+        document.is(Ns::W, "document"),
+        "Unsupported empty paragraph document"
+    );
+    document.audit_section_direction()?;
+    let body = document.one(Ns::W, "body")?;
+    let styles = xml(styles)?;
+    ensure!(
+        styles.is(Ns::W, "styles"),
+        "Unsupported empty paragraph styles"
+    );
+    let theme = theme.map(xml).transpose()?;
+    fn size(n: &Xml) -> usize {
+        1 + n.children.iter().map(size).sum::<usize>()
+    }
+    fn spend(work: &mut usize, amount: usize) -> Result<()> {
+        *work = work
+            .checked_add(amount)
+            .context("Empty font work overflow")?;
+        ensure!(
+            *work <= 5_000_000,
+            "Empty paragraph font audit exceeds work limits"
+        );
+        Ok(())
+    }
+    fn overlay(font: &mut FontState, props: &Xml, style: bool) -> Result<()> {
+        if let Some(lang) = props.optional(Ns::W, "lang")?
+            && let Some(value) = lang.attr(Ns::W, "val")?
+        {
+            ensure!(
+                matches!(
+                    value
+                        .split('-')
+                        .next()
+                        .unwrap_or("")
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "en" | "es" | "fr" | "de" | "it" | "pt" | "nl"
+                ),
+                "Empty paragraph primary language is outside the proved Latin subset"
+            );
+        }
+        // Ligatures cannot affect a paragraph containing no characters. Ignore
+        // only this known extension here, never unknown extension metrics.
+        let mut filtered = props.clone();
+        filtered
+            .children
+            .retain(|n| !(n.ns == Ns::W14 && n.tag == "ligatures"));
+        font.overlay(&filtered, style)
+    }
+    fn paragraph_metrics(props: &Xml, inherited: bool) -> Result<()> {
+        properties(props, true)?;
+        ensure!(
+            props.optional(Ns::W, "numPr")?.is_none(),
+            "Numbered empty paragraph fonts are not yet supported"
+        );
+        if inherited {
+            ensure!(
+                props.optional(Ns::W, "rPr")?.is_none(),
+                "Inherited paragraph-mark formatting is not yet supported"
+            );
+        }
+        if let Some(bidi) = props.optional(Ns::W, "bidi")? {
+            ensure!(
+                !on_off(bidi)?,
+                "Bidirectional empty paragraph metrics are unsupported"
+            );
+        }
+        if let Some(align) = props.optional(Ns::W, "textAlignment")? {
+            align.empty(&[(Ns::W, "val")])?;
+            ensure!(
+                matches!(align.attr(Ns::W, "val")?, Some("auto" | "baseline")),
+                "Unsupported empty paragraph baseline alignment"
+            );
+        }
+        Ok(())
+    }
+    ensure!(
+        styles.count("docDefaults")
+            == usize::from(styles.optional(Ns::W, "docDefaults")?.is_some()),
+        "Non-direct document defaults"
+    );
+    let mut defaults_font = FontState::default();
+    if let Some(defaults) = styles.optional(Ns::W, "docDefaults")? {
+        defaults.attributes(&[])?;
+        defaults.children(&[(Ns::W, "pPrDefault"), (Ns::W, "rPrDefault")])?;
+        for (name, tag) in [("pPrDefault", "pPr"), ("rPrDefault", "rPr")] {
+            if let Some(wrapper) = defaults.optional(Ns::W, name)? {
+                wrapper.attributes(&[])?;
+                wrapper.children(&[(Ns::W, tag)])?;
+                if let Some(props) = wrapper.optional(Ns::W, tag)? {
+                    ensure!(
+                        props
+                            .optional(Ns::W, if tag == "pPr" { "pStyle" } else { "rStyle" })?
+                            .is_none(),
+                        "Document defaults cannot reference a style"
+                    );
+                    if tag == "pPr" {
+                        paragraph_metrics(props, true)?;
+                    } else {
+                        overlay(&mut defaults_font, props, false)?;
+                    }
+                }
+            }
+        }
+    }
+    let mut result = Vec::new();
+    let mut bases = BTreeMap::<Option<String>, FontState>::new();
+    let mut resolved = BTreeMap::<FontState, Option<ImageParagraphFont>>::new();
+    let mut work = size(&styles);
+    let theme_work = theme.as_ref().map_or(0, size);
+    for &index in body_indices {
+        let paragraph = body
+            .children
+            .get(index)
+            .context("Empty paragraph identity mismatch")?;
+        ensure!(
+            paragraph.is(Ns::W, "p"),
+            "Empty font target is not a paragraph"
+        );
+        let direct = paragraph.optional(Ns::W, "pPr")?;
+        if let Some(props) = direct {
+            paragraph_metrics(props, false)?;
+        }
+        let style = style_id(direct, "pStyle")?;
+        if !bases.contains_key(&style) {
+            spend(&mut work, size(&styles))?;
+            let mut base = defaults_font.clone();
+            for layer in style_chain(&styles, style.as_deref(), "paragraph")? {
+                if let Some(props) = layer.optional(Ns::W, "rPr")? {
+                    overlay(&mut base, props, true)?;
+                }
+                if let Some(props) = layer.optional(Ns::W, "pPr")? {
+                    paragraph_metrics(props, true)?;
+                }
+            }
+            bases.insert(style.clone(), base);
+        }
+        let mut font = bases[&style].clone();
+        if let Some(props) = direct
+            && let Some(mark) = props.optional(Ns::W, "rPr")?
+        {
+            ensure!(
+                mark.optional(Ns::W, "rStyle")?.is_none(),
+                "Character-style paragraph-mark fonts are not yet supported"
+            );
+            overlay(&mut font, mark, false)?;
+        }
+        if !resolved.contains_key(&font) {
+            spend(&mut work, 1 + theme_work * 2)?;
+            resolved.insert(font.clone(), font.resolved(theme.as_ref())?);
+        }
+        result.push(resolved[&font].clone());
+    }
     Ok(result)
 }
 
@@ -2417,5 +2585,44 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    fn empty_fonts_cache_one_active_style_for_thousands_of_blank_paragraphs() {
+        let unused = (0..2000)
+            .map(|i| format!("<w:style w:type=\"paragraph\" w:styleId=\"Unused{i}\"/>"))
+            .collect::<String>();
+        let styles = format!(
+            r#"<w:styles xmlns:w="{W}"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:rPr><w:rFonts w:ascii="DejaVu Sans" w:hAnsi="DejaVu Sans"/><w:sz w:val="24"/></w:rPr></w:style>{unused}</w:styles>"#
+        );
+        let main = document(&"<w:p/>".repeat(5000));
+        let fonts = resolve_empty_paragraph_fonts(
+            main.as_bytes(),
+            styles.as_bytes(),
+            None,
+            &(0..5000).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert_eq!(fonts.len(), 5000);
+        assert!(fonts.iter().all(|font| {
+            font.as_ref()
+                .is_some_and(|font| font.family == "DejaVu Sans" && font.half_points == 24)
+        }));
+    }
+    #[test]
+    fn empty_fonts_bound_distinct_style_resolution_work_without_partial_results() {
+        let count = 1500;
+        let styles = (0..count).map(|i| format!("<w:style w:type=\"paragraph\" w:styleId=\"S{i}\"><w:rPr><w:rFonts w:ascii=\"DejaVu Sans\" w:hAnsi=\"DejaVu Sans\"/><w:sz w:val=\"24\"/></w:rPr></w:style>")).collect::<String>();
+        let styles = format!(r#"<w:styles xmlns:w="{W}">{styles}</w:styles>"#);
+        let body = (0..count)
+            .map(|i| format!("<w:p><w:pPr><w:pStyle w:val=\"S{i}\"/></w:pPr></w:p>"))
+            .collect::<String>();
+        let main = document(&body);
+        let result = resolve_empty_paragraph_fonts(
+            main.as_bytes(),
+            styles.as_bytes(),
+            None,
+            &(0..count).collect::<Vec<_>>(),
+        );
+        assert!(result.unwrap_err().to_string().contains("work limits"));
     }
 }

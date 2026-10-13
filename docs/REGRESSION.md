@@ -1,6 +1,47 @@
 # 当前跨格式回归记录
 
-## 当前：简单表格最小行高与垂直对齐（2026-10-13）
+## 当前：真正空段落的有限基线字体（2026-10-13）
+
+基于 `d4480270fdfd9fdb38817458b095ff1139b2ed1b`，新增仅用于零内容 paragraph / heading 的可选 `emptyParagraphFont`，保存字面字体、整数半点字号和粗斜体。正文顶层源按实际 OPC 默认 / 活动样式 / 直接段落标记解析，完整块身份核对后才附加。空行状态 / 重置、标题转换、撤销 / 草稿、可信重开与共享打印声明贯通；首次插入内容原子结束空行覆盖，普通文字继续使用当前 marks / profile。源表格 / 列表字体继承、多脚本及复杂度量没有扩大承诺；详细契约见 [EMPTY_PARAGRAPH_FONTS.md](EMPTY_PARAGRAPH_FONTS.md)。
+
+### 声明隔离与编辑保护
+
+先独立比较默认字体、段落样式、直接 `pPr/rPr` 和空 run。24份输入逐一使用新进程 / 独立 profile 重跑，全部复现：DejaVu Sans12pt 真正空段可由直接段落标记得到28pt锚点距离；只有空 run 的相同字体仍是26.65pt。样式12pt / 标记24pt与样式24pt / 标记6pt分别得到41.95 /21pt，Liberation Serif12pt为27.8pt。因此直接写段落标记即可，不复用单图的专用样式方案，不改全局 Normal，不加入伪空格或空文本 run。隔离证据 `tmp/empty-font-isolation/isolated-report.json` 与最终48份产品输出PDF分别统计。
+
+源必须是真正零内容或无属性 / 子元素 / 文字的 bare `w:r`；空文本 run、带格式空 run、空格、tab、换行、分页与图片均不冒充空段。活动路径 / 命名空间 / 重复声明、默认容器、主题槽、style toggle / 直接 false、方向 / 网格 / 基线度量、继承上限、缓存与累计预算均检查。完整身份或解析失败不附加部分结果；身份已证明而个别段字体信息不足时，可保留其他已证明段，并同时提示未证明项。原有导入阻断不放宽。
+
+完整应用插件链曾复现一次性输入 `# ` 时，标题转换被严格原始输入检查拒绝；预先准备规则状态与空行覆盖规范化的次序需要协调，未观察到旧事务提交或字体复活。现由有限首次输入适配器先正常提交并校验输入，再按新状态执行原注册规则；失败不重复插入。注册 text-input / compositionend / paste 钩子、undoInputRule 与两种尾段插件顺序均覆盖。原始剪贴板 slice 在 fitting 前校验，避免错误元数据被适配时丢弃。分段 / 合段不传播覆盖，删回空段不复活；空标题转换、合法空段粘贴和祖先结构变化可保留原节点。
+
+### 最终检查
+
+- **Rust1.99 /1.88各460项通过**：原435 +23项新集成 +2项解析缓存 / 预算检查；两个工具链不重复累计。日志 `tmp/empty-font-core-{stable,msrv}-gate.log`
+- **397项无浏览器前端检查通过**：原346 +51；完整命令 `tmp/empty-font-ui-command.json`，日志 `tmp/empty-font-ui-final-397.log`。新增覆盖原子首次输入 / 失败候选、split / join / delete、标题 / 输入规则、undo / redo、草稿 / HTML元数据、不可变打印与重置，以及36种表格增删行列 / 首中末边界 / 自动或固定宽度组合和实际项目符号 / 编号列表包裹与解除
+- `npm run build` / TypeScript通过，`tmp/empty-font-build-ui-final-397.log`，只有既有大bundle提示；Python语法及 `git diff --check` 通过。**7个浏览器规格仅发现未执行**，`tmp/empty-font-browser-discovery.log`
+- 原始严格 all-targets Clippy各仍只有旧限定单项：1.99 XLS `chunks_exact_to_as_chunks`、1.88 PPT `uninlined_format_args`；各只排除本工具链对应单项后通过。最终日志 `tmp/empty-font-clippy-{stable,msrv}-gate-{raw,scoped}.log`。新增 lint 已修复，早期失败日志保留
+- `vendor/`、依赖 / 锁文件和桌面后端未修改；1264项解析库是历史结果，本轮未重跑。未重试 Chromium socket EPERM、云浏览器 localhost、Linux glib / WebKit 或 Windows离线受阻路线。插件 / DOM声明检查并非实际按键、原生IME / 剪贴板或应用打印验收
+
+冻结CLI `tmp/empty-font-final-cli` SHA-256 `ed77eea6ce7d6f26eede7ee33af3655f42e1eeebbc9060ac086bb57c6a6d9430`；工作CLI散列相同。旧 `tmp/table-vertical-final2-cli` 保持 `0c67ef3110ae794d371123313fe01ccfa53bef452f2316dac8a5e11c999da67e`。功能 / 测试 / 依赖身份见 `tmp/empty-font-final-code-identity.json`。
+
+### 独立原件、DOCX与48份新PDF
+
+最终报告 `tmp/empty-font-independent/run-d5wgo6tc/report.json` SHA-256 `fc0ff5933f7cc477d76894db2a725dc825a54a02ea6759906c1de0b51792e240`；同目录 `acceptance-summary.json` 为 `c76d6fa5b47dc5089d3a9932de8fde4a096c723af7ffcc21d8577bceae0b21da`。独立脚本 `scripts/check-empty-paragraph-fonts.py` 为 `2f4d513fee6051a7eda840a3c380a0a8136422b11fcf34c20c4477583fa40e38`，报告旁保留相同脚本快照。
+
+- **21源 /29个已证明空段**，含2份固定revision / SHA / Git blob的未改造 Apache POI原件与原上下文间距受控反例；**16个边界 / 提示用例、54个非法模型、8个篡改拒绝、5个自有模型边界和2个既有源阻断**分别登记
+- **68次导出及完整可信重开、89次禁止覆盖**；独立python-docx / XML核对实际段落标记和文字，未加入伪内容，除文档局部段落标记及嵌入模型外没有改变全局包部件。21个移除新属性的旧模型与上轮CLI **整DOCX字节相等**；原件和已有输出散列不变
+- **48份新LibreOffice PDF**，每份新进程 / 独立profile；25组受控基线比较最大差 **0.0pt**，没有调整坐标或放宽0.3pt容差。9份源 / 新 / 旧预览保留，两个原件及受控对照的预览实际查看；新PDF不是应用打印或Word/WPS验收
+- 原始 `table-alignment.docx` 六处Aptos12pt空段恢复：五处表间距离从旧23.1pt到源27.4pt，六表起点差由 `[0,-4.3,-8.6,-12.9,-17.2,-21.5]pt` 变为全0。此处上一轮341twip最小行高保持不变；**自动列宽、水平位置、橙色表头 / 白字仍规范化**，不声称整页相同，消费者文字实际使用NotoSerif替代
+- 原始 `NoHeadFoot.docx` 四处Calibri11pt空段恢复，登记的所有文字纵坐标现与源相同；旧页末基线提前3.79999pt。分页段不作空段目标，消费者以Carlito / Caladea替代。该原件比较是明确登记的纵向观察，不冒充受控全页字体保真
+- 原 `empty-neighbor-explicit-reference.docx` 的bare空run保持真实零内容，旧1.35003pt后续基线漂移恢复为0；该文件是此前独立创作对照，**不称为上游生产文件**。字体可用性 / 替代、多脚本、源列表 / 表格继承等限制继续有效
+
+### 历史字节、安全与完整响应复核
+
+最终原始重放 `tmp/contextual-legacy/run-6fm253ps/report.json` SHA-256 `da37cf466b6aa6de85def856bb780eb53c6c2f7b3c614c9ad538e62040f3f919`：**1520条旧响应、302份旧模型整包字节金样、604次可信重开与604次不覆盖**，源 / 旧报告 / 冻结CLI / 保留PDF均未改变。较更早的上下文间距前基线为1492完全相等 /28差异，原报告原样保留为 REVIEW_REQUIRED。
+
+对最近已发布表格轮 `run-leg3cwb3/report.json` 逐条复核：**1500/1520完整响应精确相等，20条有意变化，仅32处独立源核对的空段字体属性和26条诊断，没有旧支持源被新增拒绝**。仅移除这批已核实新增字段 / 提示后，完整JSON、退出码和stderr均与发布版相同。复核文件 `tmp/empty-font-legacy-final-acceptance.json` SHA-256 `964e6c013eee251ecf56a56809a96239bebbc4bb3e4ac92ca05a70c995070882`；复核脚本 `tmp/empty-font-review-legacy.py` SHA-256 `a5615f2732b56791a7a786e12f577a9752402e90e7231cc32b2c24be44d6b507`。初次和最终冻结CLI的1520条响应全部一致；不把有意扩展写成所有历史响应逐字相同。
+
+302份旧导出全部保持整文件字节；保留的325份旧PDF这里只核对身份，**不是本轮重新渲染**。没有修改旧基线、原件或既有报告，也没有将早期受控 / 共享profile结果累计到最终48份。
+
+## 上一轮：简单表格最小行高与垂直对齐（2026-10-13）
 
 基于 `fcab97018e20c3ea1412e49988655cda19cf5ac8`，新增可选逐行 `rowMinHeightTwips` 与逐格 `cellVerticalAlign`，包含默认 / 显式零 / top、混合状态、当前行格 / 选区、分别重置、撤销、草稿、可信重开和不可变打印快照。最小高度受当前页面正文高度约束，内容仍可自然增高；精确高度与源重复表头 / cantSplit 不进入本轮源子集。范围、真实源身份及编辑器历史 8px 上下内边距与 DOCX 零边距的差别见 [TABLE_VERTICAL_LAYOUT.md](TABLE_VERTICAL_LAYOUT.md)。
 

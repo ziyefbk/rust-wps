@@ -1,3 +1,4 @@
+import {omitDefaultEmptyParagraphFont, validateEmptyParagraphFontDocument} from './word-empty-paragraph-font-model';
 import {documentPageGeometry, omitDefaultPageGeometry} from './word-page-geometry';
 import type {Editor, JSONContent} from '@tiptap/core';
 
@@ -31,7 +32,8 @@ export function editorStyleProfile(owner: Pick<Editor, 'state'>): WordStyleProfi
 }
 
 export function snapshotDocument(owner: Pick<Editor, 'getJSON'>): JSONContent {
-  const document = {...omitDefaultPageGeometry(owner.getJSON())};
+  const document = {...omitDefaultEmptyParagraphFont(omitDefaultPageGeometry(owner.getJSON()))};
+  validateEmptyParagraphFontDocument(document);
   if (document.attrs) {
     document.attrs = {...document.attrs};
     if (document.attrs.styleProfile === null) delete document.attrs.styleProfile;

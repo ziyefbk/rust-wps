@@ -1,3 +1,5 @@
+import {EmptyParagraphFont, preflightEmptyParagraphFontHTML, validateEmptyParagraphFontDocument} from './word-empty-paragraph-font';
+import {WordEmptyParagraphFontControls} from './word-empty-paragraph-font-controls';
 import {WordTableVerticalControls} from './word-table-vertical-controls';
 import {createWordBlockTypeTransaction} from './word-block-type';
 import {withWordBlockTypeInteractions} from './word-block-type-interactions';
@@ -98,6 +100,7 @@ let tableVerticalControls: WordTableVerticalControls | null = null;
 let tableCellMarginsControls: WordTableCellMarginsControls | null = null;
 let paragraphIndentControls: WordParagraphIndentControls | null = null;
 let imageControls: WordImageControls | null = null;
+let emptyParagraphFontControls: WordEmptyParagraphFontControls | null = null;
 let imageParagraphControls: WordImageParagraphControls | null = null;
 let tableIndentInputEditing = false;
 let tableIndentInputChanged = false;
@@ -342,6 +345,7 @@ function updateToolbar() {
   for (const button of document.querySelectorAll<HTMLButtonElement>('#editor-toolbar button')) button.disabled = locked;
   // Image-specific selection/saving locks must follow the toolbar defaults.
   pageControls?.update();
+  emptyParagraphFontControls?.update();
   paragraphIndentControls?.update();
   tableCellMarginsControls?.update();
   tableVerticalControls?.update();
@@ -475,6 +479,7 @@ function queueDraft(doc: JSONContent) {
 }
 export function closeAuthoring() {
   pageControls?.reset();
+  emptyParagraphFontControls?.reset();
   paragraphIndentControls?.reset();
   tableCellMarginsControls?.reset();
   tableVerticalControls?.reset();
@@ -499,6 +504,7 @@ export function closeAuthoring() {
 async function create(content?: JSONContent, ask = true) {
   const initial = content ?? {type: 'doc', attrs: {styleProfile: STANDARD_WORD_STYLE_PROFILE}, content: [{type: 'paragraph'}]};
   documentStyleProfile(initial);
+  validateEmptyParagraphFontDocument(initial);
   validateParagraphSpacingDocument(initial);
   validateTableWidthsDocument(initial);
   validateImageDimensionsDocument(initial);
@@ -514,7 +520,7 @@ async function create(content?: JSONContent, ask = true) {
   editor = new Editor({
     editable: !paused,
     element: el('editor-content'),
-    extensions: [FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
+    extensions: [EmptyParagraphFont.configure({onError: message => showNotice(message, true)}),FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
       WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, ParagraphIndent.configure({onIndentError: message => showNotice(message, true)}), PageBreak, TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
     content: initial,
     editorProps: {
@@ -526,7 +532,8 @@ async function create(content?: JSONContent, ask = true) {
       },
       // Do not load remote images pasted from web/Office HTML. Preserve text.
       transformPastedHTML: html => {
-        const parsed = new DOMParser().parseFromString(html, 'text/html');
+        // Audit raw empty-font metadata before remote-image removal can erase it.
+        const parsed = new DOMParser().parseFromString(preflightEmptyParagraphFontHTML(html), 'text/html');
         parsed.querySelectorAll('img').forEach(image => {
           if (!/^data:image\/(png|jpeg);base64,/.test(image.getAttribute('src') ?? '')) image.remove();
         });
@@ -553,6 +560,7 @@ async function create(content?: JSONContent, ask = true) {
 }
 
 export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof showNotice, beforeLeave: () => Promise<boolean> = async () => true) {
+  emptyParagraphFontControls = new WordEmptyParagraphFontControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   tableVerticalControls = new WordTableVerticalControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   tableCellMarginsControls = new WordTableCellMarginsControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   paragraphIndentControls = new WordParagraphIndentControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});

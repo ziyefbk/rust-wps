@@ -347,6 +347,22 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
             crate::paragraph_indentation::PARAGRAPH_INDENT_RISK
         )
     })?;
+    if let Err(error) =
+        crate::empty_paragraph_fonts::apply(&audit.empty_fonts, &mut report.document)
+    {
+        report
+            .compatibility
+            .risks
+            .remove(crate::empty_paragraph_fonts::WARNING);
+        report
+            .compatibility
+            .risks
+            .insert(crate::empty_paragraph_fonts::UNRESOLVED.into());
+        report
+            .compatibility
+            .risks
+            .insert(format!("Empty paragraph font proof unavailable: {error}"));
+    }
     crate::document::validate(&report.document)?;
     Ok(report)
 }

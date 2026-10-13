@@ -171,3 +171,7 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
    these rows/cells to fixed-size blocks or apply clipping/max-height. */
 .tiptap tr[data-row-min-height-twips] { display:table-row; }
 .tiptap td[data-cell-vertical-align],.tiptap th[data-cell-vertical-align] { display:table-cell; }
+
+#empty-paragraph-font-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#empty-paragraph-font-controls[hidden] { display:none; }
+#edit-empty-paragraph-font-state { color:#52677f; font-size:12px; }

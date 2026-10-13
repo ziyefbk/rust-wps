@@ -866,6 +866,25 @@ pub fn validate_paragraph_indents(doc: &Node) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn empty_paragraph_font(
+    node: &Node,
+) -> Result<Option<crate::image_dimensions::ImageParagraphFont>> {
+    let Some(value) = node.attrs.get("emptyParagraphFont") else {
+        return Ok(None);
+    };
+    ensure!(
+        matches!(node.kind.as_str(), "paragraph" | "heading") && node.content.is_empty(),
+        "Empty paragraph font requires a true-empty paragraph or heading"
+    );
+    let font: crate::image_dimensions::ImageParagraphFont =
+        serde_json::from_value(value.clone()).context("Invalid empty paragraph font")?;
+    ensure!(
+        supported_font_family(&font.family) && (2..=3276).contains(&font.half_points),
+        "Empty paragraph font exceeds supported bounds"
+    );
+    Ok(Some(font))
+}
+
 pub fn validate(doc: &Node) -> Result<()> {
     ensure!(doc.kind == "doc", "Root must be doc");
     style_profile(doc)?;
@@ -889,6 +908,7 @@ pub fn validate(doc: &Node) -> Result<()> {
             "doc" if depth == 0 => &["styleProfile", "pageGeometry"],
             "heading" => &[
                 "level",
+                "emptyParagraphFont",
                 "textAlign",
                 "spaceBefore",
                 "spaceAfter",
@@ -898,6 +918,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "firstLineIndentTwips",
             ],
             "paragraph" => &[
+                "emptyParagraphFont",
                 "textAlign",
                 "spaceBefore",
                 "spaceAfter",
@@ -941,6 +962,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 node.kind
             );
         }
+        empty_paragraph_font(node)?;
         if let Some(alignment) = node.attrs.get("textAlign").filter(|v| !v.is_null()) {
             ensure!(
                 matches!(
@@ -1355,6 +1377,9 @@ impl Writer {
             props.push_str(&format!("<w:ind{indentation}/>"));
         }
         props.push_str(&deferred_alignment);
+        if let Some(font) = empty_paragraph_font(node)? {
+            props.push_str(&format!("<w:rPr>{}</w:rPr>", image_font_xml(&font)));
+        }
         let mut body = String::new();
         for child in &node.content {
             if child.kind == "hardBreak" {

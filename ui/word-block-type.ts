@@ -1,3 +1,4 @@
+import {omitDefaultEmptyParagraphFont, validateEmptyParagraphFontDocument} from './word-empty-paragraph-font-model';
 import type {Node} from '@tiptap/pm/model';
 import {EditorState, type Transaction} from '@tiptap/pm/state';
 import {Mapping} from '@tiptap/pm/transform';
@@ -52,6 +53,7 @@ export function validateWordBlockTypeDocument(document: Node): void {
   }
   document.check();
   const snapshot = omitDefaultParagraphIndent(omitDefaultParagraphSpacing(omitDefaultPageGeometry(document.toJSON())));
+  validateEmptyParagraphFontDocument(omitDefaultEmptyParagraphFont(snapshot));
   validateParagraphSpacingDocument(snapshot);
   validateParagraphIndentDocument(snapshot);
   validatePageGeometryDocument(snapshot);
@@ -63,6 +65,7 @@ export function validateWordBlockTypeDocument(document: Node): void {
 // App-owned conversion: no clearNodes fallback, list lifting or shared attrs.
 // A fresh transaction keeps failed candidates out of Tiptap's shared chain tr.
 export function createWordBlockTypeTransaction(state: EditorState, level: number): Transaction | null {
+  validateEmptyParagraphFontDocument(omitDefaultEmptyParagraphFont(state.doc.toJSON()));
   if (!Number.isInteger(level) || level < 0 || level > 3) throw new Error('正文或标题级别须为 0–3。');
   const type = state.schema.nodes[level === 0 ? 'paragraph' : 'heading'];
   if (!type?.isTextblock) throw new Error(unsupported);

@@ -236,6 +236,10 @@ fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
             "spaceBefore":0,"spaceAfter":120,"lineSpacing":360
         });
     }
+    // The independently exported DOCX declares the empty paragraph's Arial
+    // 11 pt font through V2 defaults, so external import now preserves it.
+    exported_expected["content"][1]["attrs"]["emptyParagraphFont"] =
+        serde_json::json!({"family":"Arial","halfPoints":22,"bold":false,"italic":false});
     for index in [0, 3] {
         exported_expected["content"][index]["content"][0]["marks"] = serde_json::json!([
             {"type":"fontSize","attrs":{"halfPoints":22}},
