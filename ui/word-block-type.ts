@@ -28,7 +28,14 @@ function selectedTextblocks(state: EditorState): Map<number, Node> {
   return result;
 }
 
-function validateCandidate(document: Node): void {
+// Toggle exactly the blocks the conversion will touch, including disjoint cell
+// selections and ranges ending at the next paragraph's text start.
+export function wordBlockTypeIsActive(state: EditorState, level: number): boolean {
+  const nodes = [...selectedTextblocks(state).values()];
+  return nodes.length > 0 && nodes.every(node => node.type.name === 'heading' && node.attrs.level === level);
+}
+
+export function validateWordBlockTypeDocument(document: Node): void {
   let count = 0, textBytes = 0;
   const stack = [{node: document, depth: 0}];
   while (stack.length) {
@@ -76,7 +83,7 @@ export function createWordBlockTypeTransaction(state: EditorState, level: number
     transaction.setNodeMarkup(pos, type, attrs, node.marks);
   }
   if (!transaction.docChanged) return null;
-  validateCandidate(transaction.doc);
+  validateWordBlockTypeDocument(transaction.doc);
   // Types change in place without changing node sizes. Identity mapping keeps
   // backward text, node, all and table-cell selections at their exact boundaries.
   transaction.setSelection(state.selection.map(transaction.doc, new Mapping()));

@@ -1,6 +1,40 @@
 # 当前跨格式回归记录
 
-## 当前：工具栏逐段保格式的正文 / 标题转换（2026-10-13）
+## 当前：快捷键与 Markdown 标题输入保格式（2026-10-13）
+
+基于 `890cc3ec9ccd66c020263207f52af1e922cba8e0`，把应用注册的 Ctrl+Alt+0–3 和段首 `# ` / `## ` / `### ` 输入规则接入已验证的逐段候选事务。保留对齐、段前 / 段后 / 行距、左右 / 首行缩进七字段、内容 / marks、选区和显式待输入格式；同级标题快捷键切回正文，混合级别设为请求级别。列表首段标题请求原子拒绝且不解除列表，标记不提前删除。范围见 [BLOCK_TYPE_CONVERSION.md](BLOCK_TYPE_CONVERSION.md)。
+
+### 真正插件链发现与修复
+
+最初直接处理器通过后，完整扩展插件链揭示了额外问题：最终正文转标题时默认 trailingNode 自动补尾段，这个文档变化会清除 Tiptap 的输入规则撤回元数据。现在按真实根事务身份合并本次转换附加的步骤，恢复输入规则元数据和待输入格式，并隔开后续输入历史；Backspace / undoInputRule 能同时撤回类型 / 标记转换和本次新增尾段，原来已有尾段保留。普通输入、选区变更和不同根事务结束该窗口，不复活过期规则，也没有禁用默认尾段插件。
+
+37 项新检查使用实际完整扩展管理器的 **86 个插件**，包括 **49 个 keymap / 8 个 input-rule**；通过普通事件对象调用 keymap、实际 handleTextInput 与 compositionend 钩子 / 计时回调。覆盖正反向 / next-text 排除 / 全选 / 节点 / 单元格、marks / 明确空 marks、原子列表与非法候选、前后独立历史、普通粘贴、代码标记排除、只读 / 锁定 / composing、同级删除、两种尾段插件顺序、预先存在尾段、后续输入失效等。现有缩进段落 Tab 保护保持：触发文字自身被拒绝时，不删除哈希或绕过制表位检查。
+
+这些是无 DOM 的真实注册回调 / 插件调度，不是物理按键、系统剪贴板、中文 IME、真实浏览器或原生 WebView 验收。先前 8 项格式丢失复现保留为**未包装依赖的对照**，已不代表本应用当前入口；原始程序命令仍未全部改造。
+
+### 最终代码与检查
+
+- **320 项无浏览器前端检查通过**：原 283 +37 新检查；`tmp/block-interactions-ui-final.log`，完整命令 `tmp/block-interactions-ui-final-command.json`
+- `npm run build` / TypeScript 通过，`tmp/block-interactions-build-final.log`；仍有既有大 bundle 提示。Python / Node 语法与 `git diff --check` 通过
+- **9 个新增浏览器规格仅发现，未执行**：`tmp/block-interactions-browser-discovery.log`，不重试既已确认的 Chromium socket EPERM、云浏览器 / localhost、Linux glib / WebKit 或 Windows 离线阻碍
+- **Rust 1.99 / 1.88 各 415 项本轮重新通过**，两个既有 target 缓存各 0.06 秒编译检查，没有重建或新 target；`tmp/block-interactions-core-1.99.log`、`tmp/block-interactions-core-1.88.log`
+- **219 个 Rust / 后端 / vendor / 依赖文件与已发布基线完全相同**，`tmp/block-interactions-core-identity.json`。冻结 CLI `tmp/contextual-final2-cli` 和工作 CLI 的 SHA-256 仍同为 `a6179a5e683c7c2b0ddbf93d55afad3fac67b6549f442ee093b8ea035f21e80f`；未修改导出器、模型 schema、node_modules 或锁文件。本轮未重跑 vendor / 桌面 / Clippy，旧结果不算新验证
+
+### 独立 DOCX 与新消费者证据
+
+最终报告 `tmp/word-block-interactions-final/run-epy2g2fp/report.json`，SHA-256 `d26df18935e7aba1d1902b0b6376069de46d4b4f0b8919df2f455ed82a5367b6`。新增独立脚本 `scripts/check-word-block-interactions.py` 与真实插件驱动 `scripts/convert-word-block-interactions.mjs` 复用前轮固定且未改动的 **6 份源包：5 份独立创作 python-docx 对照 +1 份 Apache POI SampleDoc 原件**。没有把重复使用的源算作新原件，也未提交原二进制。
+
+- **28 个成功导出 / 完整模型可信重开**：15 个快捷键结果、10 个输入规则文档、3 个同级重复切换结果。输入规则文档共 **57 次真实逐段处理**，每次检查 undoInputRule 恢复字面标记 / 空格及撤回这次恢复后的精确模型
+- **6 次精确列表拒绝**：3 个整选区快捷键请求原子不变、3 个列表首段输入规则拒绝。输入驱动按段操作，前面的独立成功转换不是整文档批处理；拒绝后不发布输出，原输入 JSON 不变
+- python-docx / OOXML 独立核对全部源段落七字段、字符 marks / 文字和标题样式；完整可信重开直接比较全部 JSON。仅独立源模型对照允许已声明的 schema 缺省元数据 / marks 顺序，以及明确登记的单个自动尾段；不静默删尾段来声称相等
+- **28 次 Node helper +56 次 Rust 原件 / 输出不覆盖检查**，报告登记 **152 条主命令**，28 次 helper 禁止覆盖重试由对应记录单列；输入、源包、输出、参考、冻结 CLI、固定旧报告和相关最终源码散列不变
+- **8 份本轮新 LibreOffice PDF /4 个独立目标参考对子**：文字页码、x / 行末 x / y 坐标最大差 **0.0 pt**；8 份均为单页，4 对完整页像素完全一致。联系图实际查看：同目录 `visual-evidence/shortcut-input-contact-sheet.png`，详情 `visual-report.json`。受控 Latin 字体 / 字号 / marks 匹配以隔离段落数值，不承诺原正文和标题缺省外观相同、任意字体、自动分页、Word/WPS 或应用打印保真
+
+SampleDoc 已知主题 tint 导入颜色规范化仍单列，转换保持导入 RGB；未改 Rust 来迎合源 XML fallback。早期 `tmp/word-block-interactions-initial/run-e683462d/report.json` 在产品仍修改时正确因身份变化失败，保留为失败证据、不计最终通过；最终完整独立目录从冻结代码重跑。
+
+后续在可用的真实浏览器 / 原生环境补验这些实际交互，并继续有证据的 DOC/DOCX/PDF 布局子集与真实源覆盖；完整文字复制、动态命名样式、复杂源布局、Excel / PPT 仍未完成。
+
+## 上一轮：工具栏逐段保格式的正文 / 标题转换（2026-10-13）
 
 基于 `5c03a97bac1155d5ff2db1ff83049dd13d7ce9a1`，修复工具栏跨段正文 / 标题切换将各段显式格式清空的问题。`ui/word-block-type.ts` 独立构造候选事务，逐段保留兼容属性、内容 / marks、精确选区与待输入格式，只改类型 / 级别；全部校验成功才提交，一次撤销，后续输入另分组。列表首段转标题整次拒绝，不解散列表；无操作不新增历史。范围见 [BLOCK_TYPE_CONVERSION.md](BLOCK_TYPE_CONVERSION.md)。
 

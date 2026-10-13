@@ -1,4 +1,4 @@
-// Remaining user-reachable upstream paths, not desired application behavior.
+// Unwrapped upstream controls, not the application's replaced interactions.
 // Invoke the registered key callback / input-rule handler without claiming DOM
 // keyboard dispatch, browser selection, or native input-method validation.
 import {test, expect} from '@playwright/test';
@@ -16,7 +16,7 @@ function extensionField(editor, name, field) {
 }
 test.afterEach(() => {for (const editor of editors.splice(0)) editor.destroy();});
 
-for (const level of [1, 2, 3]) test(`remaining upstream Mod-Alt-${level} callback loses per-block attrs on a multi-paragraph range`, () => {
+for (const level of [1, 2, 3]) test(`unwrapped upstream Mod-Alt-${level} callback loses per-block attrs on a multi-paragraph range`, () => {
   const editor = editorFor(doc([paragraph('A', attrs[0]), paragraph('B', attrs[1])]));
   const before = editor.state.doc; editor.commands.setTextSelection({from: 1, to: 5});
   const shortcuts = extensionField(editor, 'heading', 'addKeyboardShortcuts');
@@ -28,7 +28,7 @@ for (const level of [1, 2, 3]) test(`remaining upstream Mod-Alt-${level} callbac
   expect(editor.commands.undo()).toBe(true); expect(editor.state.doc.eq(before)).toBe(true);
 });
 
-for (const key of ['Mod-Alt-0', 'Mod-Alt-2']) test(`remaining upstream ${key} callback loses per-block attrs when returning multiple headings to body`, () => {
+for (const key of ['Mod-Alt-0', 'Mod-Alt-2']) test(`unwrapped upstream ${key} callback loses per-block attrs when returning multiple headings to body`, () => {
   const editor = editorFor(doc([heading('A', attrs[0]), heading('B', attrs[1])]));
   const before = editor.state.doc; editor.commands.setTextSelection({from: 1, to: 5});
   const shortcuts = extensionField(editor, key.endsWith('0') ? 'paragraph' : 'heading', 'addKeyboardShortcuts');
@@ -39,7 +39,7 @@ for (const key of ['Mod-Alt-0', 'Mod-Alt-2']) test(`remaining upstream ${key} ca
   expect(editor.commands.undo()).toBe(true); expect(editor.state.doc.eq(before)).toBe(true);
 });
 
-for (const level of [1, 2, 3]) test(`remaining upstream ${'#'.repeat(level)} space input rule loses even single-paragraph attrs`, () => {
+for (const level of [1, 2, 3]) test(`unwrapped upstream ${'#'.repeat(level)} space input rule loses even single-paragraph attrs`, () => {
   const prefix = '#'.repeat(level), editor = editorFor(doc([paragraph(prefix, attrs[0]), paragraph('neighbor', attrs[1])]));
   editor.commands.setTextSelection(1 + prefix.length);
   const rules = extensionField(editor, 'heading', 'addInputRules'), rule = rules.find(value => value.find.test(`${prefix} `));

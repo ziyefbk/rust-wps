@@ -5,6 +5,7 @@ import {EditorState, TextSelection} from '@tiptap/pm/state';
 import {history} from '@tiptap/pm/history';
 import {loadTsModule} from './load-ts.mjs';
 export const {createWordBlockTypeTransaction} = await loadTsModule('./ui/word-block-type.ts');
+const {withWordBlockTypeInteractions} = await loadTsModule('./ui/word-block-type-interactions.ts');
 const spacing = await loadTsModule('./ui/word-paragraph-spacing.ts');
 const indent = await loadTsModule('./ui/word-paragraph-indent.ts');
 const page = await loadTsModule('./ui/word-page-geometry.ts');
@@ -29,6 +30,13 @@ const WordStarterKit = StarterKit.extend({addExtensions() {
 export const extensions = [WordStarterKit.configure({document: false, heading: {levels: [1, 2, 3]}}), WordDoc, Alignment,
   Superscript, Subscript, PageBreak, TableKit.configure({table: false}), tables.WordTable, images.WordImage,
   FontFamily, FontSize, TextColor, spacing.ParagraphSpacing, indent.ParagraphIndent, page.WordPageGeometry];
+// Keep the raw upstream extensions for the explicit dependency controls.
+export const interactionExtensions = (options = {}) => [WordStarterKit.extend({
+  addExtensions() {return (this.parent?.() ?? []).map(extension => extension instanceof TiptapNode
+    ? withWordBlockTypeInteractions(extension, options) : extension);},
+}).configure({document: false, heading: {levels: [1, 2, 3]}, blockquote: false, horizontalRule: false, codeBlock: false,
+  link: {openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: href => href.length <= 2048
+    && /^(https?:\/\/.+|mailto:.+)$/i.test(href) && !/[\s\x00-\x1f\x7f-\x9f]/.test(href)}}), ...extensions.slice(1)];
 export const schema = getSchema(extensions);
 export const snapshot = document => indent.omitDefaultParagraphIndent(images.omitDefaultImageDimensions(tables.omitDefaultTableWidths(
   spacing.omitDefaultParagraphSpacing(snapshotDocument({getJSON: () => document.toJSON()})))));

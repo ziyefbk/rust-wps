@@ -1,4 +1,5 @@
 import {createWordBlockTypeTransaction} from './word-block-type';
+import {withWordBlockTypeInteractions} from './word-block-type-interactions';
 import {WordTableCellMarginsControls} from './word-table-cell-margins-controls';
 import {ParagraphIndent, omitDefaultParagraphIndent, validateParagraphIndentDocument} from './word-paragraph-indent';
 import {WordParagraphIndentControls} from './word-paragraph-indent-controls';
@@ -46,6 +47,11 @@ const WordStarterKit = StarterKit.extend({
       .filter(extension => extension.type === 'mark' && !['fontSize', 'textColor', 'fontFamily'].includes(extension.name))
       .map(extension => extension.name).join(' ');
     return extensions.map(extension => {
+      if (extension instanceof TiptapNode && ['paragraph', 'heading'].includes(extension.name)) return withWordBlockTypeInteractions(extension, {
+        locked: () => paused || leaving || saving || printing,
+        syncSelection: syncDomTextSelection,
+        onError: message => showNotice(message, true),
+      });
       if (extension.name === 'code' && extension instanceof TiptapMark) return extension.extend({excludes: excluded});
       if (extension.name === 'doc' && extension instanceof TiptapNode) return extension.extend({
         addAttributes: () => ({styleProfile: {default: null, rendered: false, parseHTML: () => null}}),
