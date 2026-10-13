@@ -1,6 +1,6 @@
 //! Explicit conversion to an editable copy; never a lossless package editor.
 use crate::{
-    compatibility::{CompatibilityReport, audit_docx_bytes},
+    compatibility::{CompatibilityReport, audit_docx_bytes_with_tables},
     document::{Mark, Node},
 };
 use anyhow::{Result, bail, ensure};
@@ -137,7 +137,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         .take(64 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)?;
     ensure!(bytes.len() <= 64 * 1024 * 1024, "Input exceeds 64 MiB");
-    let compatibility = audit_docx_bytes(&bytes)?;
+    let (compatibility, table_widths) = audit_docx_bytes_with_tables(&bytes)?;
     for risk in &compatibility.risks {
         ensure!(
             !matches!(
@@ -145,6 +145,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
                 "Tracked changes"
                     | crate::compatibility::HIDDEN_TEXT_RISK
                     | crate::compatibility::PARAGRAPH_SPACING_RISK
+                    | crate::table_widths::TABLE_GEOMETRY_RISK
                     | "Custom theme color mapping is unsupported"
                     | "Unsupported theme color scheme content"
                     | "Unsupported or unresolved hyperlink target"
@@ -163,6 +164,39 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         office_oxide::DocumentFormat::Docx,
     )?;
     let mut report = convert_ir(parsed.to_ir(), compatibility, true)?;
+    // Attach only geometry proven from the exact audited package snapshot.
+    // A count or shape mismatch means the converter discarded table structure.
+    fn attach_widths(
+        node: &mut Node,
+        widths: &mut std::slice::Iter<'_, crate::table_widths::TableGeometry>,
+    ) -> Result<()> {
+        if node.kind == "table" {
+            let width = widths
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Table metadata does not match imported tables"))?;
+            ensure!(
+                node.content
+                    .iter()
+                    .map(|row| row.content.len())
+                    .eq(width.row_cells.iter().copied()),
+                "Table metadata does not match imported rows and cells"
+            );
+            if let Some(width) = &width.widths {
+                node.attrs
+                    .insert("columnWidthsTwips".into(), serde_json::json!(width));
+            }
+        }
+        for child in &mut node.content {
+            attach_widths(child, widths)?;
+        }
+        Ok(())
+    }
+    let mut widths = table_widths.iter();
+    attach_widths(&mut report.document, &mut widths)?;
+    ensure!(
+        widths.next().is_none(),
+        "Source table was discarded during import"
+    );
     // Missing effective DOCX spacing means OOXML's zero paragraph gaps and
     // single line spacing, not the editable profile's 6 pt / 1.5 defaults.
     // Trusted authored models bypass external conversion and retain omission.
@@ -455,9 +489,16 @@ fn blocks(
                     }
                     rows.push(node("tableRow", cells));
                 }
-                report
-                    .risks
-                    .insert("Table widths, borders and cell formatting normalized".into());
+                report.risks.insert(if spacing {
+                    crate::table_widths::TABLE_FORMATTING_RISK.into()
+                } else {
+                    "Table widths, borders and cell formatting normalized".into()
+                });
+                if spacing {
+                    report
+                        .risks
+                        .insert("Table alignment normalized to editor defaults".into());
+                }
                 node("table", rows)
             }
             Element::Image(image) => {

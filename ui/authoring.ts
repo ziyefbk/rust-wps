@@ -7,6 +7,7 @@ import {STANDARD_WORD_STYLE_PROFILE, documentStyleProfile, editorStyleProfile, s
 import {ParagraphSpacing, createParagraphSpacingTransaction, formatLineSpacingLines, omitDefaultParagraphSpacing, paragraphSpacingFields, parseLineSpacingLines, parseParagraphSpacePoints, selectedParagraphSpacing, validateParagraphSpacingDocument, type ParagraphSpacingField, type ParagraphSpacingPatch} from './word-paragraph-spacing';
 import { Editor, Extension, Mark as TiptapMark, Node as TiptapNode, type JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
+import {WordTable, createTableColumnWidthTransaction, createTableStructureTransaction, omitDefaultTableWidths, parseTableColumnWidthPoints, selectedTableColumn, validateTableWidthsDocument, type TableStructureAction} from './word-table-widths';
 import { TableKit } from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
 import {AllSelection,TextSelection} from '@tiptap/pm/state';
@@ -75,26 +76,18 @@ let textColorInputEditing = false;
 let fontFamilyInputChanged = false;
 let fontFamilyInputEditing = false;
 let paragraphSpacingInputEditing = false;
+let tableWidthInputEditing = false;
 const paragraphSpacingInputChanged = new Set<ParagraphSpacingField>();
 const paragraphSpacingIds: Record<ParagraphSpacingField, string> = {
   spaceBefore: 'edit-space-before', spaceAfter: 'edit-space-after', lineSpacing: 'edit-line-spacing',
 };
 function snapshotDocument(owner: Pick<Editor, 'getJSON'>): JSONContent {
-  return omitDefaultParagraphSpacing(snapshotStyledDocument(owner));
+  return omitDefaultTableWidths(omitDefaultParagraphSpacing(snapshotStyledDocument(owner)));
 }
 let onChangeMode: (() => Promise<void>) | null = null;
 let canLeaveOther: () => Promise<boolean> = async () => true;
 let showNotice: (text: string, error?: boolean) => void = () => {};
 export const isAuthoring = () => !!editor;
-function currentTableSize(): { rows: number; columns: number } | null {
-  const position = editor?.state.selection.$from;
-  if (!position) return null;
-  for (let depth = position.depth; depth > 0; depth--) {
-    const node = position.node(depth);
-    if (node.type.name === 'table') return { rows: node.childCount, columns: node.firstChild?.childCount ?? 0 };
-  }
-  return null;
-}
 export function pauseAuthoring(value: boolean) { paused = value; editor?.setEditable(!paused && !leaving, false); updateToolbar(); }
 export async function openAuthored(content: JSONContent, name: string, path: string) {
   await create(content, false); dirty = false;
@@ -262,6 +255,38 @@ function applyParagraphSpacing(reset = false) {
   editor.view.focus();
   updateToolbar();
 }
+function applyTableColumnWidth(reset = false) {
+  if (!editor || leaving || paused || printing || saving) return;
+  const input = el<HTMLInputElement>('edit-column-width'), value = input.value.trim();
+  const width = reset ? null : parseTableColumnWidthPoints(value);
+  if (!reset && (input.validity.badInput || width === null)) {
+    showNotice('列宽须为 0.05–1584 pt（0.05 pt 递增）；使用“自动列宽”恢复整表默认布局。', true); return;
+  }
+  syncDomTextSelection();
+  const wasAuto = !selectedTableColumn(editor.state)?.widths;
+  try {
+    const transaction = createTableColumnWidthTransaction(editor.state, width);
+    if (transaction) {
+      editor.view.dispatch(closeHistory(transaction));
+      editor.view.dispatch(closeHistory(editor.state.tr));
+      if (wasAuto && !reset) showNotice('已固定整表列宽：先按 450 pt 总宽平均分配各列，再应用当前列宽；可逐列调整或一次撤销。');
+    }
+  } catch (error) { showNotice(String(error), true); return; }
+  tableWidthInputEditing = false;
+  editor.view.focus(); updateToolbar();
+}
+function changeTableStructure(action: TableStructureAction) {
+  if (!editor || leaving || paused || printing || saving) return;
+  syncDomTextSelection();
+  try {
+    const transaction = createTableStructureTransaction(editor.state, action);
+    if (transaction) {
+      editor.view.dispatch(closeHistory(transaction));
+      editor.view.dispatch(closeHistory(editor.state.tr));
+    }
+  } catch (error) { showNotice(String(error), true); return; }
+  editor.view.focus(); updateToolbar();
+}
 function updateToolbar() {
   el('authoring-sheet').dataset.styleProfile = editor ? editorStyleProfile(editor) ?? 'legacy-v1' : 'legacy-v1';
   const locked = leaving || paused || printing;
@@ -279,7 +304,7 @@ function updateToolbar() {
   el<HTMLButtonElement>('edit-undo').disabled = locked || !editor?.can().undo();
   el<HTMLButtonElement>('edit-redo').disabled = locked || !editor?.can().redo();
   for (const action of ['row', 'column', 'delete-row', 'delete-column', 'delete-table']) {
-    el<HTMLButtonElement>(`edit-${action}`).disabled = locked || !editor?.isActive('table');
+    el<HTMLButtonElement>(`edit-${action}`).disabled = locked || saving || !editor?.isActive('table');
   }
   el<HTMLButtonElement>('edit-page-break').disabled = locked || !!editor?.isActive('listItem') || !!editor?.isActive('table');
   el<HTMLButtonElement>('edit-save').disabled = locked || saving || !isTauri();
@@ -288,6 +313,17 @@ function updateToolbar() {
   el<HTMLSelectElement>('edit-align').disabled = locked;
   el<HTMLSelectElement>('edit-align').value = String(editor?.getAttributes(editor?.isActive('heading') ? 'heading' : 'paragraph').textAlign ?? 'left');
   el<HTMLSelectElement>('edit-style').value = editor?.isActive('heading') ? String(editor.getAttributes('heading').level) : '0';
+  const column = editor ? selectedTableColumn(editor.state) : null;
+  const columnWidth = el<HTMLInputElement>('edit-column-width');
+  columnWidth.disabled = locked || saving || !column;
+  el<HTMLButtonElement>('edit-column-width-apply').disabled = locked || saving || !column;
+  el<HTMLButtonElement>('edit-column-width-reset').disabled = locked || saving || !column?.widths;
+  if (!tableWidthInputEditing && document.activeElement !== columnWidth) {
+    columnWidth.value = column?.widths ? String(column.widths[column.column] / 20) : '';
+    columnWidth.placeholder = column ? '自动' : '先选表格';
+    columnWidth.dataset.columnWidthState = column?.widths ? 'fixed' : 'auto';
+  }
+  el('edit-column-width-state').textContent = column ? `第 ${column.column + 1} 列${column.widths ? ` · 总宽 ${column.widths.reduce((sum, width) => sum + width, 0) / 20} pt` : ''}` : '';
   const selectedSpacing = editor ? selectedParagraphSpacing(editor.state) : null;
   for (const field of paragraphSpacingFields) {
     const input = el<HTMLInputElement>(paragraphSpacingIds[field]);
@@ -367,6 +403,7 @@ function queueDraft(doc: JSONContent) {
   });
 }
 export function closeAuthoring() {
+  tableWidthInputEditing = false;
   paragraphSpacingInputEditing = false;
   paragraphSpacingInputChanged.clear();
   fontFamilyInputEditing = false;
@@ -384,6 +421,7 @@ async function create(content?: JSONContent, ask = true) {
   const initial = content ?? {type: 'doc', attrs: {styleProfile: STANDARD_WORD_STYLE_PROFILE}, content: [{type: 'paragraph'}]};
   documentStyleProfile(initial);
   validateParagraphSpacingDocument(initial);
+  validateTableWidthsDocument(initial);
   if (ask && !(await canLeaveAuthoring())) return;
   // Flush the previous document before a new draft enters the same slot.
   closeAuthoring();
@@ -395,7 +433,7 @@ async function create(content?: JSONContent, ask = true) {
     editable: !paused,
     element: el('editor-content'),
     extensions: [FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
-      ParagraphAlignment, ParagraphSpacing, PageBreak, TableKit.configure({ table: { resizable: false } }), Image.configure({ allowBase64: true, resize: false })],
+      ParagraphAlignment, ParagraphSpacing, PageBreak, TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), Image.configure({ allowBase64: true, resize: false })],
     content: initial,
     editorProps: {
       attributes: state => ({ 'aria-label': '文档编辑区', spellcheck: 'false', 'data-style-profile': state.doc.attrs.styleProfile ?? 'legacy-v1' }),
@@ -422,7 +460,7 @@ async function create(content?: JSONContent, ask = true) {
       draftTimer = setTimeout(() => { draftTimer = null; if (owner === editor) queueDraft(snapshotDocument(owner)); }, 700);
       updateToolbar();
     },
-    onFocus: () => { paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
+    onFocus: () => { tableWidthInputEditing = false; paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
     onSelectionUpdate: updateToolbar,
   });
   dirty = !!content; version++;
@@ -608,20 +646,29 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
     // Synchronize the DOM selection before the next input; Tiptap focus is deferred to a frame.
     editor.view.focus();
   });
-  el('edit-table').addEventListener('click', () => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run());
-  el('edit-row').addEventListener('click', () => editor?.chain().focus().addRowAfter().run());
-  el('edit-column').addEventListener('click', () => editor?.chain().focus().addColumnAfter().run());
-  el('edit-delete-row').addEventListener('click', () => {
-    const size = currentTableSize(); if (!size) return;
-    if (size.rows === 1) editor?.chain().focus().deleteTable().run();
-    else editor?.chain().focus().deleteRow().run();
+  el('edit-table').addEventListener('click', () => {
+    if (!editor || leaving || paused || printing || saving) return;
+    syncDomTextSelection();
+    if (selectedTableColumn(editor.state)?.widths) { showNotice('固定列宽表格中暂不支持嵌套表格，请将光标移到表格外再插入。', true); return; }
+    editor.chain().insertTable({rows: 3, cols: 3, withHeaderRow: true}).run(); editor.view.focus();
   });
-  el('edit-delete-column').addEventListener('click', () => {
-    const size = currentTableSize(); if (!size) return;
-    if (size.columns === 1) editor?.chain().focus().deleteTable().run();
-    else editor?.chain().focus().deleteColumn().run();
+  for (const [id, action] of Object.entries({row: 'addRowAfter', column: 'addColumnAfter',
+    'delete-row': 'deleteRow', 'delete-column': 'deleteColumn', 'delete-table': 'deleteTable'})) {
+    el(`edit-${id}`).addEventListener('click', () => changeTableStructure(action as TableStructureAction));
+  }
+  el('table-width-controls').addEventListener('focusout', event => {
+    if (event.relatedTarget instanceof HTMLElement && el('table-width-controls').contains(event.relatedTarget)) return;
+    tableWidthInputEditing = false; updateToolbar();
   });
-  el('edit-delete-table').addEventListener('click', () => editor?.chain().focus().deleteTable().run());
+  el('edit-column-width').addEventListener('pointerdown', syncDomTextSelection);
+  el('edit-column-width').addEventListener('focus', () => { tableWidthInputEditing = true; });
+  el('edit-column-width').addEventListener('keydown', event => {
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Enter') { event.preventDefault(); applyTableColumnWidth(); }
+    if (event.key === 'Escape') { event.preventDefault(); tableWidthInputEditing = false; editor?.view.focus(); updateToolbar(); }
+  });
+  el('edit-column-width-apply').addEventListener('click', () => applyTableColumnWidth());
+  el('edit-column-width-reset').addEventListener('click', () => applyTableColumnWidth(true));
   el('edit-image').addEventListener('click', () => el<HTMLInputElement>('image-file').click());
   el('image-file').addEventListener('change', async () => {
     const input = el<HTMLInputElement>('image-file'); const file = input.files?.[0]; input.value = '';

@@ -4,6 +4,10 @@
 .editor-toolbar select { background:white; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; }
 .editor-toolbar button.active { background:#e6effb; color:var(--blue); }
 .font-size-control { display:flex; align-items:center; gap:5px; white-space:nowrap; }
+#table-width-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#table-width-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+#edit-column-width { width:6.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
+#edit-column-width-state { color:#61738a; font-size:11px; }
 #paragraph-spacing-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
 #paragraph-spacing-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
 #paragraph-spacing-controls input { width:5.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
@@ -28,6 +32,7 @@
 .tiptap img { max-width:100%; max-height:800px; height:auto; }
 .tiptap table { width:100%; border-collapse:collapse; margin:16px 0; table-layout:fixed; }
 .tiptap td,.tiptap th { border:1px solid #b7c4d5; padding:8px; vertical-align:top; min-width:40px; position:relative; }
+.tiptap table[data-column-widths-twips] td,.tiptap table[data-column-widths-twips] th { min-width:0; }
 .tiptap th { background:#e8eef7; font-weight:600; }
 .tiptap td p,.tiptap th p { margin:0; }.tiptap .selectedCell { background:#dae8fb; }
 .ProseMirror-selectednode { outline:2px solid #477fc6; }

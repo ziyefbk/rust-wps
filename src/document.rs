@@ -251,12 +251,54 @@ fn is_block(kind: &str) -> bool {
     )
 }
 
+/// Product limit shared by the editor and import audit, not the OOXML maximum.
+pub const MAX_TABLE_WIDTH_TWIPS: u64 = 31680;
+
+pub fn table_column_widths(node: &Node) -> Result<Option<Vec<u64>>> {
+    let Some(value) = node.attrs.get("columnWidthsTwips") else {
+        return Ok(None);
+    };
+    let values = value
+        .as_array()
+        .context("Table columnWidthsTwips must be an integer array")?;
+    let columns = node.content.first().map_or(0, |row| row.content.len());
+    ensure!(
+        values.len() == columns && columns > 0,
+        "Table column width count must match its columns"
+    );
+    let mut widths = Vec::with_capacity(values.len());
+    let mut total = 0u64;
+    for value in values {
+        let width = value
+            .as_u64()
+            .context("Table column widths must be positive integers")?;
+        ensure!(
+            (1..=MAX_TABLE_WIDTH_TWIPS).contains(&width),
+            "Table column width exceeds limits"
+        );
+        total += width;
+        ensure!(
+            total <= MAX_TABLE_WIDTH_TWIPS,
+            "Total table width exceeds limits"
+        );
+        widths.push(width);
+    }
+    Ok(Some(widths))
+}
+
 pub fn validate(doc: &Node) -> Result<()> {
     ensure!(doc.kind == "doc", "Root must be doc");
     style_profile(doc)?;
     let mut nodes = 0usize;
     let mut text_bytes = 0usize;
-    fn visit(node: &Node, depth: usize, nodes: &mut usize, text_bytes: &mut usize) -> Result<()> {
+    fn visit(
+        node: &Node,
+        depth: usize,
+        table_depth: usize,
+        fixed_ancestor: bool,
+        nodes: &mut usize,
+        text_bytes: &mut usize,
+    ) -> Result<()> {
         *nodes += 1;
         ensure!(
             *nodes <= 10000 && depth <= 32,
@@ -273,10 +315,12 @@ pub fn validate(doc: &Node) -> Result<()> {
             ],
             "paragraph" => &["textAlign", "spaceBefore", "spaceAfter", "lineSpacing"],
             "orderedList" => &["start", "type"],
+            "table" => &["columnWidthsTwips"],
             "tableCell" | "tableHeader" => &["colspan", "rowspan", "colwidth", "align"],
             "image" => &["src", "alt", "title", "width", "height"],
-            "doc" | "text" | "hardBreak" | "pageBreak" | "bulletList" | "listItem" | "table"
-            | "tableRow" => &[],
+            "doc" | "text" | "hardBreak" | "pageBreak" | "bulletList" | "listItem" | "tableRow" => {
+                &[]
+            }
             other => bail!("Unsupported document node: {other}"),
         };
         for key in node.attrs.keys() {
@@ -504,14 +548,19 @@ pub fn validate(doc: &Node) -> Result<()> {
             );
             ensure!(
                 node.attrs.get("colwidth").is_none_or(Value::is_null),
-                "Custom table column widths are not supported yet"
+                "Cell colwidth is unsupported; use table columnWidthsTwips"
             );
             ensure!(
                 node.attrs.get("align").is_none_or(Value::is_null),
                 "Custom cell alignment is not supported yet"
             );
         }
+        let fixed = node.kind == "table" && table_column_widths(node)?.is_some();
         if node.kind == "table" {
+            ensure!(
+                !(fixed_ancestor || fixed && table_depth > 0),
+                "Fixed column widths do not support nested tables"
+            );
             let columns = node.content[0].content.len();
             ensure!(
                 columns > 0 && columns <= 50 && node.content.len() <= 500,
@@ -523,11 +572,18 @@ pub fn validate(doc: &Node) -> Result<()> {
             );
         }
         for child in &node.content {
-            visit(child, depth + 1, nodes, text_bytes)?;
+            visit(
+                child,
+                depth + 1,
+                table_depth + usize::from(node.kind == "table"),
+                fixed_ancestor || fixed,
+                nodes,
+                text_bytes,
+            )?;
         }
         Ok(())
     }
-    visit(doc, 0, &mut nodes, &mut text_bytes)
+    visit(doc, 0, 0, false, &mut nodes, &mut text_bytes)
 }
 
 #[derive(Default)]
@@ -691,17 +747,33 @@ impl Writer {
             }
             "table" => {
                 let columns = node.content[0].content.len();
-                let width = 9000 / columns;
-                let grid = format!("<w:gridCol w:w=\"{width}\"/>").repeat(columns);
+                let fixed_widths = table_column_widths(node)?;
+                let widths = fixed_widths
+                    .clone()
+                    .unwrap_or_else(|| vec![9000 / columns as u64; columns]);
+                let total = if fixed_widths.is_some() {
+                    widths.iter().sum()
+                } else {
+                    9000
+                };
+                let layout = if fixed_widths.is_some() {
+                    "<w:tblLayout w:type=\"fixed\"/>"
+                } else {
+                    ""
+                };
+                let grid: String = widths
+                    .iter()
+                    .map(|width| format!("<w:gridCol w:w=\"{width}\"/>"))
+                    .collect();
                 let mut table = format!(
-                    "<w:tbl><w:tblPr><w:tblW w:w=\"9000\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders></w:tblPr><w:tblGrid>{grid}</w:tblGrid>"
+                    "<w:tbl><w:tblPr><w:tblW w:w=\"{total}\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders>{layout}</w:tblPr><w:tblGrid>{grid}</w:tblGrid>"
                 );
                 for row in &node.content {
                     table.push_str("<w:tr>");
                     if row.content.iter().all(|c| c.kind == "tableHeader") {
                         table.push_str("<w:trPr><w:tblHeader/></w:trPr>");
                     }
-                    for cell in &row.content {
+                    for (cell, width) in row.content.iter().zip(&widths) {
                         table.push_str(&format!(
                             "<w:tc><w:tcPr><w:tcW w:w=\"{width}\" w:type=\"dxa\"/>{}</w:tcPr>",
                             if cell.kind == "tableHeader" {

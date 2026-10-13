@@ -1,0 +1,257 @@
+import {mergeAttributes, type CommandProps, type JSONContent} from '@tiptap/core';
+import {Table, TableView, type TableOptions} from '@tiptap/extension-table';
+import type {DOMOutputSpec, Node} from '@tiptap/pm/model';
+import {EditorState, NodeSelection, Plugin, Selection, TextSelection, type Transaction} from '@tiptap/pm/state';
+import {CellSelection, TableMap, addColumnAfter, addColumnBefore, addRowAfter, addRowBefore,
+  deleteColumn, deleteRow, deleteTable, isInTable, selectedRect} from '@tiptap/pm/tables';
+import {parseParagraphSpacePoints} from './word-paragraph-spacing';
+
+export const MAX_TABLE_WIDTH_TWIPS = 31680;
+export const DEFAULT_TABLE_WIDTH_TWIPS = 9000;
+const widthAttribute = 'columnWidthsTwips';
+const widthDataAttribute = 'data-column-widths-twips';
+const widthError = '固定列宽须为 0.05–1584 pt（0.05 pt 递增），整表总宽不超过 1584 pt；只支持无合并、无嵌套的矩形表格。';
+const cellTypes = new Set(['tableCell', 'tableHeader']);
+
+export function isTableColumnWidths(value: unknown): value is number[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= 50
+    && Array.from(value).every(item => typeof item === 'number' && Number.isInteger(item) && item >= 1 && item <= MAX_TABLE_WIDTH_TWIPS)
+    && value.reduce((sum, item) => sum + item, 0) <= MAX_TABLE_WIDTH_TWIPS;
+}
+
+export function parseTableColumnWidthPoints(value: string): number | null {
+  const result = parseParagraphSpacePoints(value);
+  return result !== null && result > 0 ? result : null;
+}
+
+// Canonical twips never go into Tiptap's colwidth, which is a CSS-pixel array.
+// Only our own exact metadata is accepted from HTML; arbitrary Office/CSS
+// geometry must not be silently promoted to a supported fixed-width table.
+export function parseTableColumnWidthsMetadata(value: string | null): number[] | null {
+  if (value === null || value.length > 300 || !/^\d+(?:,\d+)*$/.test(value)) return null;
+  const widths = value.split(',').map(Number);
+  return isTableColumnWidths(widths) ? widths : null;
+}
+
+export function validateTableWidthsDocument(document: JSONContent): void {
+  const visit = (node: JSONContent, tableDepth: number, fixedAncestor: boolean) => {
+    if (cellTypes.has(node.type ?? '') && node.attrs?.colwidth != null) throw new Error('不支持单元格像素 colwidth；请使用整表 columnWidthsTwips 固定列宽。');
+    const hasWidth = !!node.attrs && Object.prototype.hasOwnProperty.call(node.attrs, widthAttribute);
+    if (hasWidth && (node.type !== 'table' || !isTableColumnWidths(node.attrs![widthAttribute]))) throw new Error(widthError);
+    const fixed = node.type === 'table' && hasWidth;
+    if (node.type === 'table' && (fixed && tableDepth > 0 || fixedAncestor)) throw new Error(widthError);
+    if (fixed) {
+      const widths = node.attrs![widthAttribute] as number[];
+      if (!node.content?.length || node.content.length > 500) throw new Error(widthError);
+      for (const row of node.content) {
+        if (row.type !== 'tableRow' || row.content?.length !== widths.length) throw new Error(widthError);
+        for (const cell of row.content) {
+          if (!cellTypes.has(cell.type ?? '') || (cell.attrs?.colspan ?? 1) !== 1 || (cell.attrs?.rowspan ?? 1) !== 1) throw new Error(widthError);
+        }
+      }
+    }
+    for (const child of node.content ?? []) visit(child, tableDepth + Number(node.type === 'table'), fixedAncestor || fixed);
+  };
+  visit(document, 0, false);
+}
+
+// Default null is an editor-only attribute. Fixed cells carry no second width
+// source in saved drafts/models, even the builtin's default colwidth:null.
+export function omitDefaultTableWidths(document: JSONContent, inFixedTable = false): JSONContent {
+  const result = {...document};
+  const fixed = result.type === 'table' ? result.attrs?.[widthAttribute] != null : inFixedTable;
+  if (result.attrs) {
+    result.attrs = {...result.attrs};
+    if (result.type === 'table' && result.attrs[widthAttribute] === null) delete result.attrs[widthAttribute];
+    if (fixed && cellTypes.has(result.type ?? '') && result.attrs.colwidth === null) delete result.attrs.colwidth;
+    if (Object.keys(result.attrs).length === 0) delete result.attrs;
+  }
+  if (result.content) result.content = result.content.map(child => omitDefaultTableWidths(child, fixed));
+  return result;
+}
+
+export function fixedTableDOM(widths: number[], attributes: Record<string, unknown> = {}): DOMOutputSpec {
+  if (!isTableColumnWidths(widths)) throw new Error(widthError);
+  return ['table', mergeAttributes(attributes, {
+    [widthDataAttribute]: widths.join(','),
+    style: `table-layout: fixed; width: ${widths.reduce((sum, width) => sum + width, 0) / 15}px; min-width: 0`,
+  }), ['colgroup', {}, ...widths.map(width => ['col', {style: `width: ${width / 15}px`}] as DOMOutputSpec)], ['tbody', 0]];
+}
+
+// The stock non-resizable TableView still derives its colgroup from the first
+// row's pixel colwidth attributes. Override both mount and update for canonical
+// tables, and retain the original renderer for tables without fixed geometry.
+export class FixedTableView extends TableView {
+  constructor(...args: ConstructorParameters<typeof TableView>) { super(...args); this.syncFixedWidths(); }
+  private syncFixedWidths() {
+    const widths: unknown = this.node.attrs[widthAttribute];
+    if (!isTableColumnWidths(widths)) { this.table.removeAttribute(widthDataAttribute); return; }
+    this.table.setAttribute(widthDataAttribute, widths.join(','));
+    this.table.style.tableLayout = 'fixed';
+    this.table.style.width = `${widths.reduce((sum, width) => sum + width, 0) / 15}px`;
+    this.table.style.minWidth = '0';
+    this.colgroup.replaceChildren(...widths.map(width => {
+      const col = this.table.ownerDocument.createElement('col');
+      col.style.width = `${width / 15}px`;
+      return col;
+    }));
+  }
+  update(node: Node) {
+    if (node.type !== this.node.type) return false;
+    if (isTableColumnWidths(this.node.attrs[widthAttribute]) && !isTableColumnWidths(node.attrs[widthAttribute])) {
+      // The stock renderer writes min-width without clearing width. Discard
+      // our owned cols before restoring auto so reset/print cannot keep stale
+      // widths that are absent from the model and exported DOCX.
+      this.colgroup.replaceChildren();
+      this.table.style.tableLayout = '';
+    }
+    if (!super.update(node)) return false;
+    this.syncFixedWidths();
+    return true;
+  }
+}
+
+export interface SelectedTableColumn {table: Node; pos: number; column: number; row: number; widths: number[] | null}
+
+export function selectedTableColumn(state: EditorState): SelectedTableColumn | null {
+  if (!isInTable(state)) return null;
+  const selection = state.selection;
+  const selectedCellNode = selection instanceof NodeSelection && cellTypes.has(selection.node.type.name);
+  const $head = selection instanceof CellSelection ? selection.$headCell : selectedCellNode ? selection.$anchor : selection.$head;
+  for (let depth = $head.depth; depth > 0; depth--) {
+    const table = $head.node(depth);
+    if (table.type.name !== 'table') continue;
+    const pos = $head.before(depth), start = $head.start(depth);
+    if (selection.from < start || selection.to > pos + table.nodeSize - 1) return null;
+    const cellPos = selection instanceof CellSelection || selectedCellNode ? $head.pos : $head.before(depth + 2);
+    const rect = TableMap.get(table).findCell(cellPos - start);
+    return {table, pos, column: rect.left, row: rect.top, widths: table.attrs[widthAttribute] ?? null};
+  }
+  return null;
+}
+
+const encoder = new TextEncoder();
+function validateProspectiveDocument(document: Node): void {
+  let nodes = 0, bytes = 0;
+  const stack = [{node: document, depth: 0}];
+  while (stack.length) {
+    const {node, depth} = stack.pop()!;
+    if (++nodes > 10000 || depth > 32) throw new Error('表格修改后文档结构超出保存上限，未修改正文。');
+    if (node.isText) {
+      bytes += encoder.encode(node.text!).length;
+      if (bytes > 2 * 1024 * 1024) throw new Error('正文超过 2 MiB 保存上限，未修改表格。');
+    }
+    for (let index = node.childCount - 1; index >= 0; index--) stack.push({node: node.child(index), depth: depth + 1});
+  }
+  const snapshot = omitDefaultTableWidths(document.toJSON());
+  validateTableWidthsDocument(snapshot);
+  if (encoder.encode(JSON.stringify({version: 1, document: snapshot})).length > 32 * 1024 * 1024) {
+    throw new Error('表格修改后草稿超过 32 MiB 保存上限，未修改正文。');
+  }
+}
+
+export function createTableColumnWidthTransaction(state: EditorState, width: number | null): Transaction | null {
+  if (width !== null && !isTableColumnWidths([width])) throw new Error(widthError);
+  const selected = selectedTableColumn(state);
+  if (!selected) return null;
+  const {table, pos, column} = selected;
+  const columns = table.firstChild?.childCount ?? 0;
+  const defaults = Array.from({length: columns}, (_, index) => Math.floor(DEFAULT_TABLE_WIDTH_TWIPS / columns)
+    + Number(index < DEFAULT_TABLE_WIDTH_TWIPS % columns));
+  const widths = width === null ? null : [...(selected.widths ?? defaults)];
+  if (widths) widths[column] = width!;
+  if (JSON.stringify(widths) === JSON.stringify(selected.widths)) return null;
+  const transaction = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks}).tr.setNodeMarkup(pos, undefined, {...table.attrs, [widthAttribute]: widths}, table.marks);
+  validateProspectiveDocument(transaction.doc);
+  if (state.storedMarks) transaction.setStoredMarks(state.storedMarks);
+  return transaction;
+}
+
+const structuralCommands = {addColumnBefore, addColumnAfter, deleteColumn, addRowBefore, addRowAfter, deleteRow, deleteTable};
+export type TableStructureAction = keyof typeof structuralCommands;
+
+export function createTableStructureTransaction(state: EditorState, action: TableStructureAction): Transaction | null {
+  if (!(action in structuralCommands)) throw new Error('不支持的表格操作。');
+  const selected = selectedTableColumn(state);
+  if (!selected) return null;
+  const rect = selectedRect(state), {table, pos} = selected;
+  let widths = selected.widths ? [...selected.widths] : null;
+  // Check additions before constructing structural steps, including the total
+  // width budget. The newly inserted column inherits its adjacent column.
+  if (action === 'addColumnBefore' || action === 'addColumnAfter') {
+    if (rect.map.width >= 50) throw new Error('表格最多 50 列，未增加列。');
+    if (widths) {
+      const at = action === 'addColumnBefore' ? rect.left : rect.right;
+      widths.splice(at, 0, widths[action === 'addColumnBefore' ? rect.left : rect.right - 1]);
+      if (!isTableColumnWidths(widths)) throw new Error(widthError);
+    }
+  }
+  if ((action === 'addRowBefore' || action === 'addRowAfter') && table.childCount >= 500) throw new Error('表格最多 500 行，未增加行。');
+  if (action === 'deleteColumn') {
+    if (rect.left === 0 && rect.right === rect.map.width) action = 'deleteTable';
+    else if (widths) widths.splice(rect.left, rect.right - rect.left);
+  }
+  if (action === 'deleteRow' && rect.top === 0 && rect.bottom === rect.map.height) action = 'deleteTable';
+  let transaction: Transaction | null = null;
+  // Tiptap chainable state.tr is mutable shared state. Build off an isolated
+  // state so a failed prospective check cannot leak steps into that chain.
+  const detached = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks});
+  structuralCommands[action](detached, tr => {
+    if (action !== 'deleteTable') {
+      const nextPos = tr.mapping.map(pos), next = tr.doc.nodeAt(nextPos)!;
+      if (widths) tr.setNodeMarkup(nextPos, undefined, {...next.attrs, [widthAttribute]: widths}, next.marks);
+      // Deleting a terminal row/column otherwise leaves the caret in a later
+      // table or after this table. Pick the nearest surviving cell explicitly.
+      if (action === 'deleteColumn' || action === 'deleteRow') {
+        const map = TableMap.get(tr.doc.nodeAt(nextPos)!);
+        const row = Math.min(selected.row, map.height - 1), column = Math.min(selected.column, map.width - 1);
+        tr.setSelection(TextSelection.near(tr.doc.resolve(nextPos + 1 + map.map[row * map.width + column] + 1)));
+      }
+    }
+    validateProspectiveDocument(tr.doc);
+    transaction = tr;
+  });
+  return transaction;
+}
+
+// Also protects keyboard/paste and third-party commands: invalid fixed tables
+// never enter history or autosave. Our structural commands pass one complete,
+// already validated transaction rather than temporarily inconsistent columns.
+export function tableWidthGuard(onRejected: (message: string) => void = () => {}): Plugin {
+  return new Plugin({filterTransaction: transaction => {
+    if (!transaction.docChanged) return true;
+    try { validateProspectiveDocument(transaction.doc); return true; }
+    catch (error) { onRejected(String(error)); return false; }
+  }});
+}
+
+export const WordTable = Table.extend<TableOptions & {onWidthError: (message: string) => void}>({
+  addOptions() { return {...this.parent!(), onWidthError: () => {}}; },
+  addAttributes() {
+    return {...this.parent?.(), [widthAttribute]: {
+      default: null, rendered: false,
+      parseHTML: element => parseTableColumnWidthsMetadata(element.getAttribute(widthDataAttribute)),
+    }};
+  },
+  renderHTML({node, HTMLAttributes}) {
+    const widths: unknown = node.attrs[widthAttribute];
+    return isTableColumnWidths(widths) ? fixedTableDOM(widths, mergeAttributes(this.options.HTMLAttributes, HTMLAttributes))
+      : this.parent!({node, HTMLAttributes});
+  },
+  addCommands() {
+    return {...this.parent?.(), ...Object.fromEntries(Object.keys(structuralCommands).map(action => [action, () =>
+      ({state, dispatch, tr}: CommandProps) => {
+        try {
+          const transaction = createTableStructureTransaction(state, action as TableStructureAction);
+          if (!transaction) return false;
+          if (dispatch) {
+            for (const step of transaction.steps) tr.step(step);
+            tr.setSelection(Selection.fromJSON(tr.doc, transaction.selection.toJSON()));
+            if (transaction.storedMarksSet) tr.setStoredMarks(transaction.storedMarks);
+          }
+          return true;
+        } catch (error) { if (dispatch) this.options.onWidthError(String(error)); return false; }
+      }]))};
+  },
+  addProseMirrorPlugins() { return [...(this.parent?.() ?? []), tableWidthGuard(this.options.onWidthError)]; },
+}).configure({resizable: false, View: FixedTableView});

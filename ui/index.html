@@ -43,6 +43,12 @@
       <button id="edit-bold" aria-label="加粗"><b>加粗</b></button><button id="edit-italic" aria-label="斜体"><i>斜体</i></button><button id="edit-underline" aria-label="下划线"><u>下划线</u></button><button id="edit-strike" aria-label="删除线"><s>删除线</s></button><button id="edit-superscript" aria-label="上标">上标<sup>2</sup></button><button id="edit-subscript" aria-label="下标">下标<sub>2</sub></button><button id="edit-clear-marks" title="清除粗斜体等字符样式，保留链接和段落" aria-label="清除字符格式">清除字符格式</button>
       <button id="edit-bulletList">无序列表</button><button id="edit-orderedList">编号列表</button>
       <button id="edit-table">插入表格</button><button id="edit-row">增加行</button><button id="edit-column">增加列</button><button id="edit-delete-row">删除行</button><button id="edit-delete-column">删除列</button><button id="edit-delete-table">删除表格</button>
+      <span id="table-width-controls" role="group" aria-label="表格列宽">
+        <label>当前列宽 <input id="edit-column-width" type="number" min="0.05" max="1584" step="0.05" aria-label="当前列宽（pt）" placeholder="先选表格" title="0.05–1584 pt；整表总宽最多 1584 pt。首次固定时先以 450 pt 总宽均分各列，再应用当前列；单元格选区使用末端列"> pt</label>
+        <button id="edit-column-width-apply" title="固定当前列宽；所有行使用同一列宽，可一次撤销">应用列宽</button>
+        <button id="edit-column-width-reset" title="移除整表固定列宽，恢复默认布局">自动列宽</button>
+        <span id="edit-column-width-state" aria-live="polite"></span>
+      </span>
       <button id="edit-page-break">插入分页符</button><button id="edit-link">编辑链接</button><button id="edit-image">插入图片</button><input id="image-file" type="file" accept="image/png,image/jpeg" hidden>
       <button id="edit-undo">撤销</button><button id="edit-redo">重做</button>
       <button id="edit-save" class="primary">另存 DOCX</button>

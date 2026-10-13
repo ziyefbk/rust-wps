@@ -1,0 +1,41 @@
+{
+  "repository": "apache/poi",
+  "revision": "ae62bb5116b9aee19ebd5834e3a82066132c9f7f",
+  "directory": "test-data/document",
+  "license": {
+    "repository_license": "Apache License 2.0",
+    "url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/legal/LICENSE",
+    "caveat": "Public upstream test fixture for local validation only. Individual fixture redistribution rights and original authorship have not been reviewed. No binary is committed."
+  },
+  "fixtures": [
+    {
+      "name": "table-indent.docx",
+      "bytes": 7639,
+      "sha256": "aaa3fd6a1c0d6ac222ccacad213257b9061be7d706396a36b3ffedacb3a56c9b",
+      "git_blob_sha": "c4306aa9370f1d998ebb7da90816f1db2a31320d",
+      "source_url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/table-indent.docx",
+      "raw_url": "https://raw.githubusercontent.com/apache/poi/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/table-indent.docx",
+      "retrieval": "GitHub connector fetch_file base64 decoded to untouched bytes; checked against pinned directory listing size and Git blob SHA",
+      "expected_action": "refuse-editable-import",
+      "expected_risk": "Unsupported table geometry cannot be preserved in an editable copy",
+      "scope": "Actual upstream fixed-table refusal corpus. Contains unsupported indentation forms; never modified or presented as a supported roundtrip or user production document.",
+      "table_count": 7,
+      "rows_per_table": 3,
+      "columns_per_table": 4,
+      "layout": { "type": "fixed" },
+      "grid_widths_twips": [2409, 2410, 2409, 2410],
+      "cell_width_type": "dxa",
+      "alignment": { "val": "start" },
+      "cell_texts": [["Alignment", "From", "Left", ""], ["With", "Left", "Spacing", ""], ["", "", "", ""]],
+      "tables": [
+        { "total": null, "indent": null },
+        { "total": { "w": "9638", "type": "dxa" }, "indent": { "w": "732", "type": "dxa" } },
+        { "total": { "w": "9638", "type": "dxa" }, "indent": { "w": "1234", "type": "nil" } },
+        { "total": { "w": "9638", "type": "dxa" }, "indent": { "w": "5678", "type": "pct" } },
+        { "total": { "w": "9638", "type": "dxa" }, "indent": { "w": "9012", "type": "auto" } },
+        { "total": { "w": "9638", "type": "dxa" }, "indent": { "w": "732" } },
+        { "total": { "w": "9638", "type": "dxa" }, "indent": { "w": "-500", "type": "dxa" } }
+      ]
+    }
+  ]
+}

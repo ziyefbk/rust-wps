@@ -1,4 +1,5 @@
 mod presentation_vertical;
+mod table_widths;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{

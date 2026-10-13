@@ -60,7 +60,9 @@ async function operation(label: string, action: () => Promise<void>) {
       ? '文档含隐藏文字声明，暂不能创建编辑副本，以免丢失内容。原文件保持不变；只读正文可能不显示隐藏文字。未使用或已覆盖的隐藏样式也会保守拦截。'
       : String(error).includes('Unsupported paragraph spacing cannot be preserved in an editable copy')
         ? '文档包含暂不支持的段落间距、行距或网格声明，无法创建编辑副本。已使用样式链中的不支持声明也会保守拦截；原文件保持不变。'
-        : String(error);
+        : String(error).includes('Unsupported table geometry cannot be preserved in an editable copy')
+          ? '文档包含暂不支持的表格宽度或布局声明，无法创建编辑副本。固定列宽仅支持一致的矩形网格；百分比、冲突宽度、合并及嵌套固定表格等会保守拦截，原文件保持不变。'
+          : String(error);
     notice(`操作未完成：${message}`, true);
   }
   finally { busy = false; pauseAuthoring(false); pauseWorkbook(false); pausePresentation(false); el('status').textContent = '就绪'; controls(); }
@@ -267,6 +269,9 @@ el('import-document').addEventListener('click', () => operation('正在准备编
   'Unsupported theme color scheme content': '文字引用的主题包含尚不支持的颜色来源或变换，暂时只能只读查看',
   'Default document style normalized in editable copy': '编辑副本使用统一的正文和标题默认样式；保留可解析的字体名称、字号与颜色；DOCX 有效段落间距单独保留，请核对字体和换页',
     'List marker appearance normalized to editor defaults': '列表编号外观改为编辑器默认样式',
+    'Autofit table widths normalized; fixed column widths were not inferred': '自动调整表格的宽度使用默认布局；不会仅凭网格推断固定列宽，请核对原文',
+    'Table alignment normalized to editor defaults': '表格整体对齐改为编辑器默认位置，请核对页面中的摆放',
+    'Table borders and cell formatting normalized': '受支持的固定列宽会保留；表格边框和单元格格式改为默认样式，请核对换行和分页',
     'Table widths, borders and cell formatting normalized': '表格宽度、边框和单元格格式改为默认样式',
     'Image position and display dimensions normalized': '图片位置和显示尺寸会改变',
     'Page and column breaks converted to paragraph boundaries': '分页和分栏改为段落分隔',

@@ -447,6 +447,12 @@ pub fn audit_docx(path: &Path) -> Result<CompatibilityReport> {
 }
 
 pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
+    Ok(audit_docx_bytes_with_tables(bytes)?.0)
+}
+
+pub(crate) fn audit_docx_bytes_with_tables(
+    bytes: &[u8],
+) -> Result<(CompatibilityReport, Vec<crate::table_widths::TableGeometry>)> {
     let parts = crate::editing::parts(bytes)?;
     ensure!(
         parts.contains_key("word/document.xml"),
@@ -463,6 +469,7 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
     };
     let mut links = std::collections::BTreeMap::new();
     let mut normalized_main = None;
+    let mut table_widths = Vec::new();
     // Inspect exactly the main/style parts that the downstream parser will
     // consume, including OPC relationship resolution and ZIP name handling.
     // Minimal inventory-only ZIPs may lack content types; import itself still
@@ -518,6 +525,10 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
             .get(rel_types::STYLES)
             .map(Vec::as_slice)
             .unwrap_or(empty_styles);
+        let table_audit =
+            crate::table_widths::analyze(normalized_main.as_deref().expect("main read"), styles)?;
+        table_widths = table_audit.tables;
+        report.risks.extend(table_audit.risks);
         let (used, numbers) =
             spacing_usage(normalized_main.as_deref().expect("main read"), styles)?;
         if has_hidden_text_declaration(styles)? {
@@ -536,6 +547,18 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
         {
             report.risks.insert(PARAGRAPH_SPACING_RISK.into());
         }
+    }
+    if normalized_main.is_none() {
+        let empty_styles = br#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+        let table_audit = crate::table_widths::analyze(
+            &parts["word/document.xml"],
+            parts
+                .get("word/styles.xml")
+                .map(Vec::as_slice)
+                .unwrap_or(empty_styles),
+        )?;
+        table_widths = table_audit.tables;
+        report.risks.extend(table_audit.risks);
     }
     if normalized_main.is_none()
         && has_unsupported_paragraph_spacing(&parts["word/document.xml"], &BTreeSet::new())?
@@ -763,5 +786,5 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
             .risks
             .insert("Unsupported theme color scheme content".into());
     }
-    Ok(report)
+    Ok((report, table_widths))
 }
