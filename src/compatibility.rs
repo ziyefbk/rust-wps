@@ -98,6 +98,25 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
         }
         normalized_main = Some(main_xml);
         let relationships = package.read_rels_for(&main)?;
+        // Side stories are identified by OPC relationship type, never by
+        // target filename. The shared reader normalizes Strict type URIs.
+        // Even unused, missing or external targets must remain read-only:
+        // the editable model cannot retain their declarations or content.
+        for relationship in relationships.all() {
+            if matches!(
+                relationship.rel_type.as_str(),
+                rel_types::HEADER
+                    | rel_types::FOOTER
+                    | rel_types::FOOTNOTES
+                    | rel_types::ENDNOTES
+                    | rel_types::COMMENTS
+            ) {
+                report.risks.insert(format!(
+                    "Additional document content: relationship {} ({})",
+                    relationship.id, relationship.rel_type
+                ));
+            }
+        }
         if let Some(styles) = relationships.first_by_type(rel_types::STYLES) {
             let target = main.resolve_relative(&styles.target)?;
             if has_hidden_text_declaration(&package.read_part(&target)?)? {
@@ -266,6 +285,23 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
                         }
                     }
                     if name == "word/document.xml" {
+                        // References also fail closed when their relationship
+                        // is absent, external, malformed or has the wrong type.
+                        // The body parser otherwise silently skips some of them.
+                        if matches!(
+                            tag,
+                            "headerReference"
+                                | "footerReference"
+                                | "footnoteReference"
+                                | "endnoteReference"
+                                | "commentReference"
+                                | "commentRangeStart"
+                                | "commentRangeEnd"
+                        ) {
+                            report.risks.insert(format!(
+                                "Additional document content: {tag} in main document"
+                            ));
+                        }
                         match tag {
                             "p" => report.paragraphs += 1,
                             "tbl" => report.tables += 1,

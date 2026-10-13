@@ -175,6 +175,17 @@ fn convert_ir(
     }
     let mut content = Vec::new();
     for section in &ir.sections {
+        // Defense in depth: a parser change must not let side-story content
+        // disappear just because the package preflight missed a declaration.
+        ensure!(
+            section.header.is_none()
+                && section.footer.is_none()
+                && section.first_page_header.is_none()
+                && section.first_page_footer.is_none()
+                && section.even_page_header.is_none()
+                && section.even_page_footer.is_none(),
+            "Import cannot preserve headers or footers; source remains read-only"
+        );
         content.extend(blocks(&section.elements, 0, &mut compatibility)?);
     }
     if content.is_empty() {
@@ -479,4 +490,43 @@ fn preserve_alignment(
     };
     node.attrs.insert("textAlign".into(), value.into());
     Ok(())
+}
+
+#[cfg(test)]
+mod side_story_tests {
+    use super::*;
+    use office_oxide::ir::{DocumentIR, HeaderFooter, Section};
+
+    #[test]
+    fn conversion_refuses_all_six_ir_story_slots_even_if_preflight_misses_them() {
+        for slot in 0..6 {
+            let mut section = Section::default();
+            let story = Some(HeaderFooter::default());
+            match slot {
+                0 => section.header = story,
+                1 => section.footer = story,
+                2 => section.first_page_header = story,
+                3 => section.first_page_footer = story,
+                4 => section.even_page_header = story,
+                _ => section.even_page_footer = story,
+            }
+            let ir = DocumentIR {
+                sections: vec![section],
+                ..Default::default()
+            };
+            let report = CompatibilityReport {
+                paragraphs: 0,
+                tables: 0,
+                drawings: 0,
+                risks: BTreeSet::new(),
+                fidelity_verified: false,
+            };
+            assert!(
+                convert_ir(ir, report)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("headers or footers")
+            );
+        }
+    }
 }

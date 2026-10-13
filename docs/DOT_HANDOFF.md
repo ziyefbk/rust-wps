@@ -6,9 +6,11 @@
 
 本次已完成 Word 显式字体名从选区编辑、光标输入、撤销、草稿，到 DOCX 导出与外部导入的闭环。外部 DOCX 按脚本区分 ascii/hAnsi/eastAsia/cs 字体，处理有限主题字体语言；引用缺失的主题字体会警告。`standard-v2` 新文档默认样式与旧 V1 模型并存。字体名输入是字面值，最多 31 个 UTF-16 单元；本机字体不可用时由系统替代。旧 DOC 字体表尚未实现。
 
+最近新增 [DOCX 附属内容保护](SIDE_STORIES.md)：以实际 OPC 关系及主 XML 引用阻止非标准名称的页眉页脚等内容静默丢失，IR 全六个页眉页脚字段再次检查。没有新增这些内容的编辑能力；最新本轮验证见 REGRESSION。下一项能力扩展优先段落间距/行距的完整编辑与往返。
+
 ## 首次运行与检查
 
-本轮增加 DOCX 隐藏文字导入保护，详情与命令见 [HIDDEN_TEXT.md](HIDDEN_TEXT.md)。Rust 1.99/1.88 各 153 项核心、1,255 项 vendor、前端构建、39 项无浏览器前端/模型检查和真实语料独立对照通过。完整严格 Clippy 有既有跨格式告警；仅对该既有 lint 作命令行排除后通过。Linux Chromium 启动被 socket 权限阻止，桌面测试因缺 glib/GTK/WebKit 构建依赖受阻；164 项浏览器相关用例及 Windows 原生回归未完成，不可用历史结果替代。本轮未改 Excel/PPT 功能或 vendor。
+上一轮增加 DOCX 隐藏文字导入保护，详情与命令见 [HIDDEN_TEXT.md](HIDDEN_TEXT.md)。Rust 1.99/1.88 各 153 项核心、1,255 项 vendor、前端构建、39 项无浏览器前端/模型检查和真实语料独立对照通过。完整严格 Clippy 有既有跨格式告警；仅对该既有 lint 作命令行排除后通过。Linux Chromium 启动被 socket 权限阻止，桌面测试因缺 glib/GTK/WebKit 构建依赖受阻；164 项浏览器相关用例及 Windows 原生回归未完成，不可用历史结果替代。本轮未改 Excel/PPT 功能或 vendor。
 
 在 Windows 安装 Rust、Node/npm、MSVC 构建工具和 WebView2。仓库根目录执行：
 
