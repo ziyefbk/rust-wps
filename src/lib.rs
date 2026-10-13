@@ -45,6 +45,51 @@ pub struct Inspection {
     pub text_error: Option<String>,
 }
 
+/// Constant-size identity of the exact validated bytes inspected for PDF preview.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PdfSourceIdentity {
+    pub bytes: u64,
+    pub sha256: [u8; 32],
+}
+
+/// Desktop preview metadata, kept outside the existing Inspection wire shape.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PreviewInspection {
+    pub inspection: Inspection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdf_identity: Option<PdfSourceIdentity>,
+}
+
+pub fn inspect_for_preview_with_identity(path: &Path) -> Result<PreviewInspection> {
+    let is_pdf = path
+        .extension()
+        .is_some_and(|s| s.eq_ignore_ascii_case("pdf"));
+    if is_pdf {
+        let started = Instant::now();
+        let file = File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
+        let (inspection, identity) = pdf_snapshot::inspect_with_identity(file, true, started)?;
+        Ok(PreviewInspection {
+            inspection,
+            pdf_identity: Some(identity),
+        })
+    } else {
+        Ok(PreviewInspection {
+            inspection: inspect_for_preview(path)?,
+            pdf_identity: None,
+        })
+    }
+}
+
+/// Reopen once, then verify and return that same bounded buffer. This proves
+/// byte equality, not filesystem atomicity or a history of intervening changes.
+pub fn read_verified_pdf(path: &Path, identity: &PdfSourceIdentity) -> Result<Vec<u8>> {
+    let file = File::open(path)
+        .with_context(|| format!("Cannot open {}", path.display()))
+        .context("PDF 源文件无法验证，请重新打开文档后再预览")?;
+    pdf_snapshot::read_verified(file, identity)
+}
+
 pub fn inspect(path: &Path) -> Result<Inspection> {
     inspect_with_policy(path, false)
 }

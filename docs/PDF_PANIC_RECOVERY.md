@@ -15,7 +15,7 @@
 
 ## 捕获范围与安全边界
 
-`src/pdf_snapshot.rs` 的生产路径与测试共用私有 `inspect_with_extractor` callable。它先执行原有 `read_source`，再只对提取调用使用 `catch_unwind`：
+该 panic 回退轮中，`src/pdf_snapshot.rs` 的生产路径与测试共用私有 `inspect_with_extractor` callable。后续 [预览身份增量](PDF_PREVIEW_IDENTITY.md) 将实际生产 / 测试共用 callable 扩为 `inspect_identity_with_extractor`，旧测试入口委托给它。仍先执行原有 `read_source`（现在同时计算身份），再只对提取调用使用 `catch_unwind`：
 
 - 已打开 reader 的 64 MiB + 1 有界读取、实际大小与 `%PDF-` 签名检查完全在捕获区外；I/O / 签名 / 超限仍直接拒绝，reader 自身的 panic 不被错误标为提取器失败
 - 提取器只接收不可变、已验证的同一字节切片，解析状态局部持有。callable 有 `UnwindSafe` 约束，没有 `AssertUnwindSafe` 或共享可变应用状态
@@ -24,7 +24,7 @@
 - 只处理 unwind。`panic=abort`、OOM / abort、栈溢出、二次 panic（包括任意 payload 析构时 panic）、挂起和解析资源膨胀不在保证内；64 MiB 输入限制不等于解压后内存 / CPU 配额
 - 未改变桌面 worker 的异常退出、30 秒截止、响应上限或协议检查。这些硬故障仍拒绝，不把任意非零退出或无法识别错误泛化为 PDF.js 回退
 
-后续 `read_current_pdf` 仍按会话路径重新打开文件；Rust 快照与 PDF.js 的跨阶段源身份尚未绑定。文件读取期间原地并发写入也不保证原子快照。没有改写原 PDF、修复 CMap、加入 OCR / 字体映射 / Unicode 规范化 / 阅读顺序或 PDF 编辑。
+在本篇记录的 panic 回退轮结束时，`read_current_pdf` 仍按会话路径重新打开，跨阶段源身份尚未绑定；该缺口现由独立的 [PDF 预览身份增量](PDF_PREVIEW_IDENTITY.md) 处理。文件读取期间原地并发写入也不保证原子快照。没有改写原 PDF、修复 CMap、加入 OCR / 字体映射 / Unicode 规范化 / 阅读顺序或 PDF 编辑。
 
 ## 确定性与真实文件检查
 

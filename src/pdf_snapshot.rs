@@ -1,5 +1,6 @@
-use crate::Inspection;
+use crate::{Inspection, PdfSourceIdentity};
 use anyhow::{Context, Result, ensure};
+use sha2::{Digest, Sha256};
 use std::{
     any::Any,
     io::Read,
@@ -13,27 +14,47 @@ const MAX_PANIC_DETAIL_BYTES: usize = 512;
 // Accept an already-open reader, never a pathname: validation and parsing must
 // observe exactly the same bounded bytes even if the directory entry changes.
 // This is not an atomic filesystem snapshot of concurrent in-place writes, nor
-// a decompression/parser resource sandbox or a later PDF.js session identity.
+// a decompression/parser resource sandbox.
 pub(super) fn inspect(
     reader: impl Read,
     allow_text_failure: bool,
     started: Instant,
 ) -> Result<Inspection> {
-    inspect_with_extractor(reader, allow_text_failure, started, |source| {
+    inspect_with_identity(reader, allow_text_failure, started).map(|(report, _)| report)
+}
+
+pub(super) fn inspect_with_identity(
+    reader: impl Read,
+    allow_text_failure: bool,
+    started: Instant,
+) -> Result<(Inspection, PdfSourceIdentity)> {
+    inspect_identity_with_extractor(reader, allow_text_failure, started, |source| {
         pdf_extract::extract_text_from_mem(source).map_err(Into::into)
     })
 }
 
+#[cfg(test)]
 fn inspect_with_extractor(
     reader: impl Read,
     allow_text_failure: bool,
     started: Instant,
     extract: impl FnOnce(&[u8]) -> Result<String> + UnwindSafe,
 ) -> Result<Inspection> {
+    inspect_identity_with_extractor(reader, allow_text_failure, started, extract)
+        .map(|(report, _)| report)
+}
+
+fn inspect_identity_with_extractor(
+    reader: impl Read,
+    allow_text_failure: bool,
+    started: Instant,
+    extract: impl FnOnce(&[u8]) -> Result<String> + UnwindSafe,
+) -> Result<(Inspection, PdfSourceIdentity)> {
     // Read/validation failures (including reader panics) are not extraction
     // failures and must never turn into preview candidates.
     let source = read_source(reader)?;
-    let bytes = source.len() as u64;
+    let identity = source_identity(&source);
+    let bytes = identity.bytes;
     let mut text_error = None;
     // Only the extractor sees this boundary: immutable validated bytes and
     // locally owned parser state. No shared mutable state is asserted safe.
@@ -64,15 +85,34 @@ fn inspect_with_extractor(
     if text.trim().is_empty() {
         warnings.push("No text extracted; this does not prove the document is empty".into());
     }
-    Ok(Inspection {
-        format: "pdf".into(),
-        backend: "pdf-extract 0.12.1".into(),
-        bytes,
-        elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-        text,
-        warnings,
-        text_error,
-    })
+    Ok((
+        Inspection {
+            format: "pdf".into(),
+            backend: "pdf-extract 0.12.1".into(),
+            bytes,
+            elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+            text,
+            warnings,
+            text_error,
+        },
+        identity,
+    ))
+}
+
+fn source_identity(source: &[u8]) -> PdfSourceIdentity {
+    PdfSourceIdentity {
+        bytes: source.len() as u64,
+        sha256: Sha256::digest(source).into(),
+    }
+}
+
+pub(super) fn read_verified(reader: impl Read, expected: &PdfSourceIdentity) -> Result<Vec<u8>> {
+    let source = read_source(reader).context("PDF 源文件无法验证，请重新打开文档后再预览")?;
+    ensure!(
+        source_identity(&source) == *expected,
+        "PDF 源文件已改变，请重新打开文档后再预览"
+    );
+    Ok(source)
 }
 
 fn panic_message(payload: &(dyn Any + Send)) -> String {
@@ -121,6 +161,142 @@ mod tests {
         io::{self, Cursor, Write},
         sync::atomic::{AtomicBool, Ordering},
     };
+
+    #[test]
+    fn identity_has_known_sha256_and_actual_length() {
+        let identity = source_identity(b"%PDF-");
+        assert_eq!(identity.bytes, 5);
+        assert_eq!(
+            identity.sha256,
+            [
+                56, 82, 60, 8, 119, 150, 229, 213, 221, 28, 249, 186, 209, 251, 2, 103, 129, 168,
+                56, 221, 157, 210, 207, 138, 245, 139, 159, 101, 2, 164, 103, 120
+            ]
+        );
+        assert_eq!(
+            read_verified(b"%PDF-".as_slice(), &identity).unwrap(),
+            b"%PDF-"
+        );
+    }
+
+    #[test]
+    fn extraction_identity_uses_exact_validated_buffer() {
+        let source = pdf("Identity extraction original");
+        let (report, identity) =
+            inspect_identity_with_extractor(source.as_slice(), true, Instant::now(), |bytes| {
+                assert_eq!(bytes, source);
+                Ok("exact text".into())
+            })
+            .unwrap();
+        assert_eq!(identity, source_identity(&source));
+        assert_eq!(identity.bytes, report.bytes);
+        assert_eq!(report.text, "exact text");
+        let keys = serde_json::to_value(report).unwrap();
+        assert!(keys.get("sha256").is_none());
+        assert!(keys.get("pdf_identity").is_none());
+    }
+
+    #[test]
+    fn preview_identity_survives_returned_error_and_extractor_unwind() {
+        let source = pdf("Failed extractor identity");
+        for extract in [
+            ((|_: &[u8]| Err(anyhow::anyhow!("encrypted or malformed")))
+                as fn(&[u8]) -> Result<String>),
+            |_: &[u8]| panic!("identity panic"),
+        ] {
+            let (report, identity) =
+                inspect_identity_with_extractor(source.as_slice(), true, Instant::now(), extract)
+                    .unwrap();
+            assert!(report.text.is_empty());
+            assert!(report.text_error.is_some());
+            assert_eq!(identity, source_identity(&source));
+            assert!(
+                inspect_identity_with_extractor(source.as_slice(), false, Instant::now(), extract)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn identity_stays_with_open_handle_after_path_replacement_or_removal() {
+        for remove in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("source.pdf");
+            let a = pdf("A original");
+            let b = pdf("B replacement");
+            fs::write(&path, &a).unwrap();
+            let file = File::open(&path).unwrap();
+            fs::rename(&path, dir.path().join("original.pdf")).unwrap();
+            if !remove {
+                fs::write(&path, b).unwrap();
+            }
+            let (report, identity) = inspect_with_identity(file, true, Instant::now()).unwrap();
+            assert_eq!(identity, source_identity(&a));
+            assert!(report.text.contains("A original"));
+        }
+    }
+
+    #[test]
+    fn delivery_rejects_different_and_same_length_bytes_without_updating_identity() {
+        let a = pdf("Original A");
+        let b = pdf("Original B");
+        assert_eq!(a.len(), b.len());
+        let identity = source_identity(&a);
+        for changed in [&b, &pdf("Different length replacement")] {
+            assert!(
+                read_verified(changed.as_slice(), &identity)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("重新打开")
+            );
+        }
+        assert_eq!(read_verified(a.as_slice(), &identity).unwrap(), a);
+    }
+
+    #[test]
+    fn public_preview_and_delivery_reject_replacement_then_accept_explicit_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.pdf");
+        let a = pdf("A original");
+        let b = pdf("B replacement");
+        fs::write(&path, &a).unwrap();
+        let preview = crate::inspect_for_preview_with_identity(&path).unwrap();
+        let identity = preview.pdf_identity.unwrap();
+        fs::write(&path, &b).unwrap();
+        assert!(crate::read_verified_pdf(&path, &identity).is_err());
+        let next = crate::inspect_for_preview_with_identity(&path).unwrap();
+        let bytes = crate::read_verified_pdf(&path, &next.pdf_identity.unwrap()).unwrap();
+        fs::write(&path, &a).unwrap();
+        assert_eq!(bytes, b); // later path writes cannot change already verified delivery
+        assert_eq!(crate::read_verified_pdf(&path, &identity).unwrap(), a); // A -> B -> A is allowed
+    }
+
+    #[test]
+    fn verified_delivery_rejects_missing_io_signature_length_and_limit_failures() {
+        let identity = source_identity(b"%PDF-valid");
+        assert!(read_verified(FailingReader, &identity).is_err());
+        assert!(read_verified(b"not PDF".as_slice(), &identity).is_err());
+        assert!(read_verified(b"%PDF-".as_slice(), &identity).is_err());
+        assert!(
+            format!(
+                "{:#}",
+                read_verified(CountedInfiniteReader { bytes_read: 0 }, &identity).unwrap_err()
+            )
+            .contains("64 MiB")
+        );
+        let dir = tempfile::tempdir().unwrap();
+        assert!(crate::read_verified_pdf(&dir.path().join("missing.pdf"), &identity).is_err());
+    }
+
+    #[test]
+    fn exact_limit_identity_and_delivery_do_not_require_parsing_or_second_buffer() {
+        let mut bytes = vec![b' '; MAX_INPUT_BYTES];
+        bytes[..5].copy_from_slice(b"%PDF-");
+        let identity = source_identity(&bytes);
+        let delivered = read_verified(bytes.as_slice(), &identity).unwrap();
+        assert_eq!(delivered.len(), MAX_INPUT_BYTES);
+        assert_eq!(delivered, bytes);
+    }
 
     fn check_panic_policy(extract: fn(&[u8]) -> Result<String>, detail: &str) {
         let source = pdf("No partial text may escape");

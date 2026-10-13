@@ -13,16 +13,20 @@ import type { EditableWorkbook } from './workbook-model';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 interface Inspection { format: string; backend: string; bytes: number; elapsed_ms: number; text: string; warnings: string[]; text_error?: string }
-interface OpenedDocument { presentation_model?:PresentationModel|null; presentation?: Presentation | null; name: string; path: string; inspection: Inspection; authored?: JSONContent | null; workbook?: Workbook | null; workbook_model?: EditableWorkbook | null }
+interface OpenedDocument { session_token?: string; presentation_model?:PresentationModel|null; presentation?: Presentation | null; name: string; path: string; inspection: Inspection; authored?: JSONContent | null; workbook?: Workbook | null; workbook_model?: EditableWorkbook | null }
 interface SavedDocument { path: string; report: { replacements: number; preserved_parts: number; changed_parts: string[]; warnings: string[] } }
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let current: OpenedDocument | null = null;
 let busy = false;
+let workspaceAttempt: object | null = null;
 let mode: 'text' | 'page' = 'text';
 let pdf: pdfjs.PDFDocumentProxy | null = null;
 let pageNumber = 1;
 let renderTask: pdfjs.RenderTask | null = null;
 let pdfTextSummary: string | null = null;
+let pdfLoadingTask: pdfjs.PDFDocumentLoadingTask | null = null;
+let pdfLoadAttempt: object | null = null;
+let cancelPdfPassword: (() => void) | null = null;
 let stopText = false;
 
 function notice(message: string, error = false) {
@@ -106,10 +110,22 @@ function setMode(next: 'text' | 'page') {
   el('page-view').classList.toggle('active', next === 'page');
   controls();
 }
+async function clearPdf() {
+  const old = pdf, loading = pdfLoadingTask;
+  pdf = null; pdfLoadingTask = null; pdfLoadAttempt = null;
+  cancelPdfPassword?.(); cancelPdfPassword = null;
+  renderTask?.cancel(); renderTask = null;
+  if (loading) { try { await loading.destroy(); } catch { /* obsolete load */ } }
+  if (old) { try { await old.destroy(); } catch { /* obsolete document */ } }
+}
 async function renderPage() {
-  if (!pdf) return;
+  const owner = current, documentPdf = pdf, number = pageNumber;
+  if (!documentPdf || !owner) return;
+  const owns = () => current === owner && pdf === documentPdf;
   if (renderTask) { renderTask.cancel(); try { await renderTask.promise; } catch { /* cancelled */ } }
-  const page = await pdf.getPage(pageNumber);
+  if (!owns()) return;
+  const page = await documentPdf.getPage(number);
+  if (!owns()) { page.cleanup(); return; }
   const scale = Number(el<HTMLSelectElement>('zoom').value);
   const viewport = page.getViewport({ scale });
   // Bound the backing canvas for large pages while keeping the aspect ratio.
@@ -117,60 +133,110 @@ async function renderPage() {
   const canvas = document.createElement('canvas'); canvas.className = 'pdf-page';
   canvas.width = Math.ceil(viewport.width * density); canvas.height = Math.ceil(viewport.height * density);
   canvas.style.width = `${viewport.width}px`;
-  canvas.setAttribute('aria-label', `PDF 第 ${pageNumber} 页`);
+  canvas.setAttribute('aria-label', `PDF 第 ${number} 页`);
   const context = canvas.getContext('2d'); if (!context) throw new Error('无法创建页面画布');
   const host = el('pdf-pages'); host.replaceChildren(canvas);
-  el('page-position').textContent = `${pageNumber} / ${pdf.numPages}`;
-  renderTask = page.render({ canvasContext: context, canvas, viewport, transform: [density, 0, 0, density, 0, 0] });
-  await renderTask.promise; renderTask = null; page.cleanup();
+  el('page-position').textContent = `${number} / ${documentPdf.numPages}`;
+  const task = page.render({ canvasContext: context, canvas, viewport, transform: [density, 0, 0, density, 0, 0] });
+  renderTask = task;
+  try { await task.promise; }
+  finally { if (renderTask === task) renderTask = null; page.cleanup(); }
 }
 async function showPdf() {
+  const owner = current, token = owner?.session_token;
+  if (!owner || owner.inspection.format !== 'pdf') return;
+  if (typeof token !== 'string' || !/^[1-9][0-9]{0,19}$/.test(token)) throw new Error('PDF 会话身份无效，请重新打开文档。');
+  const owns = () => current === owner && owner.session_token === token;
   if (!pdf) {
-    const data = await invoke<ArrayBuffer>('read_current_pdf');
+    if (pdfLoadingTask) {
+      cancelPdfPassword?.();
+      void pdfLoadingTask.destroy().catch(() => { /* obsolete load */ });
+      pdfLoadingTask = null;
+    }
+    const attempt = {}; pdfLoadAttempt = attempt;
+    const active = () => owns() && pdfLoadAttempt === attempt;
+    let data: ArrayBuffer;
+    try { data = await invoke<ArrayBuffer>('read_current_pdf', { sessionToken: token }); }
+    catch (error) { if (!active()) return; setMode('text'); throw error; }
+    if (!active()) return;
     const task = pdfjs.getDocument({ data: new Uint8Array(data), isEvalSupported: false, useSystemFonts: true,
       cMapUrl: '/pdf/cmaps/', cMapPacked: true, standardFontDataUrl: '/pdf/standard_fonts/', wasmUrl: '/pdf/wasm/', iccUrl: '/pdf/iccs/' });
+    pdfLoadingTask = task;
     let cancelled = false;
+    const passwordCleanup: { run: (() => void) | null } = { run: null };
     task.onPassword = (updatePassword: (password: string) => void, reason: number) => {
+      if (!active()) { void task.destroy(); return; }
+      passwordCleanup.run?.();
       const dialog = el<HTMLDialogElement>('pdf-password');
       const input = el<HTMLInputElement>('pdf-password-input'); input.value = ''; dialog.returnValue = '';
       el('pdf-password-hint').textContent = reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD ? '密码不正确，请重试。密码仅用于本次在本机打开。' : '密码仅用于本次在本机打开文件。';
-      dialog.addEventListener('close', () => {
-        const password = input.value; input.value = '';
-        if (dialog.returnValue === 'unlock') updatePassword(password);
+      const close = () => {
+        // close() queues an event: an older close can arrive after this dialog
+        // was reopened for a newer prompt. Ignore it without removing this listener.
+        if (dialog.open) return;
+        const password = input.value, answer = dialog.returnValue;
+        passwordCleanup.run?.();
+        if (!active()) { void task.destroy(); return; }
+        if (answer === 'unlock') updatePassword(password);
         else { cancelled = true; void task.destroy(); }
-      }, { once: true });
+      };
+      const cleanup = () => {
+        dialog.removeEventListener('close', close); input.value = '';
+        if (dialog.open) dialog.close('cancel');
+        if (cancelPdfPassword === cleanup) cancelPdfPassword = null;
+        passwordCleanup.run = null;
+      };
+      passwordCleanup.run = cleanup; cancelPdfPassword = cleanup;
+      dialog.addEventListener('close', close);
       dialog.showModal(); input.focus();
     };
-    try { pdf = await task.promise; }
-    catch (error) { await task.destroy(); setMode('text'); throw new Error(cancelled ? '已取消解锁 PDF；可点击“PDF 页面”重试。' : `PDF 页面无法打开：${String(error)}`); }
-    pageNumber = 1;
+    try {
+      const loaded = await task.promise;
+      if (!active()) { await loaded.destroy(); return; }
+      pdf = loaded; pageNumber = 1;
+    } catch (error) {
+      try { await task.destroy(); } catch { /* failed task cleanup */ }
+      if (!active()) return;
+      setMode('text'); throw new Error(cancelled ? '已取消解锁 PDF；可点击“PDF 页面”重试。' : `PDF 页面无法打开：${String(error)}`);
+    } finally {
+      passwordCleanup.run?.();
+      if (pdfLoadingTask === task) pdfLoadingTask = null;
+    }
   }
+  if (!owns()) return;
   setMode('page');
-  try { await renderPage(); } catch (error) { setMode('text'); throw error; }
-  if (!pdfTextSummary && current && (!current.inspection.text || current.inspection.text_error)) await recoverPdfText();
-  notice(pdfTextSummary ?? '按原文件显示 PDF 页面。搜索请切换到正文；扫描件的文字识别尚未支持。');
+  try { await renderPage(); } catch (error) { if (!owns()) return; setMode('text'); throw error; }
+  if (!owns()) return;
+  if (!pdfTextSummary && (!owner.inspection.text || owner.inspection.text_error)) await recoverPdfText();
+  if (owns()) notice(pdfTextSummary ?? '按原文件显示 PDF 页面。搜索请切换到正文；扫描件的文字识别尚未支持。');
 }
 async function recoverPdfText() {
-  if (!pdf || !current) return;
+  const owner = current, documentPdf = pdf;
+  if (!documentPdf || !owner) return;
+  const owns = () => current === owner && pdf === documentPdf;
   stopText = false; el('stop-pdf-text').hidden = false;
   try {
-    const report = await extractPdfText(pdf, () => stopText, page => { el('status').textContent = `正在提取正文 ${page}/${pdf!.numPages} 页…`; });
+    const report = await extractPdfText(documentPdf, () => stopText || !owns(), page => { if (owns()) el('status').textContent = `正在提取正文 ${page}/${documentPdf.numPages} 页…`; });
+    if (!owns()) return;
     // Preserve an earlier extraction if a retry fails before producing text.
-    if (report.text || report.complete) current.inspection.text = report.text;
-    if (report.complete) delete current.inspection.text_error;
+    if (report.text || report.complete) owner.inspection.text = report.text;
+    if (report.complete) delete owner.inspection.text_error;
     pdfTextSummary = textSummary(report);
-    renderText(); el('stats').textContent = `${current.inspection.text.length.toLocaleString()} 字符 / ${pdf.numPages} 页`;
+    renderText(); el('stats').textContent = `${owner.inspection.text.length.toLocaleString()} 字符 / ${documentPdf.numPages} 页`;
     notice(pdfTextSummary);
-  } finally { el('stop-pdf-text').hidden = true; }
+  } finally { if (owns()) el('stop-pdf-text').hidden = true; }
 }
 async function openDocument() {
   if (!(await canLeaveAuthoring())) return;
   await operation('正在打开文档…', async () => {
+    const selection = {}; workspaceAttempt = selection;
     const opened = await invoke<OpenedDocument | null>('open_document');
-    if (!opened) return;
+    if (!opened || workspaceAttempt !== selection) return;
     closeAuthoring(); closeWorkbook(); closePresentation(); closePresentationEditor(); el('reading-toolbar').hidden = false;
-    if (pdf) { await pdf.destroy(); pdf = null; }
-    current = opened; pageNumber = 1; renderTask = null; pdfTextSummary = null;
+    current = opened;
+    await clearPdf();
+    if (current !== opened || workspaceAttempt !== selection) return;
+    pageNumber = 1; renderTask = null; pdfTextSummary = null;
     el('empty').hidden = true; el('replace-panel').hidden = true;
     el('title').textContent = opened.name; el('file-name').textContent = opened.name;
     el('subtitle').textContent = opened.path;
@@ -205,12 +271,15 @@ el('open-empty').addEventListener('click', openDocument);
 el('presentation').addEventListener('click',event => {
   if ((event.target as HTMLElement).id !== 'pptx-replace-save') return;
   void operation('正在替换并另存演示文稿…',async()=>{
-    if (!current?.presentation) return;
+    const owner = current;
+    if (!owner?.presentation) return;
     const find=el<HTMLInputElement>('pptx-find').value;
     if (!find) { notice('请输入要查找的文字。',true);return; }
     const selected=el<HTMLSelectElement>('slide-picker').value;
-    const saved=await invoke<(SavedDocument & {presentation:Presentation}) | null>('replace_presentation_current',{find,replacement:el<HTMLInputElement>('pptx-replacement').value});
+    const saved=await invoke<(SavedDocument & {presentation:Presentation;session_token:string}) | null>('replace_presentation_current',{find,replacement:el<HTMLInputElement>('pptx-replacement').value});
+    if (current !== owner) return;
     if (!saved) { notice('已取消另存，当前演示文稿保持不变。');return; }
+    current.session_token=saved.session_token;
     current.path=saved.path;current.name=saved.path.split(/[\\/]/).pop() || saved.path;current.presentation=saved.presentation;
     openPresentation(saved.presentation);
     const picker=el<HTMLSelectElement>('slide-picker');if (picker.querySelector(`option[value="${selected}"]`)) { picker.value=selected;picker.dispatchEvent(new Event('change')); }
@@ -330,11 +399,14 @@ document.addEventListener('keydown', event => {
 });
 if (!isTauri()) notice('此页面是桌面界面预览。请运行 npm run desktop，使用本地文件打开与保存功能。');
 async function prepareEditorWorkspace() {
+  const selection = {}; workspaceAttempt = selection;
   closePresentationEditor();
   closePresentation();
   closeWorkbook();
-  if (pdf) { await pdf.destroy(); pdf = null; }
-  current = null; el('empty').hidden = true; el('document').hidden = true; el('pdf-pages').hidden = true;
+  current = null;
+  await clearPdf();
+  if (workspaceAttempt !== selection) throw new Error('文档会话已更新，请重试。');
+  el('empty').hidden = true; el('document').hidden = true; el('pdf-pages').hidden = true;
   el('replace-panel').hidden = true; el('reading-toolbar').hidden = true; controls();
 }
 initializeAuthoring(prepareEditorWorkspace, notice, async()=>await canLeavePresentation() && await canLeaveWorkbook());

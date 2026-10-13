@@ -7,7 +7,7 @@ async function setup(page, invalid = false, text = false) {
   const commands = [];
   await nativeBridge(page, async (command, args) => {
     commands.push({ command, args });
-    if (command === 'open_document') return { name: 'encrypted.pdf', path: 'encrypted.pdf', inspection: { format: 'pdf', text: '', text_error: 'Encrypted PDF', bytes: bytes.length, warnings: [] } };
+    if (command === 'open_document') return { session_token: '1', name: 'encrypted.pdf', path: 'encrypted.pdf', inspection: { format: 'pdf', text: '', text_error: 'Encrypted PDF', bytes: bytes.length, warnings: [] } };
     if (command === 'read_current_pdf') return [...bytes];
     throw new Error(`Unexpected ${command}`);
   });

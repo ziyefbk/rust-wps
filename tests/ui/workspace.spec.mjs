@@ -71,7 +71,7 @@ test('PDF page is rendered locally and zoom updates canvas', async ({ page }) =>
   const xref = bytes.length; bytes += 'xref\n0 6\n0000000000 65535 f \n';
   offsets.forEach(o => { bytes += `${String(o).padStart(10, '0')} 00000 n \n`; });
   bytes += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  await bridge(page, { name: 'preview.pdf', path: 'preview.pdf', inspection: { format: 'pdf', text: 'Rust PDF preview', bytes: bytes.length, warnings: [] } }, () => [...Buffer.from(bytes)]);
+  await bridge(page, { session_token: '1', name: 'preview.pdf', path: 'preview.pdf', inspection: { format: 'pdf', text: 'Rust PDF preview', bytes: bytes.length, warnings: [] } }, () => [...Buffer.from(bytes)]);
   const external = []; page.on('request', r => { if (!r.url().startsWith('http://127.0.0.1:1421') && !r.url().startsWith('blob:') && !r.url().startsWith('data:')) external.push(r.url()); });
   await page.goto('/'); await page.locator('#open').click();
   await expect(page.locator('#page-position')).toHaveText('1 / 1');

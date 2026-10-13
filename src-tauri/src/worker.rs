@@ -96,6 +96,8 @@ pub enum Response {
     },
     Opened {
         document: crate::OpenedDocument,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pdf_identity: Option<rust_wps::PdfSourceIdentity>,
     },
     Imported {
         report: rust_wps::importing::ImportReport,
@@ -148,6 +150,7 @@ fn execute(request: Request) -> Result<Response, String> {
                 .map_err(|e| format!("File saved but preview failed: {e:#}"))?;
             Ok(Response::PresentationSaved {
                 saved: crate::SavedPresentation {
+                    session_token: None,
                     path: output.to_string_lossy().into(),
                     report,
                     presentation,
@@ -202,7 +205,9 @@ fn execute(request: Request) -> Result<Response, String> {
                     text_error: None,
                 };
                 return Ok(Response::Opened {
+                    pdf_identity: None,
                     document: crate::OpenedDocument {
+                        session_token: None,
                         name: path
                             .file_name()
                             .unwrap_or_default()
@@ -264,7 +269,9 @@ fn execute(request: Request) -> Result<Response, String> {
                     text_error: None,
                 };
                 return Ok(Response::Opened {
+                    pdf_identity: None,
                     document: crate::OpenedDocument {
+                        session_token: None,
                         name: path
                             .file_name()
                             .unwrap_or_default()
@@ -280,8 +287,9 @@ fn execute(request: Request) -> Result<Response, String> {
                     },
                 });
             }
-            let mut inspection =
-                rust_wps::inspect_for_preview(&path).map_err(|e| format!("{e:#}"))?;
+            let preview =
+                rust_wps::inspect_for_preview_with_identity(&path).map_err(|e| format!("{e:#}"))?;
+            let mut inspection = preview.inspection;
             let authored = if inspection.format == "docx" {
                 match rust_wps::document::load_authored_docx(&path) {
                     Ok(doc) => doc,
@@ -296,7 +304,9 @@ fn execute(request: Request) -> Result<Response, String> {
                 None
             };
             Ok(Response::Opened {
+                pdf_identity: preview.pdf_identity,
                 document: crate::OpenedDocument {
+                    session_token: None,
                     name: path
                         .file_name()
                         .unwrap_or_default()
@@ -340,6 +350,13 @@ pub fn run(request: Request) -> Result<Response, String> {
     )?;
     let response: Response =
         serde_json::from_slice(&response).map_err(|e| format!("解析进程返回无效结果：{e}"))?;
+    if let Response::Opened {
+        document,
+        pdf_identity,
+    } = &response
+    {
+        crate::document_session::validate_identity(&document.inspection, pdf_identity.as_ref())?;
+    }
     match response {
         Response::Error { message } => Err(message),
         other => Ok(other),
@@ -426,7 +443,9 @@ mod tests {
     #[test]
     fn opened_response_roundtrips_through_the_process_protocol() {
         let response = Response::Opened {
+            pdf_identity: None,
             document: crate::OpenedDocument {
+                session_token: None,
                 name: "test.docx".into(),
                 path: "test.docx".into(),
                 inspection: rust_wps::Inspection {
@@ -504,5 +523,61 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result, b"ok");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod portable_process_tests {
+    use super::*;
+    fn python(script: &str) -> Command {
+        let mut command = Command::new("python3");
+        command.args(["-c", script]);
+        command
+    }
+    #[test]
+    fn standalone_actual_worker_process_keeps_deadline() {
+        let started = Instant::now();
+        let error = run_process(
+            python("import sys,time;sys.stdin.buffer.read();time.sleep(10)"),
+            b"request",
+            Duration::from_millis(150),
+            1024,
+        )
+        .unwrap_err();
+        assert!(error.contains("解析超时"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+    #[test]
+    fn standalone_stalled_input_cannot_bypass_deadline() {
+        let error = run_process(
+            python("import time;time.sleep(10)"),
+            &vec![b'x'; 131072],
+            Duration::from_millis(150),
+            1024,
+        )
+        .unwrap_err();
+        assert!(error.contains("解析超时"));
+    }
+    #[test]
+    fn standalone_nonzero_exit_is_still_a_hard_failure() {
+        let error = run_process(
+            python("import sys;sys.stdin.buffer.read();sys.exit(7)"),
+            b"request",
+            Duration::from_secs(5),
+            1024,
+        )
+        .unwrap_err();
+        assert!(error.contains("异常退出"));
+    }
+    #[test]
+    fn standalone_response_remains_bounded() {
+        let error = run_process(
+            python("import sys;sys.stdin.buffer.read();sys.stdout.buffer.write(b'x'*1025)"),
+            b"request",
+            Duration::from_secs(5),
+            1024,
+        )
+        .unwrap_err();
+        assert!(error.contains("大小上限"));
     }
 }

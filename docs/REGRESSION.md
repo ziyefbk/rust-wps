@@ -1,5 +1,39 @@
 # 当前跨格式回归记录
 
+## 本轮：PDF 预览字节身份与会话选择（2026-10-13）
+
+基于 `9431f8485796cf963cc49f2a935f1c1a6b64ab7d`，本轮将检查时的实际 PDF 缓冲区长度 / SHA-256 与随后交给 PDF.js 的同一返回缓冲区绑定；变化明确要求重新打开。worker 只传固定大小身份，旧 `Inspection` / 严格及预览 JSON 结构不变。新旧选择通过预留 ticket 与精确字符串 token 隔离，失败 / 取消保留已提交文档；演示另存的会话写入同样检查过期，已保存输出明确告知。完整范围见 [PDF_PREVIEW_IDENTITY.md](PDF_PREVIEW_IDENTITY.md)。
+
+### 门禁与覆盖
+
+- Rust **1.99 / 1.88 各 511 项通过**，即原 503 + 8 个核心身份检查，不跨工具链重复累计。原 23 个快照 / panic 测试保留，共 31 个 PDF 源检查。最终日志 `tmp/pdf-session-core-{stable,msrv}-release.log`
+- 新核心检查：已知 SHA-256、实际提取缓冲区身份、返回错误 / unwind 身份、已打开句柄的路径替换 / 删除、不同长度及同长度替换、公开 API 拒绝变化 / 显式重开 / A→B→A、读取 / 签名 / 超限 / 缺失错误、准确 64 MiB 交付。原长度增长 / 缩短 / 不超过上限+1读取等检查继续有效
+- **15 项 Tauri-free 实际生产模块检查在 Rust 1.99 / 1.88 各通过**：11 项会话 / 协议 / 交付检查，4 项实际 `run_process` Linux 子进程截止、阻塞 stdin、异常退出与响应上限。包含屏障控制的中途选择和 `try_lock` 证明不跨 I/O 持锁、返回 `Vec` 指针不变、同路径重开、取消 / 失败防旧结果复活、ticket 单次提交、超过 JavaScript 安全整数的精确 token 与溢出拒绝。日志 `tmp/pdf-session-tests-release.log`、`tmp/pdf-session-tests-msrv.log`
+- **477 项无浏览器前端检查通过**，即原 460 + 17 个新增实际 `main.ts` 函数检查；精确命令 `tmp/pdf-session-ui-command.json`，最终日志 `tmp/pdf-session-ui-aggregate-release.log`。新检查覆盖 token 原样传送、变化不进入 PDF.js、迟到读取 / 加载 / 页面 / 正文、密码取消 / 错误 / 重试、取消后源改变 / 显式重开、旧销毁后的选择与控制恢复
+- 新测试特别模拟异步排队的 dialog close 事件：旧 close 到达新密码提示时不能消耗新 listener。同步 DOM 替身不能证明这一点，因此新增可控事件队列；仍不称为浏览器复现或验收
+- TypeScript / 前端构建、核心公共库与 CLI 构建、probe 两工具链编译、格式 / Node 语法 / `git diff --check` 通过。前端构建日志 `tmp/pdf-session-ui-build-release.log`。核心严格原始 Clippy 仍分别只有既有 XLS `chunks_exact_to_as_chunks` 与 PPT `uninlined_format_args`；只排除各自原单项后通过。未修改 vendor、Cargo/npm 依赖或锁文件
+
+### 独立原件与协议证据
+
+`scripts/check-pdf-session-identity.mjs` 是显式后继检查器，原 `check-pdf-panic-recovery.mjs` 及其整文件前端冻结保护保持原样。`tmp/pdf-session-independent-first/report.json` 完整通过：
+
+- 6 份固定未改造 Mozilla 原件：独立 Node 哈希 / 长度与公共 wrapper、实际 worker 信封相同；6 份生产函数实际返回字节逐字节等于原件，并直接交给真实 Node PDF.js。Poppler / pypdf 同时独立读取，不将字形顺序差异抹平
+- 4 份严格成功报告全部非耗时字段精确等于冻结 CLI；6 份旧预览 / 新预览 / 身份 wrapper / 实际 worker 的原 `Inspection` 精确一致。2 份 CMap panic 仍为严格错误及空正文预览候选，4 次真实 PDF.js 恢复 / 实际前端搜索检查通过，并保留 14 项失败 / 部分 / 取消 / 过期控制
+- 24 项协议 / 源控制，包括缺失 / null / 短摘要 / 额外字段 / 长度不符 / 格式伪装 / worker token 不可信、真实 A→B 替换拒绝、B 显式重开、恢复 A、同长度负例、缺失 / 非 PDF 源、加密候选及畸形候选身份不等于 PDF 有效性
+- 3 份 DOC/DOCX 的严格 / 预览 / worker 输出对照保持原有路径；六个原件、冻结二进制、历史报告及所有构建来源在前后检查中保持不变
+- 已有证据目录拒绝覆盖（EEXIST），用冻结旧 CLI 冒充候选在提取任何样例前拒绝；原报告哈希未变。日志 `tmp/pdf-session-independent-first-existing-output.log` 与 `tmp/pdf-session-independent-reject-baseline/`
+
+固定旧 CLI SHA-256 为 `c92bdffaeeba9fa823d03ed53c141b284645ac70a20ff002c5110e2918274976`；当前 CLI 为 `8d8799d15ab7faf8cf53d496445a9dda00cab89b8753db56338a4178a5069bff`，生产模块 probe 为 `045dd8c0c5fbdb9b0ecdb2ba7bd0b094ab4fc2015280caf652db0818cf0691c4`。构建来源和相关源 / 依赖 / 库 / 二进制身份在 `tmp/pdf-session-provenance.json`；独立报告 SHA-256 为 `fad4a12bc3fee8f56926fb4c445ffa7bbafb3519559cba3e5faab390302081f0`。
+
+### 纠正与环境边界
+
+首轮新增测试声明语法错误及一处 cfg 属性后的多余空行 lint 已修正，失败日志保留。首轮误用全目录格式化导致的 vendor 纯格式改动立即恢复，最终 vendor 与发布版本字节一致；没有删除原件或历史证据。独立源审查发现迁移后一个 `SavedPresentation` 构造缺字段，以及异步 dialog close 事件覆盖不足，均修正并补验。
+
+实际生产 `worker` / 会话模块由 standalone probe 编译执行，薄 Tauri 命令适配器只能源审查，不能据此声称原生编译或 IPC 通过。Chromium EPERM、云端本机服务限制、Linux GLib/WebKit 依赖及离线 Windows 环境仍在；本轮没有重试已拒绝路径、没有实际浏览器 / WebView2 / 对话框 / 页面像素验收。历史浏览器密码与 PDF 工作区样例仅补 token，不将未运行的规格计入通过数。
+
+本轮不提供文件系统原子快照、A→B→A 历史侦测、文件锁、解码资源扩张保护或后续读取时间截止。原 worker 30 秒、32 MiB 响应、64 KiB 请求和 Windows 512 MiB 配额保持，不能把独立 Linux worker 试验等同 Windows Job 实测。
+
+
 ## 本轮：PDF 提取器普通 unwind 回退（2026-10-13）
 
 基于 `16eb21e93fd8f81a212f2a684f971f169314bfa8`，只在 `src/pdf_snapshot.rs` 的实际提取调用周围捕获普通 unwind；同一有界源读取 / 签名 / 大小校验仍在捕获区外。严格模式明确错误，预览模式为空正文 / 真实字节数 / panic-specific `text_error`。原有成功、空白与返回错误策略不变；没有把 worker 非零退出、超时或协议故障普遍降级。实现、资源和页面验收边界见 [PDF_PANIC_RECOVERY.md](PDF_PANIC_RECOVERY.md)。

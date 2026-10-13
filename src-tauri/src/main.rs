@@ -1,21 +1,21 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use serde::{Deserialize, Serialize};
-use std::{io::Read, path::PathBuf, sync::Mutex};
+use serde::Serialize;
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 use tauri::Manager;
+mod document_protocol;
+mod document_session;
 mod pdf_export;
+use document_protocol::{OpenedDocument, SavedPresentation};
+use document_session::SessionState;
 mod worker;
 #[cfg(windows)]
 mod worker_job;
 
 #[derive(Default)]
-struct Session(Mutex<Option<PathBuf>>);
-
-#[derive(Serialize, Deserialize)]
-struct SavedPresentation {
-    path: String,
-    report: rust_wps::editing::EditReport,
-    presentation: rust_wps::presentation::PresentationReport,
-}
+struct Session(Arc<Mutex<SessionState>>);
 
 #[tauri::command]
 async fn replace_presentation_current(
@@ -23,19 +23,19 @@ async fn replace_presentation_current(
     find: String,
     replacement: String,
 ) -> Result<Option<SavedPresentation>, String> {
-    let path = state
-        .0
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone()
-        .ok_or("请先打开 PPTX")?;
-    if !path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("pptx"))
-    {
-        return Err("当前文件不是 PPTX".into());
-    }
-    let saved = tauri::async_runtime::spawn_blocking(
+    let (ticket, path) = {
+        let mut session = state.0.lock().map_err(|e| e.to_string())?;
+        let path = session.current_path().ok_or("请先打开 PPTX")?;
+        if !path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("pptx"))
+        {
+            return Err("当前文件不是 PPTX".into());
+        }
+        let ticket = session.reserve()?;
+        (ticket, path)
+    };
+    let mut saved = tauri::async_runtime::spawn_blocking(
         move || -> Result<Option<SavedPresentation>, String> {
             let stem = path.file_stem().unwrap_or_default().to_string_lossy();
             let Some(output) = rfd::FileDialog::new()
@@ -64,26 +64,16 @@ async fn replace_presentation_current(
     )
     .await
     .map_err(|e| e.to_string())??;
-    if let Some(saved) = &saved {
-        *state.0.lock().map_err(|e| e.to_string())? = Some(PathBuf::from(&saved.path));
+    if let Some(saved) = &mut saved {
+        let token = state
+            .0
+            .lock()
+            .map_err(|e| e.to_string())?
+            .commit_non_pdf(ticket, PathBuf::from(&saved.path))
+            .map_err(|error| format!("文件已另存至 {}，但未切换当前文档：{error}", saved.path))?;
+        saved.session_token = Some(token);
     }
     Ok(saved)
-}
-
-#[derive(Serialize, Deserialize)]
-struct OpenedDocument {
-    name: String,
-    path: String,
-    inspection: rust_wps::Inspection,
-    authored: Option<rust_wps::document::Node>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    workbook: Option<Box<rust_wps::spreadsheet::WorkbookReport>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    workbook_model: Option<Box<rust_wps::spreadsheet_edit::Workbook>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    presentation: Option<Box<rust_wps::presentation::PresentationReport>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    presentation_model: Option<Box<rust_wps::presentation_model::Presentation>>,
 }
 
 #[derive(Serialize)]
@@ -100,7 +90,7 @@ async fn import_workbook_current(
         .0
         .lock()
         .map_err(|e| e.to_string())?
-        .clone()
+        .current_path()
         .ok_or("请先打开 XLSX")?;
     if !path
         .extension()
@@ -126,7 +116,7 @@ async fn import_presentation_current(
         .0
         .lock()
         .map_err(|e| e.to_string())?
-        .clone()
+        .current_path()
         .ok_or("请先打开 PPTX")?;
     if !path
         .extension()
@@ -152,7 +142,7 @@ async fn import_current(
         .0
         .lock()
         .map_err(|e| e.to_string())?
-        .clone()
+        .current_path()
         .ok_or("请先打开 DOC 或 DOCX")?;
     if !path
         .extension()
@@ -172,6 +162,7 @@ async fn import_current(
 
 #[tauri::command]
 async fn open_document(state: tauri::State<'_, Session>) -> Result<Option<OpenedDocument>, String> {
+    let ticket = state.0.lock().map_err(|e| e.to_string())?.reserve()?;
     let result = tauri::async_runtime::spawn_blocking(|| {
         #[cfg(feature = "native-smoke")]
         let test_path = std::env::var_os("RUST_WPS_SMOKE_OPEN_INPUT").map(PathBuf::from);
@@ -187,16 +178,26 @@ async fn open_document(state: tauri::State<'_, Session>) -> Result<Option<Opened
         }) else {
             return Ok(None);
         };
-        let opened = match worker::run(worker::Request::Open { path: path.clone() })? {
-            worker::Response::Opened { document } => document,
-            _ => return Err("解析进程返回了错误类型".into()),
-        };
-        Ok::<_, String>(Some((path, opened)))
+        let (opened, pdf_identity) =
+            match worker::run(worker::Request::Open { path: path.clone() })? {
+                worker::Response::Opened {
+                    document,
+                    pdf_identity,
+                } => (document, pdf_identity),
+                _ => return Err("解析进程返回了错误类型".into()),
+            };
+        Ok::<_, String>(Some((path, opened, pdf_identity)))
     })
     .await
     .map_err(|e| e.to_string())??;
-    if let Some((path, opened)) = result {
-        *state.0.lock().map_err(|e| e.to_string())? = Some(path);
+    if let Some((path, mut opened, pdf_identity)) = result {
+        let token = state.0.lock().map_err(|e| e.to_string())?.commit_open(
+            ticket,
+            path,
+            &opened,
+            pdf_identity,
+        )?;
+        opened.session_token = Some(token);
         Ok(Some(opened))
     } else {
         Ok(None)
@@ -213,7 +214,7 @@ async fn replace_current(
         .0
         .lock()
         .map_err(|e| e.to_string())?
-        .clone()
+        .current_path()
         .ok_or("请先打开文档")?;
     tauri::async_runtime::spawn_blocking(move || {
         let stem = path.file_stem().unwrap_or_default().to_string_lossy();
@@ -238,30 +239,11 @@ async fn replace_current(
 #[tauri::command]
 async fn read_current_pdf(
     state: tauri::State<'_, Session>,
+    session_token: String,
 ) -> Result<tauri::ipc::Response, String> {
-    let path = state
-        .0
-        .lock()
-        .map_err(|e| e.to_string())?
-        .clone()
-        .ok_or("请先打开 PDF")?;
-    if !path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
-    {
-        return Err("当前文件不是 PDF".into());
-    }
-    let bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let mut bytes = Vec::new();
-        std::fs::File::open(path)
-            .map_err(|e| e.to_string())?
-            .take(64 * 1024 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        if bytes.len() > 64 * 1024 * 1024 {
-            return Err("PDF 超出 64 MiB 上限".into());
-        }
-        Ok(bytes)
+    let session = Arc::clone(&state.0);
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        document_session::read_pdf(&session, &session_token)
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -503,6 +485,7 @@ async fn save_new_presentation(
         let presentation = rust_wps::presentation_model::export_pptx(&model, &path)
             .map_err(|e| format!("{e:#}"))?;
         Ok(Some(SavedPresentation {
+            session_token: None,
             path: path.to_string_lossy().into(),
             presentation,
             report: rust_wps::editing::EditReport {
