@@ -55,7 +55,12 @@ async function operation(label: string, action: () => Promise<void>) {
   if (busy) return;
   busy = true; pauseAuthoring(true); pauseWorkbook(true); pausePresentation(true); controls(); el('status').textContent = label;
   try { await action(); }
-  catch (error) { notice(`操作未完成：${String(error)}`, true); }
+  catch (error) {
+    const message = String(error).includes('Hidden text cannot be preserved in an editable copy')
+      ? '文档含隐藏文字声明，暂不能创建编辑副本，以免丢失内容。原文件保持不变；只读正文可能不显示隐藏文字。未使用或已覆盖的隐藏样式也会保守拦截。'
+      : String(error);
+    notice(`操作未完成：${message}`, true);
+  }
   finally { busy = false; pauseAuthoring(false); pauseWorkbook(false); pausePresentation(false); el('status').textContent = '就绪'; controls(); }
 }
 initializePresentationPdf(operation,notice);

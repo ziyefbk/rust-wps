@@ -1,0 +1,18 @@
+{
+  "repository": "apache/tika",
+  "revision": "6f6e6d389007c682cde51a95714e725895dd0c6e",
+  "path": "tika-parsers/tika-parsers-standard/tika-parsers-standard-modules/tika-parser-microsoft-module/src/test/resources/test-documents/testWORD_features.docx",
+  "bytes": 8169,
+  "sha256": "b0920ec3e38521c02ca75ef0b1ed1b2b19fabcd701b75366e89b818228094e25",
+  "hidden_runs": [
+    "inceptos ",
+    "This is hidden text."
+  ],
+  "license": "Repository LICENSE.txt is Apache-2.0 plus third-party notices; no fixture-specific exception found. Individual fixture redistribution rights not independently reviewed.",
+  "provenance": "Added by TIKA-4437 (2025-07-02) as upstream hidden-text, comments, and tracked-changes regression fixture; app metadata identifies LibreOffice 24.2.7.2 on Linux.",
+  "limitations": [
+    "Upstream test fixture, not user production DOCX",
+    "Contains tracked insertions/deletions and comments, so hidden-text refusal should be asserted by diagnostic or dedicated feature detection rather than generic error alone",
+    "No binary committed; local validation download only"
+  ]
+}

@@ -143,6 +143,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
             !matches!(
                 risk.as_str(),
                 "Tracked changes"
+                    | crate::compatibility::HIDDEN_TEXT_RISK
                     | "Custom theme color mapping is unsupported"
                     | "Unsupported theme color scheme content"
                     | "Unsupported or unresolved hyperlink target"

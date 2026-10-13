@@ -8,6 +8,8 @@
 
 ## 首次运行与检查
 
+本轮增加 DOCX 隐藏文字导入保护，详情与命令见 [HIDDEN_TEXT.md](HIDDEN_TEXT.md)。Rust 1.99/1.88 各 153 项核心、1,255 项 vendor、前端构建、39 项无浏览器前端/模型检查和真实语料独立对照通过。完整严格 Clippy 有既有跨格式告警；仅对该既有 lint 作命令行排除后通过。Linux Chromium 启动被 socket 权限阻止，桌面测试因缺 glib/GTK/WebKit 构建依赖受阻；164 项浏览器相关用例及 Windows 原生回归未完成，不可用历史结果替代。本轮未改 Excel/PPT 功能或 vendor。
+
 在 Windows 安装 Rust、Node/npm、MSVC 构建工具和 WebView2。仓库根目录执行：
 
 ```powershell

@@ -5,6 +5,43 @@ use quick_xml::{Reader, events::Event};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, io::Read, path::Path};
 
+pub(crate) const HIDDEN_TEXT_RISK: &str = "Hidden text cannot be preserved in an editable copy";
+
+// The current parser recognizes toggle attributes by the literal `w:val`
+// spelling. A different prefix (even bound to the same namespace) would be
+// treated as missing/true downstream, so it must not bypass this guard.
+// Scan declarations, not effective styles: an unused or overridden hidden
+// style deliberately remains read-only until the model can retain its text.
+fn may_hide_text(element: &quick_xml::events::BytesStart<'_>) -> Result<bool> {
+    let mut disabled = false;
+    let mut values = 0;
+    for attribute in element.attributes() {
+        let attribute = attribute?;
+        if attribute.key.local_name().as_ref() == "val" {
+            values += 1;
+            let value = attribute.normalized_value(quick_xml::XmlVersion::Implicit1_0)?;
+            disabled = attribute.key.as_ref() == "w:val"
+                && matches!(value.as_ref(), "0" | "false" | "off");
+        }
+    }
+    Ok(values != 1 || !disabled)
+}
+
+fn has_hidden_text_declaration(data: &[u8]) -> Result<bool> {
+    let mut reader = Reader::from_reader(data);
+    let mut hidden = false;
+    loop {
+        match reader.read_event()? {
+            Event::Start(e) | Event::Empty(e) if e.local_name().as_ref() == "vanish" => {
+                hidden |= may_hide_text(&e)?;
+            }
+            Event::DocType(_) => anyhow::bail!("DTD is not supported in DOCX XML"),
+            Event::Eof => return Ok(hidden),
+            _ => {}
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompatibilityReport {
     pub paragraphs: usize,
@@ -39,6 +76,35 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
         fidelity_verified: false,
     };
     let mut links = std::collections::BTreeMap::new();
+    let mut normalized_main = None;
+    // Inspect exactly the main/style parts that the downstream parser will
+    // consume, including OPC relationship resolution and ZIP name handling.
+    // Minimal inventory-only ZIPs may lack content types; import itself still
+    // rejects those through the package reader.
+    if parts
+        .keys()
+        .any(|name| name.eq_ignore_ascii_case("[Content_Types].xml"))
+    {
+        use office_oxide::core::{opc::OpcReader, relationships::rel_types};
+        let mut package = OpcReader::new(std::io::Cursor::new(bytes))?;
+        let main = package.main_document_part()?;
+        ensure!(
+            main.as_str() == "/word/document.xml",
+            "Only the standard word/document.xml main part is supported for editing"
+        );
+        let main_xml = package.read_part(&main)?;
+        if has_hidden_text_declaration(&main_xml)? {
+            report.risks.insert(HIDDEN_TEXT_RISK.into());
+        }
+        normalized_main = Some(main_xml);
+        let relationships = package.read_rels_for(&main)?;
+        if let Some(styles) = relationships.first_by_type(rel_types::STYLES) {
+            let target = main.resolve_relative(&styles.target)?;
+            if has_hidden_text_declaration(&package.read_part(&target)?)? {
+                report.risks.insert(HIDDEN_TEXT_RISK.into());
+            }
+        }
+    }
     if let Some(data) = parts.get("word/_rels/document.xml.rels") {
         let mut reader = Reader::from_reader(data.as_slice());
         loop {
@@ -89,13 +155,21 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
         if !name.starts_with("word/") || !name.ends_with(".xml") {
             continue;
         }
-        let mut reader = Reader::from_reader(data.as_slice());
+        let data = if name == "word/document.xml" {
+            normalized_main.as_deref().unwrap_or(&data)
+        } else {
+            data.as_slice()
+        };
+        let mut reader = Reader::from_reader(data);
         let mut in_color_scheme = false;
         loop {
             match reader.read_event()? {
                 Event::Start(e) | Event::Empty(e) => {
                     let local = e.local_name();
                     let tag = local.as_ref();
+                    if tag == "vanish" && may_hide_text(&e)? {
+                        report.risks.insert(HIDDEN_TEXT_RISK.into());
+                    }
                     if tag == "clrScheme" {
                         in_color_scheme = true;
                     } else if in_color_scheme
