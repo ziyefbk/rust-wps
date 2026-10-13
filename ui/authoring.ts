@@ -1,3 +1,5 @@
+import {ParagraphIndent, omitDefaultParagraphIndent, validateParagraphIndentDocument} from './word-paragraph-indent';
+import {WordParagraphIndentControls} from './word-paragraph-indent-controls';
 import {WordPageGeometry, documentPageGeometry, validatePageGeometryDocument} from './word-page-geometry';
 import {WordPageControls} from './word-page-controls';
 import {searchWord,type WordMatch} from './word-search';
@@ -83,6 +85,7 @@ let fontFamilyInputEditing = false;
 let paragraphSpacingInputEditing = false;
 let tableWidthInputEditing = false;
 let pageControls: WordPageControls | null = null;
+let paragraphIndentControls: WordParagraphIndentControls | null = null;
 let imageControls: WordImageControls | null = null;
 let imageParagraphControls: WordImageParagraphControls | null = null;
 let tableIndentInputEditing = false;
@@ -92,7 +95,7 @@ const paragraphSpacingIds: Record<ParagraphSpacingField, string> = {
   spaceBefore: 'edit-space-before', spaceAfter: 'edit-space-after', lineSpacing: 'edit-line-spacing',
 };
 function snapshotDocument(owner: Pick<Editor, 'getJSON'>): JSONContent {
-  return omitDefaultImageDimensions(omitDefaultTableWidths(omitDefaultParagraphSpacing(snapshotStyledDocument(owner))));
+  return omitDefaultParagraphIndent(omitDefaultImageDimensions(omitDefaultTableWidths(omitDefaultParagraphSpacing(snapshotStyledDocument(owner)))));
 }
 let onChangeMode: (() => Promise<void>) | null = null;
 let canLeaveOther: () => Promise<boolean> = async () => true;
@@ -328,6 +331,7 @@ function updateToolbar() {
   for (const button of document.querySelectorAll<HTMLButtonElement>('#editor-toolbar button')) button.disabled = locked;
   // Image-specific selection/saving locks must follow the toolbar defaults.
   pageControls?.update();
+  paragraphIndentControls?.update();
   imageControls?.update();
   imageParagraphControls?.update();
   for (const mark of ['bold', 'italic', 'underline', 'strike', 'superscript', 'subscript', 'bulletList', 'orderedList']) {
@@ -458,6 +462,7 @@ function queueDraft(doc: JSONContent) {
 }
 export function closeAuthoring() {
   pageControls?.reset();
+  paragraphIndentControls?.reset();
   imageControls?.reset();
   imageParagraphControls?.reset();
   tableWidthInputEditing = false;
@@ -483,6 +488,7 @@ async function create(content?: JSONContent, ask = true) {
   validateTableWidthsDocument(initial);
   validateImageDimensionsDocument(initial);
   validatePageGeometryDocument(initial);
+  validateParagraphIndentDocument(initial);
   if (ask && !(await canLeaveAuthoring())) return;
   // Flush the previous document before a new draft enters the same slot.
   closeAuthoring();
@@ -494,7 +500,7 @@ async function create(content?: JSONContent, ask = true) {
     editable: !paused,
     element: el('editor-content'),
     extensions: [FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
-      WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, PageBreak, TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
+      WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, ParagraphIndent.configure({onIndentError: message => showNotice(message, true)}), PageBreak, TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
     content: initial,
     editorProps: {
       attributes: state => ({ 'aria-label': '文档编辑区', spellcheck: 'false', 'data-style-profile': state.doc.attrs.styleProfile ?? 'legacy-v1', ...(state.doc.attrs.pageGeometry ? {'data-page-geometry': JSON.stringify(state.doc.attrs.pageGeometry)} : {}) }),
@@ -521,7 +527,7 @@ async function create(content?: JSONContent, ask = true) {
       draftTimer = setTimeout(() => { draftTimer = null; if (owner === editor) queueDraft(snapshotDocument(owner)); }, 700);
       updateToolbar();
     },
-    onFocus: () => { tableIndentInputEditing = false; tableWidthInputEditing = false; paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
+    onFocus: () => { paragraphIndentControls?.cancelEditing(); tableIndentInputEditing = false; tableWidthInputEditing = false; paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
     onSelectionUpdate: updateToolbar,
   });
   dirty = !!content; version++;
@@ -532,6 +538,7 @@ async function create(content?: JSONContent, ask = true) {
 }
 
 export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof showNotice, beforeLeave: () => Promise<boolean> = async () => true) {
+  paragraphIndentControls = new WordParagraphIndentControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   imageParagraphControls = new WordImageParagraphControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
   pageControls = new WordPageControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
   imageControls = new WordImageControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});

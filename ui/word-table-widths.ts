@@ -1,3 +1,4 @@
+import {omitDefaultParagraphIndent, validateParagraphIndentDocument} from './word-paragraph-indent-model';
 import {isPageGeometry, omitDefaultPageGeometry, pageTableWidthTwips, validatePageGeometryDocument} from './word-page-geometry';
 import {mergeAttributes, type CommandProps, type JSONContent} from '@tiptap/core';
 import {Table, TableView, type TableOptions} from '@tiptap/extension-table';
@@ -173,6 +174,7 @@ function validateProspectiveDocument(document: Node): void {
   const snapshot = omitDefaultTableWidths(document.toJSON());
   validateTableWidthsDocument(snapshot);
   validatePageGeometryDocument(omitDefaultPageGeometry(snapshot));
+  validateParagraphIndentDocument(omitDefaultParagraphIndent(omitDefaultPageGeometry(snapshot)));
   if (encoder.encode(JSON.stringify({version: 1, document: snapshot})).length > 32 * 1024 * 1024) {
     throw new Error('表格修改后草稿超过 32 MiB 保存上限，未修改正文。');
   }

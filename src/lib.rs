@@ -1,5 +1,6 @@
 mod image_dimensions;
 mod page_geometry;
+mod paragraph_indentation;
 mod presentation_vertical;
 mod table_widths;
 use anyhow::{Context, Result, bail};

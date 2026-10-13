@@ -1,0 +1,1136 @@
+{
+  "description": "Unchanged public upstream fixtures are separated from synthetic directed fixtures. Each binary stays local and is not redistributed in the repository. Hashes refer to original downloads.",
+  "licenses": [
+    {
+      "repository": "LibreOffice/core",
+      "repository_license_files": {
+        "MPL-2.0": "https://github.com/LibreOffice/core/blob/6e5f11edfc5f080cf99e1807916df5cedec785b7/COPYING.MPL",
+        "LGPL-3.0": "https://github.com/LibreOffice/core/blob/6e5f11edfc5f080cf99e1807916df5cedec785b7/COPYING.LGPL"
+      },
+      "caveat": "Repository license texts verified. Original individual DOCX fixture authorship and redistribution rights have not been separately reviewed. Local validation only; no binary committed."
+    },
+    {
+      "repository": "apache/poi",
+      "repository_license": "Apache License 2.0",
+      "url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/legal/LICENSE",
+      "caveat": "Original fixture authorship and redistribution rights not separately reviewed. Local validation only; no binary committed."
+    }
+  ],
+  "normative_sources": [
+    {
+      "url": "https://ecma-international.org/wp-content/uploads/ECMA-376-1_5th_edition_december_2016.zip",
+      "sections": [
+        "17.3.1.12, printed pages 219–224",
+        "17.7.2, style hierarchy",
+        "22.9.2.14, printed pages 3797–3798: ST_TwipsMeasure uses positive universal measures or unsigned decimal numbers"
+      ],
+      "zip_sha256": "9d0bcad9cf06054785b03762fcfadbf6bab7e54a5f9d69434e34b7fd464d4129"
+    },
+    {
+      "url": "https://ecma-international.org/wp-content/uploads/ECMA-376-4_5th_edition_december_2016.zip",
+      "sections": [
+        "14.3.1.2, printed page 35: transitional left/right equivalents"
+      ],
+      "zip_sha256": "bd25da1109f73762356596918bf5ff8b74a1331642dba5f1c1d1dfc6bed34ecd"
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "test_indentation.docx",
+      "repository": "LibreOffice/core",
+      "revision": "6e5f11edfc5f080cf99e1807916df5cedec785b7",
+      "directory": "sw/qa/extras/ooxmlexport/data",
+      "local_default": "tmp/paragraph-indentation-source/test_indentation.docx",
+      "bytes": 12896,
+      "sha256": "e999c8a177efaefa7121e8adcabdee99cadd41722164e77038579d852cce92c7",
+      "git_blob_sha": "b39e0665841618cabe489c22ad48d0b94e953c1b",
+      "source_url": "https://github.com/LibreOffice/core/blob/6e5f11edfc5f080cf99e1807916df5cedec785b7/sw/qa/extras/ooxmlexport/data/test_indentation.docx",
+      "raw_url": "https://raw.githubusercontent.com/LibreOffice/core/6e5f11edfc5f080cf99e1807916df5cedec785b7/sw/qa/extras/ooxmlexport/data/test_indentation.docx",
+      "fixture_kind": "original unmodified public upstream regression fixture; not a user production document",
+      "retrieval": "Downloaded pinned upstream raw bytes and matched the GitHub tree Git blob SHA; no source mutation or re-save. No binary committed.",
+      "expected_action": "roundtrip",
+      "inventory": {
+        "paragraph_count": 1,
+        "nonzero_direct_paragraph_indexes": [
+          0
+        ],
+        "paragraphs": [
+          {
+            "paragraph_index": 0,
+            "text_length": 344,
+            "text_sha256": "b5eef346918c50ba769617b4b551fbca35a6e8caa5e6767cad4c0bab5fb97f8f",
+            "direct_indentation": {
+              "left": "567"
+            },
+            "in_table": false
+          }
+        ],
+        "style_indentation_declarations": [
+          {
+            "style_id": "Style1",
+            "declaration": {
+              "left": "1701"
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "attrs": {
+            "indentLeftTwips": 567
+          }
+        }
+      ],
+      "render": true,
+      "scope": "Visible 567-twip left indent overrides Style1 inherited 1701. Exact full text and effective indentation preserved; no whole-document fidelity claim."
+    },
+    {
+      "name": "table-alignment.docx",
+      "repository": "apache/poi",
+      "revision": "ae62bb5116b9aee19ebd5834e3a82066132c9f7f",
+      "directory": "test-data/document",
+      "local_default": "tmp/table-corpus/table-alignment.docx",
+      "bytes": 15519,
+      "sha256": "ee36729e0d050e529fea0b444006a194bea72b35cf8958ae58c6624c26156b41",
+      "git_blob_sha": "76fd85c338a1515c2ba2736953ba8424a9bc9367",
+      "source_url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/table-alignment.docx",
+      "raw_url": "https://raw.githubusercontent.com/apache/poi/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/table-alignment.docx",
+      "fixture_kind": "original unmodified public upstream regression fixture; not a user production document",
+      "retrieval": "Downloaded pinned upstream raw bytes and matched the GitHub tree Git blob SHA; no source mutation or re-save. No binary committed.",
+      "expected_action": "roundtrip",
+      "inventory": {
+        "paragraph_count": 60,
+        "nonzero_direct_paragraph_indexes": [
+          9,
+          19,
+          29,
+          39,
+          49,
+          59
+        ],
+        "paragraphs": [
+          {
+            "paragraph_index": 0,
+            "text_length": 5,
+            "text_sha256": "6151b2e8e53bfbf177efbd944e82ff0a7fce9221c811bfc674f4276ddf265a18",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 1,
+            "text_length": 5,
+            "text_sha256": "5816f7ccf1564896a273b031fc0d1b04759ed70d2d02c50b3978b5a0125b0ec5",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 2,
+            "text_length": 5,
+            "text_sha256": "30c9694a0ab5fcf58545293a4cce8ea83463214825bd76e7b32431eadb798e3a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 3,
+            "text_length": 4,
+            "text_sha256": "711d1c4acefc4c898aab673710716dd0acad647cd1c7bf56311442b07d49581e",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 4,
+            "text_length": 11,
+            "text_sha256": "e518da86f1988dc34c03ccda2b4dbedba4bd7b214f663a24899e58b547cd6823",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 5,
+            "text_length": 10,
+            "text_sha256": "cb9c78bcfd08c48d2e2575f222cb647c9ccf150b571ffe9e05f6a78345ba10d3",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 6,
+            "text_length": 7,
+            "text_sha256": "dc2333b04c4db0ed4bd3bd8fa09fb4c135f4a41a7300b6c6fba411193836541c",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 7,
+            "text_length": 8,
+            "text_sha256": "e3263a28f5df5696e5664b9859fa948d25bfb137433bf630908a197c9754d39a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 8,
+            "text_length": 2,
+            "text_sha256": "5312fb609f60384731fcfcb95deef3602239bf61f865a07bd8e08d818d22e9fa",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 9,
+            "text_length": 0,
+            "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "direct_indentation": {
+              "left": "360"
+            },
+            "in_table": false
+          },
+          {
+            "paragraph_index": 10,
+            "text_length": 5,
+            "text_sha256": "6151b2e8e53bfbf177efbd944e82ff0a7fce9221c811bfc674f4276ddf265a18",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 11,
+            "text_length": 5,
+            "text_sha256": "5816f7ccf1564896a273b031fc0d1b04759ed70d2d02c50b3978b5a0125b0ec5",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 12,
+            "text_length": 5,
+            "text_sha256": "30c9694a0ab5fcf58545293a4cce8ea83463214825bd76e7b32431eadb798e3a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 13,
+            "text_length": 4,
+            "text_sha256": "711d1c4acefc4c898aab673710716dd0acad647cd1c7bf56311442b07d49581e",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 14,
+            "text_length": 11,
+            "text_sha256": "e518da86f1988dc34c03ccda2b4dbedba4bd7b214f663a24899e58b547cd6823",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 15,
+            "text_length": 10,
+            "text_sha256": "cb9c78bcfd08c48d2e2575f222cb647c9ccf150b571ffe9e05f6a78345ba10d3",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 16,
+            "text_length": 7,
+            "text_sha256": "dc2333b04c4db0ed4bd3bd8fa09fb4c135f4a41a7300b6c6fba411193836541c",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 17,
+            "text_length": 8,
+            "text_sha256": "e3263a28f5df5696e5664b9859fa948d25bfb137433bf630908a197c9754d39a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 18,
+            "text_length": 2,
+            "text_sha256": "5312fb609f60384731fcfcb95deef3602239bf61f865a07bd8e08d818d22e9fa",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 19,
+            "text_length": 0,
+            "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "direct_indentation": {
+              "left": "360"
+            },
+            "in_table": false
+          },
+          {
+            "paragraph_index": 20,
+            "text_length": 5,
+            "text_sha256": "6151b2e8e53bfbf177efbd944e82ff0a7fce9221c811bfc674f4276ddf265a18",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 21,
+            "text_length": 5,
+            "text_sha256": "5816f7ccf1564896a273b031fc0d1b04759ed70d2d02c50b3978b5a0125b0ec5",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 22,
+            "text_length": 5,
+            "text_sha256": "30c9694a0ab5fcf58545293a4cce8ea83463214825bd76e7b32431eadb798e3a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 23,
+            "text_length": 4,
+            "text_sha256": "711d1c4acefc4c898aab673710716dd0acad647cd1c7bf56311442b07d49581e",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 24,
+            "text_length": 11,
+            "text_sha256": "e518da86f1988dc34c03ccda2b4dbedba4bd7b214f663a24899e58b547cd6823",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 25,
+            "text_length": 10,
+            "text_sha256": "cb9c78bcfd08c48d2e2575f222cb647c9ccf150b571ffe9e05f6a78345ba10d3",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 26,
+            "text_length": 7,
+            "text_sha256": "dc2333b04c4db0ed4bd3bd8fa09fb4c135f4a41a7300b6c6fba411193836541c",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 27,
+            "text_length": 8,
+            "text_sha256": "e3263a28f5df5696e5664b9859fa948d25bfb137433bf630908a197c9754d39a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 28,
+            "text_length": 2,
+            "text_sha256": "5312fb609f60384731fcfcb95deef3602239bf61f865a07bd8e08d818d22e9fa",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 29,
+            "text_length": 0,
+            "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "direct_indentation": {
+              "left": "360"
+            },
+            "in_table": false
+          },
+          {
+            "paragraph_index": 30,
+            "text_length": 5,
+            "text_sha256": "6151b2e8e53bfbf177efbd944e82ff0a7fce9221c811bfc674f4276ddf265a18",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 31,
+            "text_length": 5,
+            "text_sha256": "5816f7ccf1564896a273b031fc0d1b04759ed70d2d02c50b3978b5a0125b0ec5",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 32,
+            "text_length": 5,
+            "text_sha256": "30c9694a0ab5fcf58545293a4cce8ea83463214825bd76e7b32431eadb798e3a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 33,
+            "text_length": 4,
+            "text_sha256": "711d1c4acefc4c898aab673710716dd0acad647cd1c7bf56311442b07d49581e",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 34,
+            "text_length": 11,
+            "text_sha256": "e518da86f1988dc34c03ccda2b4dbedba4bd7b214f663a24899e58b547cd6823",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 35,
+            "text_length": 10,
+            "text_sha256": "cb9c78bcfd08c48d2e2575f222cb647c9ccf150b571ffe9e05f6a78345ba10d3",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 36,
+            "text_length": 7,
+            "text_sha256": "dc2333b04c4db0ed4bd3bd8fa09fb4c135f4a41a7300b6c6fba411193836541c",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 37,
+            "text_length": 8,
+            "text_sha256": "e3263a28f5df5696e5664b9859fa948d25bfb137433bf630908a197c9754d39a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 38,
+            "text_length": 2,
+            "text_sha256": "5312fb609f60384731fcfcb95deef3602239bf61f865a07bd8e08d818d22e9fa",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 39,
+            "text_length": 0,
+            "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "direct_indentation": {
+              "left": "360"
+            },
+            "in_table": false
+          },
+          {
+            "paragraph_index": 40,
+            "text_length": 5,
+            "text_sha256": "6151b2e8e53bfbf177efbd944e82ff0a7fce9221c811bfc674f4276ddf265a18",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 41,
+            "text_length": 5,
+            "text_sha256": "5816f7ccf1564896a273b031fc0d1b04759ed70d2d02c50b3978b5a0125b0ec5",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 42,
+            "text_length": 5,
+            "text_sha256": "30c9694a0ab5fcf58545293a4cce8ea83463214825bd76e7b32431eadb798e3a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 43,
+            "text_length": 4,
+            "text_sha256": "711d1c4acefc4c898aab673710716dd0acad647cd1c7bf56311442b07d49581e",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 44,
+            "text_length": 11,
+            "text_sha256": "e518da86f1988dc34c03ccda2b4dbedba4bd7b214f663a24899e58b547cd6823",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 45,
+            "text_length": 10,
+            "text_sha256": "cb9c78bcfd08c48d2e2575f222cb647c9ccf150b571ffe9e05f6a78345ba10d3",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 46,
+            "text_length": 7,
+            "text_sha256": "dc2333b04c4db0ed4bd3bd8fa09fb4c135f4a41a7300b6c6fba411193836541c",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 47,
+            "text_length": 8,
+            "text_sha256": "e3263a28f5df5696e5664b9859fa948d25bfb137433bf630908a197c9754d39a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 48,
+            "text_length": 2,
+            "text_sha256": "5312fb609f60384731fcfcb95deef3602239bf61f865a07bd8e08d818d22e9fa",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 49,
+            "text_length": 0,
+            "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "direct_indentation": {
+              "left": "360"
+            },
+            "in_table": false
+          },
+          {
+            "paragraph_index": 50,
+            "text_length": 5,
+            "text_sha256": "6151b2e8e53bfbf177efbd944e82ff0a7fce9221c811bfc674f4276ddf265a18",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 51,
+            "text_length": 5,
+            "text_sha256": "5816f7ccf1564896a273b031fc0d1b04759ed70d2d02c50b3978b5a0125b0ec5",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 52,
+            "text_length": 5,
+            "text_sha256": "30c9694a0ab5fcf58545293a4cce8ea83463214825bd76e7b32431eadb798e3a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 53,
+            "text_length": 4,
+            "text_sha256": "711d1c4acefc4c898aab673710716dd0acad647cd1c7bf56311442b07d49581e",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 54,
+            "text_length": 11,
+            "text_sha256": "e518da86f1988dc34c03ccda2b4dbedba4bd7b214f663a24899e58b547cd6823",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 55,
+            "text_length": 10,
+            "text_sha256": "cb9c78bcfd08c48d2e2575f222cb647c9ccf150b571ffe9e05f6a78345ba10d3",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 56,
+            "text_length": 7,
+            "text_sha256": "dc2333b04c4db0ed4bd3bd8fa09fb4c135f4a41a7300b6c6fba411193836541c",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 57,
+            "text_length": 8,
+            "text_sha256": "e3263a28f5df5696e5664b9859fa948d25bfb137433bf630908a197c9754d39a",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 58,
+            "text_length": 2,
+            "text_sha256": "5312fb609f60384731fcfcb95deef3602239bf61f865a07bd8e08d818d22e9fa",
+            "direct_indentation": {},
+            "in_table": true
+          },
+          {
+            "paragraph_index": 59,
+            "text_length": 0,
+            "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "direct_indentation": {
+              "left": "360"
+            },
+            "in_table": false
+          }
+        ],
+        "style_indentation_declarations": [
+          {
+            "style_id": "ListParagraph",
+            "declaration": {
+              "left": "720"
+            }
+          },
+          {
+            "style_id": "IntenseQuote",
+            "declaration": {
+              "left": "864",
+              "right": "864"
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {
+            "indentLeftTwips": 360
+          }
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {
+            "indentLeftTwips": 360
+          }
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {
+            "indentLeftTwips": 360
+          }
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {
+            "indentLeftTwips": 360
+          }
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {
+            "indentLeftTwips": 360
+          }
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {},
+          "in_table": true
+        },
+        {
+          "attrs": {
+            "indentLeftTwips": 360
+          }
+        }
+      ],
+      "scope": "Six indented empty body paragraphs only. This is an empty-paragraph preservation positive, not visible indentation evidence. Existing automatic table width normalization remains separate."
+    },
+    {
+      "name": "indents.docx",
+      "repository": "LibreOffice/core",
+      "revision": "6e5f11edfc5f080cf99e1807916df5cedec785b7",
+      "directory": "sw/qa/extras/ooxmlexport/data",
+      "local_default": "tmp/paragraph-indentation-source/indents.docx",
+      "bytes": 11553,
+      "sha256": "d62a3e3162a737cbe45e21fe544f5dc845e8cdc621bd8a2e3b7e8dcfed52386d",
+      "git_blob_sha": "b16736791c2ec74c2ce229789dd419a1612bf86a",
+      "source_url": "https://github.com/LibreOffice/core/blob/6e5f11edfc5f080cf99e1807916df5cedec785b7/sw/qa/extras/ooxmlexport/data/indents.docx",
+      "raw_url": "https://raw.githubusercontent.com/LibreOffice/core/6e5f11edfc5f080cf99e1807916df5cedec785b7/sw/qa/extras/ooxmlexport/data/indents.docx",
+      "fixture_kind": "original unmodified public upstream regression fixture; not a user production document",
+      "retrieval": "Downloaded pinned upstream raw bytes and matched the GitHub tree Git blob SHA; no source mutation or re-save. No binary committed.",
+      "expected_action": "reject",
+      "inventory": {
+        "paragraph_count": 5,
+        "nonzero_direct_paragraph_indexes": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "paragraphs": [
+          {
+            "paragraph_index": 0,
+            "text_length": 12,
+            "text_sha256": "09e942dad955935ec619579297dbeb8432ac454fd3ade0bb21430cfb77521db9",
+            "direct_indentation": {},
+            "in_table": false
+          },
+          {
+            "paragraph_index": 1,
+            "text_length": 26,
+            "text_sha256": "0e58e2538b923316435474b96fbde02fbffcf5dc6bc20d8cfeff065602348c17",
+            "direct_indentation": {
+              "left": "-1134"
+            },
+            "in_table": false
+          },
+          {
+            "paragraph_index": 2,
+            "text_length": 28,
+            "text_sha256": "d93d19428bbefcbd751437dd95526e9911012cdef613ce885f7583c892c210d2",
+            "direct_indentation": {
+              "left": "-1134",
+              "firstLine": "567"
+            },
+            "in_table": false
+          },
+          {
+            "paragraph_index": 3,
+            "text_length": 29,
+            "text_sha256": "bd6ea474f5bf6eb19ce7012aa5f2758535522eec44a444e27ddc97cb05d0e35b",
+            "direct_indentation": {
+              "left": "-567",
+              "hanging": "567"
+            },
+            "in_table": false
+          },
+          {
+            "paragraph_index": 4,
+            "text_length": 36,
+            "text_sha256": "33d723bad3076ac80c73514787f46804c670b44f5b2bfe97d94dc60021053d85",
+            "direct_indentation": {
+              "left": "1134",
+              "hanging": "567"
+            },
+            "in_table": false
+          }
+        ],
+        "style_indentation_declarations": []
+      },
+      "required_risks": [
+        "Unsupported paragraph indentation cannot be preserved in an editable copy"
+      ],
+      "scope": "Untouched diagnostic fixture; no successful roundtrip or unsupported source normalization is claimed."
+    },
+    {
+      "name": "52288.docx",
+      "repository": "apache/poi",
+      "revision": "ae62bb5116b9aee19ebd5834e3a82066132c9f7f",
+      "directory": "test-data/document",
+      "local_default": "tmp/paragraph-indentation-source/poi/52288.docx",
+      "bytes": 12788,
+      "sha256": "8ab0f0afddd11ab43bd2dcfe4e5b51f8a4dfcc948fe3f327b338bcc2c3733bee",
+      "git_blob_sha": "0eb23b0d4e5cd52bda79634b87b3766e3813e45d",
+      "source_url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/52288.docx",
+      "raw_url": "https://raw.githubusercontent.com/apache/poi/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/52288.docx",
+      "fixture_kind": "original unmodified public upstream regression fixture; not a user production document",
+      "retrieval": "Downloaded pinned upstream raw bytes and matched the GitHub tree Git blob SHA; no source mutation or re-save. No binary committed.",
+      "expected_action": "reject",
+      "inventory": {
+        "paragraph_count": 3,
+        "nonzero_direct_paragraph_indexes": [],
+        "paragraphs": [
+          {
+            "paragraph_index": 0,
+            "text_length": 9,
+            "text_sha256": "8ed906945500938a06129c30763f300efe9dc62f3ee84c7933f634c6c9cc3989",
+            "direct_indentation": {},
+            "in_table": false
+          },
+          {
+            "paragraph_index": 1,
+            "text_length": 42,
+            "text_sha256": "51244880881e4870c9e943fab92c266364faa30a93b15ef646cc8130de36ed85",
+            "direct_indentation": {},
+            "in_table": false
+          },
+          {
+            "paragraph_index": 2,
+            "text_length": 0,
+            "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "direct_indentation": {},
+            "in_table": false
+          }
+        ],
+        "style_indentation_declarations": [
+          {
+            "style_id": "Normal",
+            "declaration": {
+              "left": "1021",
+              "hanging": "1021"
+            }
+          },
+          {
+            "style_id": "1dash",
+            "declaration": {
+              "left": "113",
+              "hanging": "113"
+            }
+          },
+          {
+            "style_id": "2dash",
+            "declaration": {
+              "left": "227",
+              "hanging": "227"
+            }
+          },
+          {
+            "style_id": "3dash",
+            "declaration": {
+              "left": "340",
+              "hanging": "340"
+            }
+          },
+          {
+            "style_id": "4dash",
+            "declaration": {
+              "left": "454",
+              "hanging": "454"
+            }
+          },
+          {
+            "style_id": "5dash",
+            "declaration": {
+              "left": "567",
+              "hanging": "567"
+            }
+          },
+          {
+            "style_id": "6dash",
+            "declaration": {
+              "left": "680",
+              "hanging": "680"
+            }
+          },
+          {
+            "style_id": "7dash",
+            "declaration": {
+              "left": "794",
+              "hanging": "794"
+            }
+          },
+          {
+            "style_id": "8dash",
+            "declaration": {
+              "left": "907",
+              "hanging": "907"
+            }
+          },
+          {
+            "style_id": "9dash",
+            "declaration": {
+              "left": "1021",
+              "hanging": "1021"
+            }
+          },
+          {
+            "style_id": "Categoryinvalid",
+            "declaration": {
+              "left": "1021",
+              "hanging": "1021"
+            }
+          },
+          {
+            "style_id": "CodeFirst",
+            "declaration": {
+              "left": "1021"
+            }
+          },
+          {
+            "style_id": "Codevalid",
+            "declaration": {
+              "left": "1021",
+              "hanging": "1021"
+            }
+          },
+          {
+            "style_id": "Definition",
+            "declaration": {
+              "left": "1134",
+              "hanging": "113"
+            }
+          },
+          {
+            "style_id": "IncludesFirstLine",
+            "declaration": {
+              "left": "1928",
+              "hanging": "907"
+            }
+          },
+          {
+            "style_id": "Includes",
+            "declaration": {
+              "left": "1927",
+              "hanging": "113"
+            }
+          },
+          {
+            "style_id": "InclusionalTerm",
+            "declaration": {
+              "left": "1134",
+              "hanging": "113"
+            }
+          },
+          {
+            "style_id": "IndexNote",
+            "declaration": {
+              "left": "0",
+              "firstLine": "0"
+            }
+          },
+          {
+            "style_id": "LeadTerm",
+            "declaration": {
+              "left": "227",
+              "hanging": "227"
+            }
+          },
+          {
+            "style_id": "Note",
+            "declaration": {
+              "left": "1928",
+              "hanging": "907"
+            }
+          },
+          {
+            "style_id": "NotesFirst",
+            "declaration": {
+              "left": "1021"
+            }
+          },
+          {
+            "style_id": "Range",
+            "declaration": {
+              "left": "0",
+              "firstLine": "0"
+            }
+          },
+          {
+            "style_id": "SeeNote",
+            "declaration": {
+              "left": "1021"
+            }
+          },
+          {
+            "style_id": "Summary",
+            "declaration": {
+              "left": "2268",
+              "hanging": "2268"
+            }
+          },
+          {
+            "style_id": "Subdivision",
+            "declaration": {
+              "left": "0",
+              "firstLine": "0"
+            }
+          },
+          {
+            "style_id": "UseAdditional",
+            "declaration": {
+              "left": "1021"
+            }
+          },
+          {
+            "style_id": "MorphCodeBold",
+            "declaration": {
+              "left": "1021",
+              "hanging": "1021"
+            }
+          },
+          {
+            "style_id": "MorphCodeValid",
+            "declaration": {
+              "left": "1021",
+              "hanging": "1021"
+            }
+          },
+          {
+            "style_id": "MorphCodeItalic",
+            "declaration": {
+              "left": "1021",
+              "hanging": "1021"
+            }
+          }
+        ]
+      },
+      "required_risks": [
+        "Unsupported page geometry cannot be preserved in an editable copy"
+      ],
+      "scope": "Untouched diagnostic fixture; no successful roundtrip or unsupported source normalization is claimed."
+    }
+  ]
+}

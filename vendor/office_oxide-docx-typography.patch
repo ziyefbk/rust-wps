@@ -67,6 +67,24 @@
                  .collect(),
              ..crate::core::core_properties::ooxml_metadata_extras(
                  cp,
+@@ -578,7 +584,7 @@
+         out.first_line_indent_twips = match (ind.first_line, ind.hanging) {
+             // saturating_neg: -i32::MIN overflows, and a hanging indent that
+             // large is nonsense anyway.
+-            (_, Some(h)) if h.0 != 0 => Some(h.0.saturating_neg()),
++            (_, Some(h)) => Some(h.0.saturating_neg()),
+             (Some(f), _) => Some(f.0),
+             _ => None,
+         };
+@@ -669,7 +675,7 @@
+         out.indent_left_twips = ind.left.map(|t| t.0);
+         out.indent_right_twips = ind.right.map(|t| t.0);
+         out.first_line_indent_twips = match (ind.first_line, ind.hanging) {
+-            (_, Some(h)) if h.0 != 0 => Some(h.0.saturating_neg()),
++            (_, Some(h)) => Some(h.0.saturating_neg()),
+             (Some(f), _) => Some(f.0),
+             _ => None,
+         };
 @@ -1295,6 +1301,7 @@
      theme: Option<&'a crate::core::theme::Theme>,
      cx: &'a Cx<'a, 'd>,
@@ -1116,31 +1134,61 @@
 -    /// `run_properties` is merged recursively rather than replaced, so a
 -    /// paragraph style that sets only the font does not wipe out the bold
 -    /// flag its parent style set.
-+    /// `run_properties` and `spacing` are merged recursively rather than
++    /// `run_properties`, `spacing`, and `indent` are merged recursively rather than
 +    /// replaced, so a paragraph style that sets only one component does
 +    /// not wipe out the other values inherited from its parent.
      pub fn overlay(&mut self, src: &ParagraphProperties) {
          macro_rules! take {
              ($($f:ident),* $(,)?) => {$(
-@@ -576,7 +733,6 @@
+@@ -575,8 +732,6 @@
+         take!(
              style_id,
              justification,
-             indent,
+-            indent,
 -            spacing,
              numbering_ref,
              outline_level,
              frame_position,
-@@ -587,6 +743,9 @@
+@@ -587,6 +742,12 @@
              page_break_before,
              shading,
          );
++        if let Some(src) = src.indent.as_ref() {
++            self.indent.get_or_insert_with(Default::default).overlay(src);
++        }
 +        if let Some(src) = src.spacing.as_ref() {
 +            self.spacing.get_or_insert_with(Default::default).overlay(src);
 +        }
          if !src.tabs.is_empty() {
              self.tabs = src.tabs.clone();
          }
-@@ -689,6 +848,24 @@
+@@ -680,6 +841,25 @@
+     pub hanging: Option<Twip>,
+ }
+
++impl ParagraphIndent {
++    /// Physical side indents inherit separately. firstLine and hanging describe
++    /// one first-line offset, so a nearer declaration replaces both members;
++    /// even an explicit zero cancels the inherited offset. The importing app
++    /// rejects same-element dual declarations for cross-consumer ambiguity.
++    fn overlay(&mut self, src: &Self) {
++        if src.left.is_some() {
++            self.left = src.left;
++        }
++        if src.right.is_some() {
++            self.right = src.right;
++        }
++        if src.first_line.is_some() || src.hanging.is_some() {
++            self.first_line = src.first_line;
++            self.hanging = src.hanging;
++        }
++    }
++}
++
+ /// Paragraph spacing.
+ #[derive(Debug, Clone, Default)]
+ pub struct ParagraphSpacing {
+@@ -689,6 +869,24 @@
      pub after: Option<Twip>,
      /// Line spacing value and rule.
      pub line: Option<SpacingLine>,
@@ -1165,7 +1213,7 @@
  }
  
  /// Line spacing rule and value.
-@@ -1473,12 +1650,69 @@
+@@ -1473,12 +1671,69 @@
  
  fn parse_half_point_val(e: &BytesStart) -> crate::core::Result<Option<HalfPoint>> {
      match xml::optional_attr_str(e, "w:val")? {
@@ -1239,7 +1287,7 @@
  }
  
  fn parse_color_ref(e: &BytesStart) -> crate::core::Result<Option<ColorRef>> {
-@@ -1490,39 +1724,34 @@
+@@ -1490,39 +1745,34 @@
      // The literal `w:val` doubles as the fallback for consumers that
      // cannot resolve the theme, so parse it before branching on
      // `w:themeColor` and carry it into the theme reference.
@@ -1307,7 +1355,7 @@
  }
  
  pub(crate) fn parse_indent(e: &BytesStart) -> crate::core::Result<ParagraphIndent> {
-@@ -1644,6 +1873,128 @@
+@@ -1644,6 +1894,128 @@
  mod tests {
      use super::*;
  
@@ -1436,7 +1484,7 @@
      /// Regression: `ParagraphProperties`'s rarely-populated
      /// sub-structs must stay boxed, not silently regress back to
      /// `Option<T>` (which reserves `size_of(T)` even when `None`).
-@@ -1724,6 +2075,66 @@
+@@ -1724,6 +2096,66 @@
      }
  
      #[test]
@@ -1503,6 +1551,56 @@
      fn test_parse_paragraph_props_style_justification() {
          let xml =
              br#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+@@ -1859,4 +2291,48 @@
+         assert!(pp.frame_position.is_none());
+         assert!(!pp.has_bottom_border);
+     }
+-}
++
++    #[test]
++    fn paragraph_indent_overlay_preserves_sides_and_resets_first_line_slot() {
++        for hanging in [false, true] {
++            let mut base = ParagraphProperties {
++                indent: Some(ParagraphIndent {
++                    left: Some(Twip(720)),
++                    right: Some(Twip(240)),
++                    first_line: if hanging { None } else { Some(Twip(360)) },
++                    hanging: if hanging { Some(Twip(360)) } else { None },
++                }),
++                ..Default::default()
++            };
++            base.overlay(&ParagraphProperties {
++                indent: Some(ParagraphIndent {
++                    left: Some(Twip(0)),
++                    ..Default::default()
++                }),
++                ..Default::default()
++            });
++            let ind = base.indent.as_ref().unwrap();
++            assert_eq!(ind.left, Some(Twip(0)));
++            assert_eq!(ind.right, Some(Twip(240)));
++            assert_eq!(ind.first_line, if hanging { None } else { Some(Twip(360)) });
++            assert_eq!(ind.hanging, if hanging { Some(Twip(360)) } else { None });
++            for zero in [false, true] {
++                let mut next = base.clone();
++                let value = Some(Twip(if zero { 0 } else { 120 }));
++                next.overlay(&ParagraphProperties {
++                    indent: Some(ParagraphIndent {
++                        first_line: if hanging { value } else { None },
++                        hanging: if hanging { None } else { value },
++                        ..Default::default()
++                    }),
++                    ..Default::default()
++                });
++                let ind = next.indent.unwrap();
++                assert_eq!(ind.left, Some(Twip(0)));
++                assert_eq!(ind.right, Some(Twip(240)));
++                assert_eq!(ind.first_line, if hanging { value } else { None });
++                assert_eq!(ind.hanging, if hanging { None } else { value });
++            }
++        }
++    }
++}
 --- a/src/docx/mod.rs
 +++ b/src/docx/mod.rs
 @@ -105,6 +105,8 @@

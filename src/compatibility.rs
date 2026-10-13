@@ -455,6 +455,7 @@ pub(crate) struct DocxGeometryAudit {
     pub tables: Vec<crate::table_widths::TableGeometry>,
     pub images: Vec<crate::image_dimensions::ImageGeometry>,
     pub page: Option<crate::document::PageGeometry>,
+    pub paragraph_indents: crate::paragraph_indentation::ParagraphIndentAudit,
 }
 
 pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometryAudit> {
@@ -476,6 +477,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
     let mut normalized_main = None;
     let mut table_widths = Vec::new();
     let mut page = None;
+    let mut paragraph_indents = crate::paragraph_indentation::ParagraphIndentAudit::default();
     // Inspect exactly the main/style parts that the downstream parser will
     // consume, including OPC relationship resolution and ZIP name handling.
     // Minimal inventory-only ZIPs may lack content types; import itself still
@@ -564,6 +566,19 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         } else {
             spacing_parts.get(rel_types::SETTINGS).map(Vec::as_slice)
         };
+        match crate::paragraph_indentation::analyze(
+            normalized_main.as_deref().expect("main read"),
+            styles,
+            spacing_parts.get(rel_types::NUMBERING).map(Vec::as_slice),
+            table_settings,
+        ) {
+            Ok(audit) => paragraph_indents = audit,
+            Err(_) => {
+                report
+                    .risks
+                    .insert(crate::paragraph_indentation::PARAGRAPH_INDENT_RISK.into());
+            }
+        }
         let table_audit = crate::table_widths::analyze(
             normalized_main.as_deref().expect("main read"),
             styles,
@@ -574,11 +589,21 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         let (used, numbers) =
             spacing_usage(normalized_main.as_deref().expect("main read"), styles)?;
         let rels_part = office_oxide::core::opc::PartName::new(&main.rels_path())?;
-        let page_relationships = if package.has_part(&rels_part) {
-            crate::page_geometry::validate_relationships(&package.read_part(&rels_part)?)
+        let raw_relationships = if package.has_part(&rels_part) {
+            Some(package.read_part(&rels_part)?)
         } else {
-            Ok(())
+            None
         };
+        if let Some(raw) = raw_relationships.as_deref()
+            && crate::paragraph_indentation::validate_relationships(raw).is_err()
+        {
+            report
+                .risks
+                .insert(crate::paragraph_indentation::PARAGRAPH_INDENT_RISK.into());
+        }
+        let page_relationships = raw_relationships
+            .as_deref()
+            .map_or(Ok(()), crate::page_geometry::validate_relationships);
         let page_audit = page_relationships.and_then(|()| {
             crate::page_geometry::analyze(
                 normalized_main.as_deref().expect("main read"),
@@ -872,5 +897,6 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         tables: table_widths,
         images,
         page,
+        paragraph_indents,
     })
 }

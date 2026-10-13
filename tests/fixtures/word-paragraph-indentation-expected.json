@@ -1,0 +1,360 @@
+{
+  "description": "Fixed expected effective optional indentation declarations and types, authored independently from the CLI. Omitted keys are intentional; explicit zero must survive. Source-generation code does not derive its input values from this manifest.",
+  "supported": {
+    "untouched-template": [
+      {
+        "attrs": {}
+      }
+    ],
+    "absent-defaults": [
+      {
+        "attrs": {}
+      }
+    ],
+    "direct-left": [
+      {
+        "attrs": {
+          "indentLeftTwips": 720
+        }
+      }
+    ],
+    "direct-right": [
+      {
+        "attrs": {
+          "indentRightTwips": 360
+        }
+      }
+    ],
+    "direct-first": [
+      {
+        "attrs": {
+          "firstLineIndentTwips": 480
+        }
+      }
+    ],
+    "direct-hanging": [
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": -360
+        }
+      }
+    ],
+    "explicit-zero": [
+      {
+        "attrs": {
+          "indentLeftTwips": 0,
+          "indentRightTwips": 0,
+          "firstLineIndentTwips": 0
+        }
+      }
+    ],
+    "one-twip": [
+      {
+        "attrs": {
+          "indentLeftTwips": 1,
+          "indentRightTwips": 1,
+          "firstLineIndentTwips": -1
+        }
+      }
+    ],
+    "heading": [
+      {
+        "attrs": {
+          "indentLeftTwips": 721,
+          "indentRightTwips": 239,
+          "firstLineIndentTwips": 241
+        },
+        "type": "heading"
+      }
+    ],
+    "cascade-components": [
+      {
+        "attrs": {
+          "indentLeftTwips": 180,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": 60
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": 60
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": -180
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 0,
+          "firstLineIndentTwips": 0
+        }
+      }
+    ],
+    "cascade-first-hanging": [
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": -360
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": 720
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": -360
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": 720
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": 0
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": 0
+        }
+      }
+    ],
+    "empty-paragraphs": [
+      {
+        "attrs": {
+          "indentLeftTwips": 360,
+          "indentRightTwips": 120,
+          "firstLineIndentTwips": -180
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 360,
+          "indentRightTwips": 120,
+          "firstLineIndentTwips": -180
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 360,
+          "indentRightTwips": 120,
+          "firstLineIndentTwips": -180
+        }
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 360,
+          "indentRightTwips": 120,
+          "firstLineIndentTwips": -180
+        }
+      }
+    ],
+    "fixed-table": [
+      {
+        "attrs": {
+          "indentLeftTwips": 180,
+          "indentRightTwips": 120,
+          "firstLineIndentTwips": 120
+        },
+        "in_table": true
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 240,
+          "indentRightTwips": 180,
+          "firstLineIndentTwips": -120
+        },
+        "in_table": true
+      }
+    ],
+    "neutral-flags": [
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": -180
+        }
+      }
+    ],
+    "unused-character-style": [
+      {
+        "attrs": {}
+      }
+    ],
+    "render-body": [
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": 480
+        }
+      }
+    ],
+    "render-heading": [
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": 480
+        },
+        "type": "heading"
+      }
+    ],
+    "render-table": [
+      {
+        "attrs": {
+          "indentLeftTwips": 180,
+          "indentRightTwips": 240,
+          "firstLineIndentTwips": 120
+        },
+        "in_table": true
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 180,
+          "indentRightTwips": 240,
+          "firstLineIndentTwips": 120
+        },
+        "in_table": true
+      }
+    ],
+    "render-right-0": [
+      {
+        "attrs": {
+          "indentLeftTwips": 0,
+          "indentRightTwips": 0,
+          "firstLineIndentTwips": 0
+        }
+      }
+    ],
+    "render-right-2880": [
+      {
+        "attrs": {
+          "indentLeftTwips": 0,
+          "indentRightTwips": 2880,
+          "firstLineIndentTwips": 0
+        }
+      }
+    ],
+    "body-fit-boundary": [
+      {
+        "attrs": {
+          "indentLeftTwips": 9025,
+          "indentRightTwips": 0,
+          "firstLineIndentTwips": 0
+        }
+      }
+    ],
+    "fixed-cell-boundary": [
+      {
+        "attrs": {
+          "indentLeftTwips": 983
+        },
+        "in_table": true
+      },
+      {
+        "attrs": {},
+        "in_table": true
+      }
+    ],
+    "ordinary-list": [
+      {
+        "attrs": {},
+        "ancestors": [
+          "orderedList",
+          "listItem"
+        ]
+      }
+    ],
+    "ordinary-bullet": [
+      {
+        "attrs": {},
+        "ancestors": [
+          "bulletList",
+          "listItem"
+        ]
+      }
+    ],
+    "render-alignment": [
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": 480
+        },
+        "align": "center"
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 720,
+          "indentRightTwips": 360,
+          "firstLineIndentTwips": -360
+        },
+        "align": "right"
+      }
+    ]
+  },
+  "edits": {
+    "body": [
+      {
+        "attrs": {
+          "indentLeftTwips": 1080,
+          "indentRightTwips": 1440,
+          "firstLineIndentTwips": -360
+        }
+      }
+    ],
+    "heading": [
+      {
+        "attrs": {
+          "indentLeftTwips": 1080,
+          "indentRightTwips": 1440,
+          "firstLineIndentTwips": -360
+        },
+        "type": "heading"
+      }
+    ],
+    "table": [
+      {
+        "attrs": {
+          "indentLeftTwips": 360,
+          "indentRightTwips": 480,
+          "firstLineIndentTwips": -240
+        },
+        "in_table": true
+      },
+      {
+        "attrs": {
+          "indentLeftTwips": 360,
+          "indentRightTwips": 480,
+          "firstLineIndentTwips": -240
+        },
+        "in_table": true
+      }
+    ]
+  }
+}

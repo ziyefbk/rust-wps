@@ -1,3 +1,4 @@
+import {omitDefaultParagraphIndent, validateParagraphIndentDocument} from './word-paragraph-indent-model';
 import {Extension, type JSONContent} from '@tiptap/core';
 import type {Node} from '@tiptap/pm/model';
 import {EditorState, Plugin, type Transaction} from '@tiptap/pm/state';
@@ -132,6 +133,7 @@ function validateProspectivePage(document: Node) {
   }
   const snapshot = omitDefaultPageGeometry(document.toJSON());
   validatePageGeometryDocument(snapshot);
+  validateParagraphIndentDocument(omitDefaultParagraphIndent(snapshot));
   if (encoder.encode(JSON.stringify({version: 1, document: snapshot})).length > 32 * 1024 * 1024) throw new Error('页面修改后草稿超过 32 MiB 保存上限。');
 }
 export interface PageGeometryToken {doc: Node}

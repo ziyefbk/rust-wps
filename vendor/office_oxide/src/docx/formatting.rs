@@ -720,7 +720,7 @@ impl RunProperties {
 impl ParagraphProperties {
     /// Overlay `src` on top of `self`. See [`RunProperties::overlay`].
     ///
-    /// `run_properties` and `spacing` are merged recursively rather than
+    /// `run_properties`, `spacing`, and `indent` are merged recursively rather than
     /// replaced, so a paragraph style that sets only one component does
     /// not wipe out the other values inherited from its parent.
     pub fn overlay(&mut self, src: &ParagraphProperties) {
@@ -732,7 +732,6 @@ impl ParagraphProperties {
         take!(
             style_id,
             justification,
-            indent,
             numbering_ref,
             outline_level,
             frame_position,
@@ -743,6 +742,9 @@ impl ParagraphProperties {
             page_break_before,
             shading,
         );
+        if let Some(src) = src.indent.as_ref() {
+            self.indent.get_or_insert_with(Default::default).overlay(src);
+        }
         if let Some(src) = src.spacing.as_ref() {
             self.spacing.get_or_insert_with(Default::default).overlay(src);
         }
@@ -837,6 +839,25 @@ pub struct ParagraphIndent {
     pub first_line: Option<Twip>,
     /// Hanging indent in twips (first-line de-indent).
     pub hanging: Option<Twip>,
+}
+
+impl ParagraphIndent {
+    /// Physical side indents inherit separately. firstLine and hanging describe
+    /// one first-line offset, so a nearer declaration replaces both members;
+    /// even an explicit zero cancels the inherited offset. The importing app
+    /// rejects same-element dual declarations for cross-consumer ambiguity.
+    fn overlay(&mut self, src: &Self) {
+        if src.left.is_some() {
+            self.left = src.left;
+        }
+        if src.right.is_some() {
+            self.right = src.right;
+        }
+        if src.first_line.is_some() || src.hanging.is_some() {
+            self.first_line = src.first_line;
+            self.hanging = src.hanging;
+        }
+    }
 }
 
 /// Paragraph spacing.
@@ -2269,5 +2290,49 @@ mod tests {
         let pp = parse_paragraph_properties_fast(&mut reader).unwrap();
         assert!(pp.frame_position.is_none());
         assert!(!pp.has_bottom_border);
+    }
+
+    #[test]
+    fn paragraph_indent_overlay_preserves_sides_and_resets_first_line_slot() {
+        for hanging in [false, true] {
+            let mut base = ParagraphProperties {
+                indent: Some(ParagraphIndent {
+                    left: Some(Twip(720)),
+                    right: Some(Twip(240)),
+                    first_line: if hanging { None } else { Some(Twip(360)) },
+                    hanging: if hanging { Some(Twip(360)) } else { None },
+                }),
+                ..Default::default()
+            };
+            base.overlay(&ParagraphProperties {
+                indent: Some(ParagraphIndent {
+                    left: Some(Twip(0)),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            });
+            let ind = base.indent.as_ref().unwrap();
+            assert_eq!(ind.left, Some(Twip(0)));
+            assert_eq!(ind.right, Some(Twip(240)));
+            assert_eq!(ind.first_line, if hanging { None } else { Some(Twip(360)) });
+            assert_eq!(ind.hanging, if hanging { Some(Twip(360)) } else { None });
+            for zero in [false, true] {
+                let mut next = base.clone();
+                let value = Some(Twip(if zero { 0 } else { 120 }));
+                next.overlay(&ParagraphProperties {
+                    indent: Some(ParagraphIndent {
+                        first_line: if hanging { value } else { None },
+                        hanging: if hanging { None } else { value },
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+                let ind = next.indent.unwrap();
+                assert_eq!(ind.left, Some(Twip(0)));
+                assert_eq!(ind.right, Some(Twip(240)));
+                assert_eq!(ind.first_line, if hanging { value } else { None });
+                assert_eq!(ind.hanging, if hanging { None } else { value });
+            }
+        }
     }
 }

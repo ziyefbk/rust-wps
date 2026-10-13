@@ -8,7 +8,7 @@
 
 `office_oxide-upstream-files.json` 保存修改前 128 个文件的 SHA-256。原 registry 包的 128 个文件均已核验匹配；本地除下列 9 个文件外，其余 119 个与原始哈希完全一致。
 `office_oxide-doc-page-break.patch` 和 `office_oxide-docx-typography.patch` 是相对此基线的两组独立差异，可用于复核或迁移到新版本。
-DOC 分页补丁包含前四个文件，DOCX 字号/默认样式/颜色/字体/段落间距补丁包含后五个文件。可运行 `python scripts/refresh-vendor-typography-patch.py` 从已核对哈希的 registry 原包重建后一个补丁。补丁按文本差异生成，统一使用 LF 表示行尾；源码文件的原有行尾不因此重写。
+DOC 分页补丁包含前四个文件，DOCX 字号/默认样式/颜色/字体/段落间距/缩进补丁包含后五个文件。可运行 `python scripts/refresh-vendor-typography-patch.py` 从已核对哈希的 registry 原包重建后一个补丁。补丁按文本差异生成，统一使用 LF 表示行尾；源码文件的原有行尾不因此重写。
 
 - `src/doc/piece_table.rs`：结构化段落保留正文 0x0C；纯文本提取仍映射为换行，保留链接和字符属性的 UTF-8 字节坐标。
 - `src/doc/document.rs`：严格读取节边界；最终 CP 哨兵不作为新节分隔；存在分页控制字符但边界或结构不确定时给出警告；结构化段落未覆盖正文尾部时明确警告并阻止编辑转换；公开结构化段落是否可用。
@@ -25,6 +25,8 @@ DOC 分页补丁包含前四个文件，DOCX 字号/默认样式/颜色/字体/�
 默认段落样式选择依据 Microsoft [MS-WPE376 §2.1.243](https://download.microsoft.com/download/6/0/E/60EBE400-962D-4B68-92A6-9818644808DA/%5BMS-WPE376%5D.pdf)。字号单位词法参照 [Open XML SDK 的 CT_HpsMeasure 联合类型](https://raw.githubusercontent.com/dotnet/Open-XML-SDK/main/data/schemas/schemas_openxmlformats_org_wordprocessingml_2006_main.json)，半点定义见 [HpsMeasureType.Val](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.hpsmeasuretype.val)。默认字符/表格样式自动应用、完整样式继承及 Word 排版仍未扩展。
 
 段落间距继承参照 [SpacingBetweenLines](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.spacingbetweenlines?view=openxml-3.0.1)。合并覆盖 `docDefaults`、实际默认段落样式（含 Normal）、`basedOn` 链及直接 `pPr`，不会因只设置段后而丢失继承的段前或行距；`line` 单独出现时使用自动行距。此补丁只修复现有表示的合并，不扩展通用数值解析或仅有 `lineRule` 的表示能力。根应用在转换前审核原始 XML，拒绝不能安全编辑的间距单位、自动段距、按行段距及 `lineRule` 单独出现等形式；vendor 的宽松解析不能替代该导入审核。
+
+段落缩进新增按左右分量继承；首行/悬挂作为同一偏移槽覆盖，更近的显式零同样清除继承值。段落/标题的 IR 转换保留 hanging=0。依据 ECMA-376 Part 1 §17.3.1.12、§17.7.2 和 Part 4 §14.3.1.2；`firstLine`/`hanging` 的 ST_TwipsMeasure 是非负源单位（Part 1 §22.9.2.14），有符号编辑模型的负值仅由 hanging 表示。规范下载、版本和 SHA-256 见 [缩进语料清单](../scripts/paragraph-indentation-corpus.json)。独立 LibreOffice 探针验证跨层覆盖/显式零/部分继承；同节点 firstLine+hanging 的消费者差异由根应用拒绝，不声称通用兼容。完整边界见 [PARAGRAPH_INDENTATION.md](../docs/PARAGRAPH_INDENTATION.md)。
 
 Word 主题色依据 Microsoft [MS-OI29500 §2.1.72](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/8229a077-7fc8-4fba-96cc-c77b6a4fc768)：将十六进制值除以 255，shade 使用 `L'=L*shade`，tint 使用 `L'=L*tint+(1-tint)`，保持色相与饱和度。主题名称见 [ST_ThemeColor 对应枚举](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.themecolorvalues?view=openxml-3.0.1)，颜色属性词法参照上述 Open XML SDK schema 的 `CT_Color`。没有可解析主题时，文字中的字面备用色已经包含原主题变换结果。
 

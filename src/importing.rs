@@ -148,6 +148,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
                 "Tracked changes"
                     | crate::compatibility::HIDDEN_TEXT_RISK
                     | crate::compatibility::PARAGRAPH_SPACING_RISK
+                    | crate::paragraph_indentation::PARAGRAPH_INDENT_RISK
                     | crate::page_geometry::PAGE_GEOMETRY_RISK
                     | crate::table_widths::TABLE_GEOMETRY_RISK
                     | crate::image_dimensions::IMAGE_GEOMETRY_RISK
@@ -248,7 +249,13 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
             }
         }
     }
-    verify_image_conversion(&mut report.document, &audit.images)?;
+    // Keep the existing warned image-only normalization separate from new
+    // text indentation. Remove only exact, independently proved placeholders
+    // before matching the remaining body/cell paragraph indentation targets.
+    if verify_image_conversion(&mut report.document, &audit.images)? {
+        report.compatibility.risks.insert("Image-only paragraph indentation normalized; text paragraph indentation preservation does not include images".into());
+    }
+    crate::paragraph_indentation::verify_converted(&audit.paragraph_indents, &report.document)?;
     if !audit.images.is_empty() {
         report
             .compatibility
@@ -279,6 +286,12 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         }
     }
     materialize(&mut report.document);
+    crate::document::validate_paragraph_indents(&report.document).with_context(|| {
+        format!(
+            "{}; source remains read-only",
+            crate::paragraph_indentation::PARAGRAPH_INDENT_RISK
+        )
+    })?;
     crate::document::validate(&report.document)?;
     Ok(report)
 }
@@ -288,7 +301,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
 fn verify_image_conversion(
     document: &mut Node,
     images: &[crate::image_dimensions::ImageGeometry],
-) -> Result<()> {
+) -> Result<bool> {
     use sha2::{Digest, Sha256};
     fn visit(
         node: &mut Node,
@@ -338,6 +351,7 @@ fn verify_image_conversion(
     // paragraph, so the preceding empty node is its placeholder, not a source
     // blank paragraph. Remove exactly that one; never collapse neighboring
     // genuine empty paragraphs. Refuse if this parser invariant changes.
+    let mut normalized_indentation = false;
     let mut content: Vec<Node> = Vec::with_capacity(document.content.len());
     for child in std::mem::take(&mut document.content) {
         if child.kind == "image" {
@@ -376,12 +390,15 @@ fn verify_image_conversion(
                     == paragraph.text_align,
                 "Image paragraph alignment differs from audited source"
             );
+            normalized_indentation |= crate::document::PARAGRAPH_INDENT_FIELDS
+                .iter()
+                .any(|key| previous.attrs.contains_key(*key));
             content.pop();
         }
         content.push(child);
     }
     document.content = content;
-    Ok(())
+    Ok(normalized_indentation)
 }
 
 fn convert_ir(
@@ -420,7 +437,12 @@ fn convert_ir(
     compatibility
         .risks
         .insert("Default document style normalized in editable copy".into());
-    crate::document::validate(&document)?;
+    // DOCX layout is validated after audited page/table geometry has been
+    // attached. Validating new indentation against a temporary default width
+    // would falsely reject wider pages or cells before their context exists.
+    if !spacing {
+        crate::document::validate(&document)?;
+    }
     Ok(ImportReport {
         document,
         compatibility,
@@ -565,6 +587,20 @@ fn list(
         if children.is_empty() {
             children.push(node("paragraph", vec![]));
         }
+        // Numbering has its own indentation model. The source audit admits only
+        // the existing normalized list route; never attach body-indent metadata
+        // to list paragraphs or quietly reinterpret numbering offsets.
+        fn omit_list_indents(node: &mut Node) {
+            for key in crate::document::PARAGRAPH_INDENT_FIELDS {
+                node.attrs.remove(key);
+            }
+            for child in &mut node.content {
+                omit_list_indents(child);
+            }
+        }
+        for child in &mut children {
+            omit_list_indents(child);
+        }
         if let Some(nested) = &item.nested {
             children.push(list(nested, depth + 1, report, spacing)?);
         }
@@ -586,6 +622,11 @@ fn list(
     report
         .risks
         .insert("List marker appearance normalized to editor defaults".into());
+    if spacing {
+        report
+            .risks
+            .insert("List numbering indentation normalized to editor defaults".into());
+    }
     Ok(result)
 }
 
@@ -606,6 +647,12 @@ fn blocks(
                 let mut value = node("paragraph", inline(&p.content, report)?);
                 preserve_alignment(&mut value, p.alignment.as_ref())?;
                 if spacing {
+                    preserve_indents(
+                        &mut value,
+                        p.indent_left_twips,
+                        p.indent_right_twips,
+                        p.first_line_indent_twips,
+                    );
                     preserve_spacing(
                         &mut value,
                         p.space_before_twips,
@@ -624,6 +671,12 @@ fn blocks(
                 value.attrs.insert("level".into(), h.level.into());
                 preserve_alignment(&mut value, h.alignment.as_ref())?;
                 if spacing {
+                    preserve_indents(
+                        &mut value,
+                        h.indent_left_twips,
+                        h.indent_right_twips,
+                        h.first_line_indent_twips,
+                    );
                     preserve_spacing(
                         &mut value,
                         h.space_before_twips,
@@ -726,6 +779,18 @@ fn blocks(
         result.push(converted);
     }
     Ok(result)
+}
+
+fn preserve_indents(node: &mut Node, left: Option<i32>, right: Option<i32>, first: Option<i32>) {
+    for (key, value) in [
+        ("indentLeftTwips", left),
+        ("indentRightTwips", right),
+        ("firstLineIndentTwips", first),
+    ] {
+        if let Some(value) = value {
+            node.attrs.insert(key.into(), value.into());
+        }
+    }
 }
 
 fn preserve_spacing(

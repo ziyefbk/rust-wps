@@ -134,3 +134,17 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
 .tiptap table[data-page-auto-table], .tiptap [data-page-auto-table] > table {
   width:var(--word-table-width)!important; min-width:0!important; table-layout:auto!important;
 }
+
+#paragraph-indent-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#paragraph-indent-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+#paragraph-indent-controls input { width:5.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
+#edit-paragraph-indent-state { color:#61738a; font-size:11px; }
+/* New paragraph-indent tables share the authored DOCX 108-twip cell margins.
+   Scope the derived width/padding so old documents retain their old defaults.
+   Decorations can live on either TableView wrapper or the table itself. */
+.tiptap table[data-paragraph-indent-table],.tiptap [data-paragraph-indent-table] > table {
+  width:var(--word-indent-table-width)!important; min-width:0!important;
+}
+.tiptap [data-paragraph-indent-table] td,.tiptap [data-paragraph-indent-table] th {
+  padding-left:5.4pt; padding-right:5.4pt; min-width:0;
+}

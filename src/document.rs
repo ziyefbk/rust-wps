@@ -642,6 +642,119 @@ pub fn table_layout_width(node: &Node, page: Option<&PageGeometry>) -> Result<u6
     Ok(9000)
 }
 
+pub const PARAGRAPH_INDENT_FIELDS: [&str; 3] = [
+    "indentLeftTwips",
+    "indentRightTwips",
+    "firstLineIndentTwips",
+];
+
+pub fn has_paragraph_indents(node: &Node) -> bool {
+    PARAGRAPH_INDENT_FIELDS
+        .iter()
+        .any(|key| node.attrs.contains_key(*key))
+        || node.content.iter().any(has_paragraph_indents)
+}
+
+/// New indentation is measured against an actual supported container, never
+/// against the root page for a nested/list paragraph. Existing absent models
+/// bypass this path entirely, preserving their historical contracts.
+pub fn validate_paragraph_indents(doc: &Node) -> Result<()> {
+    if !has_paragraph_indents(doc) {
+        return Ok(());
+    }
+    let page = page_geometry(doc)?;
+    let body_width = page.as_ref().map_or(9026, |p| {
+        p.width_twips - p.margin_left_twips - p.margin_right_twips
+    });
+    fn paragraph(node: &Node, width: u64) -> Result<()> {
+        ensure!(
+            node.content
+                .iter()
+                .all(|child| child.text.as_ref().is_none_or(|text| !text.contains('\t'))),
+            "Indented paragraphs do not support tab stops"
+        );
+        let mut values = [0i64; 3];
+        for (index, key) in PARAGRAPH_INDENT_FIELDS.iter().enumerate() {
+            if let Some(value) = node.attrs.get(*key) {
+                let value = value
+                    .as_i64()
+                    .context("Paragraph indent must be integer twips; omit for default")?;
+                let min = if index == 2 { -31680 } else { 0 };
+                ensure!(
+                    (min..=31680).contains(&value),
+                    "Paragraph indent exceeds supported twip range"
+                );
+                values[index] = value;
+            }
+        }
+        let [left, right, first] = values;
+        ensure!(
+            left + first >= 0 && left + right < width as i64 && left + right + first < width as i64,
+            "Paragraph indentation does not fit its body or table-cell content width"
+        );
+        Ok(())
+    }
+    for block in &doc.content {
+        if !has_paragraph_indents(block) {
+            continue;
+        }
+        match block.kind.as_str() {
+            "paragraph" | "heading" => paragraph(block, body_width)?,
+            "table" => {
+                fn contains_table(node: &Node) -> bool {
+                    node.kind == "table" || node.content.iter().any(contains_table)
+                }
+                ensure!(
+                    !block.content.iter().any(contains_table),
+                    "Indented table cannot contain nested tables"
+                );
+                let columns = block
+                    .content
+                    .first()
+                    .context("Indented table has no rows")?
+                    .content
+                    .len();
+                ensure!(columns > 0, "Indented table has no columns");
+                let total = table_layout_width(block, page.as_ref())?;
+                let normalized = page.is_some()
+                    && !block.attrs.contains_key("tableAlign")
+                    && !block.attrs.contains_key("tableIndentTwips");
+                let widths = table_column_widths(block)?.unwrap_or_else(|| {
+                    (0..columns)
+                        .map(|index| {
+                            total / columns as u64
+                                + u64::from(normalized && (index as u64) < total % columns as u64)
+                        })
+                        .collect()
+                });
+                for row in &block.content {
+                    for (cell, width) in row.content.iter().zip(&widths) {
+                        for child in &cell.content {
+                            ensure!(
+                                child.kind != "table",
+                                "Indented table cannot contain nested tables"
+                            );
+                            if !has_paragraph_indents(child) {
+                                continue;
+                            }
+                            ensure!(
+                                matches!(child.kind.as_str(), "paragraph" | "heading"),
+                                "Paragraph indentation requires a plain body or direct table-cell paragraph"
+                            );
+                            ensure!(*width > 216, "Indented table cell has no content width");
+                            paragraph(child, width - 216)?;
+                        }
+                    }
+                }
+            }
+            _ => {
+                bail!("Paragraph indentation requires a plain body or direct table-cell paragraph")
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn validate(doc: &Node) -> Result<()> {
     ensure!(doc.kind == "doc", "Root must be doc");
     style_profile(doc)?;
@@ -669,8 +782,19 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "spaceBefore",
                 "spaceAfter",
                 "lineSpacing",
+                "indentLeftTwips",
+                "indentRightTwips",
+                "firstLineIndentTwips",
             ],
-            "paragraph" => &["textAlign", "spaceBefore", "spaceAfter", "lineSpacing"],
+            "paragraph" => &[
+                "textAlign",
+                "spaceBefore",
+                "spaceAfter",
+                "lineSpacing",
+                "indentLeftTwips",
+                "indentRightTwips",
+                "firstLineIndentTwips",
+            ],
             "orderedList" => &["start", "type"],
             "table" => &["columnWidthsTwips", "tableAlign", "tableIndentTwips"],
             "tableCell" | "tableHeader" => &["colspan", "rowspan", "colwidth", "align"],
@@ -975,6 +1099,7 @@ pub fn validate(doc: &Node) -> Result<()> {
         Ok(())
     }
     visit(doc, 0, 0, false, &mut nodes, &mut text_bytes)?;
+    validate_paragraph_indents(doc)?;
     // A size edit must not create a valid-looking draft which later fails the
     // existing writer's media-count/aggregate limits. Preserve the historical
     // validation route for documents with no explicit image dimensions.
@@ -1038,13 +1163,36 @@ impl Writer {
                 "<w:numPr><w:ilvl w:val=\"{level}\"/><w:numId w:val=\"{num}\"/></w:numPr>"
             ));
         }
+        let explicit_indent = PARAGRAPH_INDENT_FIELDS
+            .iter()
+            .any(|key| node.attrs.contains_key(*key));
+        let mut deferred_alignment = String::new();
         if let Some(alignment) = node.attrs.get("textAlign").and_then(Value::as_str) {
             let alignment = if alignment == "justify" {
                 "both"
             } else {
                 alignment
             };
-            props.push_str(&format!("<w:jc w:val=\"{alignment}\"/>"));
+            let encoded = format!("<w:jc w:val=\"{alignment}\"/>");
+            if explicit_indent {
+                deferred_alignment = encoded;
+            } else {
+                props.push_str(&encoded);
+            }
+        }
+        let mut indentation = String::new();
+        for (key, attribute) in [("indentLeftTwips", "left"), ("indentRightTwips", "right")] {
+            if let Some(value) = node.attrs.get(key).and_then(Value::as_u64) {
+                indentation.push_str(&format!(" w:{attribute}=\"{value}\""));
+            }
+        }
+        if let Some(value) = node
+            .attrs
+            .get("firstLineIndentTwips")
+            .and_then(Value::as_i64)
+        {
+            let attribute = if value < 0 { "hanging" } else { "firstLine" };
+            indentation.push_str(&format!(" w:{attribute}=\"{}\"", value.abs()));
         }
         let mut spacing = String::new();
         for (key, attribute) in [
@@ -1063,6 +1211,12 @@ impl Writer {
             self.has_spacing = true;
             props.push_str(&format!("<w:spacing{spacing}/>"));
         }
+        // New paragraphs follow pPr sequence spacing -> ind -> jc. Keep the
+        // historical no-indent order byte-identical for old authored packages.
+        if !indentation.is_empty() {
+            props.push_str(&format!("<w:ind{indentation}/>"));
+        }
+        props.push_str(&deferred_alignment);
         let mut body = String::new();
         for child in &node.content {
             if child.kind == "hardBreak" {
@@ -1201,7 +1355,10 @@ impl Writer {
                 if let Some(indent) = indent {
                     position.push_str(&format!("<w:tblInd w:w=\"{indent}\" w:type=\"dxa\"/>"));
                 }
-                let margins = if alignment.is_some() || indent.is_some() {
+                let margins = if alignment.is_some()
+                    || indent.is_some()
+                    || has_paragraph_indents(node)
+                {
                     "<w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar>"
                 } else {
                     ""
