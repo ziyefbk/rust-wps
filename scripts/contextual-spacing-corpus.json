@@ -1,0 +1,58 @@
+{
+  "fixture_kind": "original unmodified public upstream regression candidates; not user production documents",
+  "retrieval": "Existing local original bytes matched SHA-256, byte size and saved pinned upstream Git blob identity; no re-save or mutation. No binary committed.",
+  "license_note": "Public upstream test fixtures used locally only. Individual fixture redistribution rights/authorship not separately reviewed.",
+  "positive_coverage_gap": "Local original candidates remain unsupported for separate reasons; they do not count as positive contextualSpacing roundtrips.",
+  "fixtures": [
+    {
+      "name": "indentation.docx",
+      "repository": "LibreOffice/core",
+      "revision": "6e5f11edfc5f080cf99e1807916df5cedec785b7",
+      "local_default": "tmp/paragraph-indentation-source/indentation.docx",
+      "bytes": 16945,
+      "sha256": "c916a7ced785abe388320002ad107bc7a462ddc55d922988cad2ccdae98217a2",
+      "git_blob_sha": "cf57aaf5417ef6241e71598830b64d741b6537da",
+      "source_url": "https://github.com/LibreOffice/core/blob/6e5f11edfc5f080cf99e1807916df5cedec785b7/sw/qa/extras/ooxmlexport/data/indentation.docx",
+      "expected_action": "refuse-editable-import",
+      "required_remaining_risks": [
+        "Unsupported page geometry cannot be preserved in an editable copy",
+        "Unsupported paragraph indentation cannot be preserved in an editable copy"
+      ],
+      "active_contextual_paragraphs": 4,
+      "scope": "Untouched pinned public upstream regression document with active contextualSpacing, but independent unsupported geometry/indentation or side-story blockers. No successful contextual-positive import or user production evidence is claimed."
+    },
+    {
+      "name": "61787.docx",
+      "repository": "apache/poi",
+      "revision": "ae62bb5116b9aee19ebd5834e3a82066132c9f7f",
+      "local_default": "tmp/paragraph-indentation-source/poi/61787.docx",
+      "bytes": 7047,
+      "sha256": "eaea73fcee1225c17d55fdd363444ee34ce8a4eb2358b2ec2e5d835f24691227",
+      "git_blob_sha": "0c4c9353cffe3afbd212349f51f2d70eff192201",
+      "source_url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/61787.docx",
+      "expected_action": "refuse-editable-import",
+      "required_remaining_risks": [
+        "Unsupported page geometry cannot be preserved in an editable copy",
+        "Unsupported paragraph indentation cannot be preserved in an editable copy"
+      ],
+      "active_contextual_paragraphs": 12,
+      "scope": "Untouched pinned public upstream regression document with active contextualSpacing, but independent unsupported geometry/indentation or side-story blockers. No successful contextual-positive import or user production evidence is claimed."
+    },
+    {
+      "name": "60316.docx",
+      "repository": "apache/poi",
+      "revision": "ae62bb5116b9aee19ebd5834e3a82066132c9f7f",
+      "local_default": "tmp/paragraph-indentation-source/poi/60316.docx",
+      "bytes": 48142,
+      "sha256": "0bfd17f6ccbf1d410278fcd9141c6007b521ebb0cba53276eddb52bdd16c4769",
+      "git_blob_sha": "78b2b1d846cbb951606d0a86fc9e42f587126378",
+      "source_url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/60316.docx",
+      "expected_action": "refuse-editable-import",
+      "required_remaining_risks": [
+        "Unsupported page geometry cannot be preserved in an editable copy"
+      ],
+      "active_contextual_paragraphs": 5,
+      "scope": "Untouched pinned public upstream regression document with active contextualSpacing, but independent unsupported geometry/indentation or side-story blockers. No successful contextual-positive import or user production evidence is claimed."
+    }
+  ]
+}

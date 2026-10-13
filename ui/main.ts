@@ -59,7 +59,7 @@ async function operation(label: string, action: () => Promise<void>) {
     const message = String(error).includes('Hidden text cannot be preserved in an editable copy')
       ? '文档含隐藏文字声明，暂不能创建编辑副本，以免丢失内容。原文件保持不变；只读正文可能不显示隐藏文字。未使用或已覆盖的隐藏样式也会保守拦截。'
       : String(error).includes('Unsupported paragraph spacing cannot be preserved in an editable copy')
-        ? '文档包含暂不支持的段落间距、行距或网格声明，无法创建编辑副本。已使用样式链中的不支持声明也会保守拦截；原文件保持不变。'
+        ? '文档包含暂不支持的段落间距、行距或网格声明，无法创建编辑副本。同样式单侧上下文间距的两个相邻间距均为正时，标准与已验证消费者结果不同，同样会保守拦截；无法证明的活动样式也不猜测。原文件保持不变。'
         : String(error).includes('Unsupported table geometry cannot be preserved in an editable copy')
           ? '文档包含暂不支持的表格宽度或布局声明，无法创建编辑副本。固定列宽仅支持一致的矩形网格；百分比、冲突宽度、合并及嵌套固定表格等会保守拦截，原文件保持不变。'
           : String(error).includes('Unsupported page geometry cannot be preserved in an editable copy')
@@ -277,6 +277,7 @@ el('import-document').addEventListener('click', () => operation('正在准备编
   'Custom theme color mapping is unsupported': '文档使用了自定义主题颜色映射，暂时只能只读查看',
   'Unsupported theme color scheme content': '文字引用的主题包含尚不支持的颜色来源或变换，暂时只能只读查看',
   'Default document style normalized in editable copy': '编辑副本使用统一的正文和标题默认样式；保留可解析的字体名称、字号与颜色；DOCX 有效段落间距单独保留，请核对字体和换页',
+    'Contextual same-style spacing resolved to fixed paragraph values; named-style and reorder dynamics are not retained': '同样式上下文间距已按源段落顺序转换为固定段前/段后值；命名样式及重排后的动态间距不保留。之后请用段前/段后控件调整，恢复默认也不会恢复源动态样式',
     'List marker appearance normalized to editor defaults': '列表编号外观改为编辑器默认样式',
     'Unpositioned automatic table widths normalized to the explicit page content area; source widths are not preserved': '无定位的自动表格按当前正文宽度重排；不保留原始表格列宽，固定宽度/定位表格及图片不会自动缩放',
     'Autofit table widths normalized; fixed column widths were not inferred': '自动调整表格的宽度使用默认布局；不会仅凭网格推断固定列宽，请核对原文',

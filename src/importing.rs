@@ -292,6 +292,13 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         }
     }
     materialize(&mut report.document);
+    crate::paragraph_contextual_spacing::apply(&audit.contextual_spacing, &mut report.document)
+        .with_context(|| {
+            format!(
+                "{}; source remains read-only",
+                crate::compatibility::PARAGRAPH_SPACING_RISK
+            )
+        })?;
     crate::document::validate_paragraph_indents(&report.document).with_context(|| {
         format!(
             "{}; source remains read-only",

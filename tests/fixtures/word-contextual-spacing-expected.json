@@ -1,0 +1,1255 @@
+{
+  "version": 1,
+  "semantics_source": "https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.contextualspacing?view=openxml-3.0.1",
+  "semantics": "ECMA-376 Part 1 17.3.1.9 subtracts active paragraph edge from collapsed gap. LibreOffice instead zeroes individual active edges before max. Supported subset requires agreement; distinct styles and container boundaries do not suppress.",
+  "normalization_contract": "Effective contextual flags/style identities are resolved only during import into an explicit-spacing editable snapshot; dynamic Word-style behavior is not retained after editing.",
+  "limitations": "Synthetic independent probes, plus separately pinned untouched refused upstream regression candidates. PDF comparison is LibreOfficeDev only, not browser/native printing, Microsoft Word, WPS, arbitrary typography or complete pagination. No contextual-positive original upstream fixture without another blocker was found in the inspected local corpus.",
+  "fixtures": {
+    "stock-normal": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          276
+        ],
+        [
+          0,
+          200,
+          276
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          200,
+          276
+        ],
+        [
+          0,
+          200,
+          276
+        ]
+      ],
+      "scope": "Untouched python-docx template, only paragraphs added"
+    },
+    "stock-number": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          276
+        ],
+        [
+          0,
+          200,
+          276
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          276
+        ],
+        [
+          0,
+          200,
+          276
+        ]
+      ],
+      "scope": "Untouched python-docx template, only paragraphs added"
+    },
+    "stock-bullet": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          276
+        ],
+        [
+          0,
+          200,
+          276
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          276
+        ],
+        [
+          0,
+          200,
+          276
+        ]
+      ],
+      "scope": "Untouched python-docx template, only paragraphs added"
+    },
+    "same-both": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "canonical-val-absent": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "inherited-true": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "docdefaults-true": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "implicit-explicit-default": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "numbered-body-same-style": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "body-numbered-same-style": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "same-cell": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": "Synthetic table explicitly authored with 0.5pt six-edge borders matching the existing editor table style, to isolate paragraph spacing. Bare-source-table export adds borders under the pre-change CLI too; that separate geometry normalization is not claimed fixed."
+    },
+    "same-off": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "different-both": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "inherited-false": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "direct-false": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "docdefaults-override-false": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "different-leaf-same-parent": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "separate-cells": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": "Synthetic table explicitly authored with 0.5pt six-edge borders matching the existing editor table style, to isolate paragraph spacing. Bare-source-table export adds borders under the pre-change CLI too; that separate geometry normalization is not claimed fixed."
+    },
+    "left-own-zero": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "left-opposite-zero": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "right-own-zero": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "right-opposite-zero": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "canonical-on-off": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "canonical-one-zero": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "partial-spacing-inheritance": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          240,
+          200,
+          240
+        ],
+        [
+          240,
+          180,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          240,
+          0,
+          240
+        ],
+        [
+          0,
+          180,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "single-first-last": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne"
+      ],
+      "source_spacing": [
+        [
+          100,
+          200,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          100,
+          200,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "three-admitted": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo",
+        "ProbeThree"
+      ],
+      "source_spacing": [
+        [
+          100,
+          200,
+          240
+        ],
+        [
+          240,
+          80,
+          240
+        ],
+        [
+          160,
+          120,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          100,
+          0,
+          240
+        ],
+        [
+          0,
+          80,
+          240
+        ],
+        [
+          160,
+          120,
+          240
+        ]
+      ],
+      "scope": ""
+    },
+    "body-table-body": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo",
+        "ProbeThree"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": "Synthetic table explicitly authored with 0.5pt six-edge borders matching the existing editor table style, to isolate paragraph spacing. Bare-source-table export adds borders under the pre-change CLI too; that separate geometry normalization is not claimed fixed."
+    },
+    "empty-neighbor": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeOne",
+        "",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": "Synthetic empty-line box is independently authored in V2-default Arial11 throughout, so empty-paragraph font normalization is held constant. Preserved DejaVu12 source diagnostic shows separate existing1.35pt empty-font normalization, not fixed here."
+    },
+    "reject-left-positive-positive": {
+      "action": "reject",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": "ISO gap 40 twips; LibreOffice gap 240 twips. Deliberately refused, not silently normalized",
+      "explicit_reference_spacing": [
+        [
+          0,
+          40,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "reference_kind": "ISO subtraction numerical example"
+    },
+    "reject-left-absent-positive-positive": {
+      "action": "reject",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": "ISO gap 40 twips; LibreOffice gap 240 twips. Deliberately refused, not silently normalized",
+      "explicit_reference_spacing": [
+        [
+          0,
+          40,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "reference_kind": "ISO subtraction numerical example"
+    },
+    "reject-right-positive-positive": {
+      "action": "reject",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": "ISO gap 0; LibreOffice gap 200 twips. Deliberately refused",
+      "explicit_reference_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "reference_kind": "ISO subtraction numerical example"
+    },
+    "reject-three-asymmetric": {
+      "action": "reject",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo",
+        "ProbeThree"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          80,
+          240
+        ],
+        [
+          160,
+          0,
+          240
+        ]
+      ],
+      "scope": "ISO gaps 0/80 twips; LibreOffice gaps 200/160 twips. Deliberately refused",
+      "explicit_reference_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          0,
+          80,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "reference_kind": "ISO subtraction numerical example"
+    },
+    "different-ids-same-display-name": {
+      "action": "reject",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": "Consumer discrepancy: distinct IDs with duplicate display names are merged by LibreOffice, producing suppressed spacing contrary to ID-based reference. Conservative refusal required.",
+      "explicit_reference_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "reference_kind": "Independently authored distinct-style numeric reference; consumer identity is deliberately ambiguous"
+    },
+    "outer-margin-anchors": {
+      "action": "roundtrip",
+      "texts": [
+        "ProbeBefore",
+        "ProbeOne",
+        "ProbeTwo",
+        "ProbeAfter"
+      ],
+      "source_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          120,
+          200,
+          240
+        ],
+        [
+          240,
+          160,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "resolved_spacing": [
+        [
+          0,
+          0,
+          240
+        ],
+        [
+          120,
+          0,
+          240
+        ],
+        [
+          0,
+          160,
+          240
+        ],
+        [
+          0,
+          0,
+          240
+        ]
+      ],
+      "scope": "Different-style anchors make first before, last after, and downstream absolute baselines visible"
+    },
+    "missing-name-collides-with-style-id": {
+      "action": "reject",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": "Consumer discrepancy: missing display name falls back to styleId and collides with another style display name; source14pt versus explicit-reference26pt",
+      "explicit_reference_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "reference_kind": "Independently authored distinct-style numeric reference; consumer identity is deliberately ambiguous"
+    },
+    "missing-default-mixed-style-identity": {
+      "action": "reject",
+      "texts": [
+        "ProbeOne",
+        "ProbeTwo"
+      ],
+      "source_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "scope": "No declared default style makes omitted pStyle versus explicit Normal ambiguous; LibreOffice fallback treats them as same (14pt), versus the explicit different-style numeric reference26pt. Conservative refusal required.",
+      "explicit_reference_spacing": [
+        [
+          0,
+          200,
+          240
+        ],
+        [
+          240,
+          0,
+          240
+        ]
+      ],
+      "reference_kind": "Independently authored distinct-style numeric reference; consumer identity is deliberately ambiguous"
+    }
+  }
+}

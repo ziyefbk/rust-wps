@@ -382,7 +382,14 @@ def make_fixtures(directory):
         if location == "unused-style":
             save("unused-contextual-style", doc, [expected("UnsupportedProbe", 0, 0, 240)])
         else:
-            save("reject-contextual-" + location, doc, unsupported="active contextualSpacing in " + location)
+            # A single source paragraph has no same-style neighbor: the new
+            # audited fixed-spacing normalization retains its outer margins.
+            # Dynamic named-style behavior is not claimed; the dedicated
+            # contextual suite checks neighbors and the consumer discrepancy.
+            text = "" if location == "table" else "UnsupportedProbe"
+            ancestry = ["table", "tableRow", "tableCell"] if location == "table" else None
+            save("resolved-contextual-" + location, doc,
+                 [expected(text, 0, 0, 240, ancestors=ancestry)])
     for name, attrs in (("missing-type", {"linePitch": 360}), ("lines", {"type": "lines", "linePitch": 360}),
                         ("unknown", {"type": "mystery", "linePitch": 360})):
         doc = fresh_document()

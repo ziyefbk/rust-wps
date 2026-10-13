@@ -148,8 +148,6 @@ fn unsupported_raw_spacing_fails_closed_without_modifying_source() {
         r#"<w:spacing w:afterAutospacing="true"/>"#,
         r#"<w:spacing w:beforeLines="0"/>"#,
         r#"<w:spacing w:afterLines="100"/>"#,
-        r#"<w:contextualSpacing/>"#,
-        r#"<w:contextualSpacing w:val="true"/>"#,
         r#"<w:spacing xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main" x:before="20"/>"#,
     ].iter().enumerate() {
         let source = dir.path().join(format!("bad-{index}.docx"));
@@ -549,11 +547,15 @@ fn strict_main_uses_the_same_active_style_audit() {
         archive.insert(part.into(), xml.into_bytes());
     }
     write_parts(&source, &archive);
+    let imported = importing::import_docx(&source).unwrap();
+    assert_eq!(imported.document.content[0].attrs["spaceBefore"], 0);
+    assert_eq!(imported.document.content[0].attrs["spaceAfter"], 0);
     assert!(
-        importing::import_docx(&source)
-            .unwrap_err()
-            .to_string()
-            .contains(RISK)
+        imported
+            .compatibility
+            .risks
+            .iter()
+            .any(|risk| risk.contains("Contextual"))
     );
 }
 

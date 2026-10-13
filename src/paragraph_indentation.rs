@@ -51,14 +51,14 @@ pub(crate) struct ParagraphIndentAudit {
 }
 
 #[derive(Default)]
-struct Xml {
-    tag: String,
-    raw: String,
-    wml: bool,
-    attrs: BTreeMap<String, (String, bool)>,
-    children: Vec<Xml>,
-    text: String,
-    size: usize,
+pub(crate) struct Xml {
+    pub(crate) tag: String,
+    pub(crate) raw: String,
+    pub(crate) wml: bool,
+    pub(crate) attrs: BTreeMap<String, (String, bool)>,
+    pub(crate) children: Vec<Xml>,
+    pub(crate) text: String,
+    pub(crate) size: usize,
 }
 fn wml(ns: ResolveResult<'_>) -> bool {
     matches!(ns, ResolveResult::Bound(ns) if matches!(ns.as_ref(),
@@ -66,7 +66,7 @@ fn wml(ns: ResolveResult<'_>) -> bool {
         "http://purl.oclc.org/ooxml/wordprocessingml/main"))
 }
 impl Xml {
-    fn identity(&self) -> Result<()> {
+    pub(crate) fn identity(&self) -> Result<()> {
         ensure!(
             self.wml && self.raw == format!("w:{}", self.tag),
             "Unsupported paragraph indentation element identity: {}",
@@ -74,7 +74,7 @@ impl Xml {
         );
         Ok(())
     }
-    fn attr(&self, name: &str) -> Result<Option<&str>> {
+    pub(crate) fn attr(&self, name: &str) -> Result<Option<&str>> {
         let mut attrs = self
             .attrs
             .iter()
@@ -97,17 +97,17 @@ impl Xml {
     }
     // Candidate discovery must include same-local-name foreign attributes:
     // otherwise a malformed default/style/numbering identity could be hidden.
-    fn has_number(&self, name: &str, value: u32) -> bool {
+    pub(crate) fn has_number(&self, name: &str, value: u32) -> bool {
         self.attrs.iter().any(|(key, (v, _))| {
             key.rsplit(':').next() == Some(name) && v.parse::<u32>().ok() == Some(value)
         })
     }
-    fn has_value(&self, name: &str, value: &str) -> bool {
+    pub(crate) fn has_value(&self, name: &str, value: &str) -> bool {
         self.attrs
             .iter()
             .any(|(key, (v, _))| key.rsplit(':').next() == Some(name) && v == value)
     }
-    fn one(&self, tag: &str) -> Result<Option<&Xml>> {
+    pub(crate) fn one(&self, tag: &str) -> Result<Option<&Xml>> {
         let mut found = self.children.iter().filter(|n| n.tag == tag);
         let first = found.next();
         ensure!(
@@ -119,7 +119,7 @@ impl Xml {
         }
         Ok(first)
     }
-    fn schema(&self, allowed: &[&str], leaf: bool) -> Result<()> {
+    pub(crate) fn schema(&self, allowed: &[&str], leaf: bool) -> Result<()> {
         self.identity()?;
         ensure!(
             self.text.trim().is_empty() && (!leaf || self.children.is_empty()),
@@ -144,13 +144,13 @@ impl Xml {
             child.descendants(tag, found);
         }
     }
-    fn all(&self, tag: &str) -> Vec<&Xml> {
+    pub(crate) fn all(&self, tag: &str) -> Vec<&Xml> {
         let mut found = Vec::new();
         self.descendants(tag, &mut found);
         found
     }
 }
-fn xml(data: &[u8]) -> Result<Xml> {
+pub(crate) fn xml(data: &[u8]) -> Result<Xml> {
     let mut reader = NsReader::from_reader(data);
     let mut stack = vec![Xml::default()];
     let mut count = 0;
@@ -237,7 +237,7 @@ fn xml(data: &[u8]) -> Result<Xml> {
         }
     }
 }
-fn root<'a>(tree: &'a Xml, tag: &str) -> Result<&'a Xml> {
+pub(crate) fn root<'a>(tree: &'a Xml, tag: &str) -> Result<&'a Xml> {
     ensure!(
         tree.children.len() == 1 && tree.children[0].tag == tag && tree.text.trim().is_empty(),
         "Unsupported paragraph indentation part identity"

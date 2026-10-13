@@ -1,6 +1,59 @@
 # 当前跨格式回归记录
 
-## 当前：简单表格统一水平单元格边距（2026-10-13）
+## 当前：同样式上下文间距的有界固定值转换（2026-10-13）
+
+基于 `8b11d7472b3f087598db22a19e7d6c7bace2e655`，新增源样式身份、有效继承和完整原始段落顺序证明，将可证明的 `contextualSpacing` 初始间距转换为现有固定 `spaceBefore` / `spaceAfter`。审计/编辑前提示明确说明命名样式与重排的动态关系不保留；沿用普通间距修改/默认/重置、撤销、草稿和可信重开，不增加虚假的上下文开关或模型字段。范围及整文档内容限制见 [CONTEXTUAL_SPACING.md](CONTEXTUAL_SPACING.md)。
+
+### 语义证据和明确拒绝
+
+未改造 python-docx `List Number` / `List Bullet` 模板在冻结旧 CLI 上均因上下文间距拒绝，Normal 对照通过；新 CLI 接受这两种原模板，未删除其任何上下文声明。独立 ISO 引文与 LibreOfficeDev 实测发现：只有一侧启用且两个相邻间距均为正时，标准的“折叠后相减”与消费者的“先取消单侧再折叠”结果不同。该情况仍拒绝；同样式双侧启用、单侧带明确零、关闭及不同有效样式的可证明边界才转换。
+
+原始叶样式身份与继承格式分开保存于临时证明，默认引用、显式 false/零、部分覆盖、真实空段、标题/列表/表格顺序均核对。相邻列表/正文可以比较，整表和每个单元格边界不能串联。使用中的显示名称与缺名 ID 碰撞、无已声明默认样式时混合隐式/显式身份，消费者都可能合并，因此保守拒绝；大小写/空白处理更保守，不据此承诺任意样式别名兼容。编号或表格样式中的上下文声明（包括 false）不猜测；编号标题也必须核对活动编号层。相关活动上下文触发的是整文档序列证明，文档中任何图片或手动分页/分栏均可能阻止转换，即使该段自己不启用上下文。原没有相关声明的路径保留。
+
+先完整比较转换后的文字、段落种类、列表归属、原始间距和容器 token，再一起写入解析得到的固定值；不把中途修改后的间距用于下一边界。样式/编号解析缓存并有总工作预算，使用与解析器相同的有界快照及实际 OPC 角色，不声称任意 OPC 一致性或完整 Word 排版。
+
+### 最终源码和编辑验证
+
+- Rust **1.99 / 1.88 核心各415项通过**：原388 +24项源/模型集成 +3项原子应用/缓存压力/工作预算测试。日志 `tmp/contextual-final2-core-1.99.log`、`tmp/contextual-final2-core-1.88.log`；两工具链相同集合不重复累计
+- **242项无浏览器前端检查通过**：原223 +19新固定格式/历史/种类转换检查；`tmp/contextual-ui.log`，完整命令 `tmp/contextual-ui-command.json`。真实 Tiptap/ProseMirror 事务覆盖重排、单段转标题、分段、列表、单元格选区、普通间距控件修改与重置、显式零、null省略、无效候选原子性、撤销/重做和打印 DOM 声明。没有把无 DOM 事务当作实际浏览器排版
+- `npm run build`、最终 CLI build、根包格式、Python/JS语法、diff检查通过；前端仍有既有大bundle提示。`tmp/contextual-build.log`、`tmp/contextual-final2-focused.log`、`tmp/contextual-final2-fmt-root.log`。127个前端文件/配置的散列快照 `tmp/contextual-ui-identity.json` 与最终源码相同
+- **2个新增浏览器规格仅发现，未执行**：`tmp/contextual-browser-discovery.log`，覆盖预先警告、取消/接受/编辑与不支持源保留只读。Chromium EPERM、云浏览器/工作区访问、Linux glib/WebKit 与 Windows 离线等限制未重试或绕过，实际浏览器/WebView/原生 PDF 仍未验收
+- 原始严格 all-targets Clippy 两版本仍各仅既有单项：1.99 XLS `chunks_exact_to_as_chunks`、1.88 PPT `uninlined_format_args`；各只排除对应一项后通过，日志 `tmp/contextual-final2-clippy-{1.99,1.88}-{raw,scoped}.log`。没有声称 raw 严格全绿，没有新增 lint 豁免
+- 解析库 **1,264项重新通过**，`tmp/contextual-final2-vendor-tests.log`；vendor、锁文件、导出器和模型 schema 未变，两份旧补丁 reverse-check 通过。共享 XML helper 只扩大 crate 内可见性，没有更换解析语义
+
+最终 CLI：`tmp/contextual-final2-cli`，SHA-256 `a6179a5e683c7c2b0ddbf93d55afad3fac67b6549f442ee093b8ea035f21e80f`，清理后重建的 `target/debug/rust-wps` 与之完全相同。初版413项结果及中间CLI未冒充最终415项。
+
+MSRV重新编译两次因磁盘 ENOSPC 中断，原始日志保留为 `*enospc*`，不计测试通过。停止 Cargo 后仅清理可重建的 inactive incremental 和 rust-wps 包构建工件，保留全部源码、输入原件、冻结CLI、报告与在跑回归；之后两工具链完整重新通过。旧间距脚本一次 LibreOffice 运行在此期间失败，保留 `tmp/contextual-old-spacing-final2/run-j40l2us9/report.json`；释放空间后新的独立目录完整通过，不删失败案例或放宽断言。
+
+### 独立源、原件和新渲染
+
+最终独立报告 `tmp/word-contextual-spacing/final2-y9n0nsdy/report.json`，SHA-256 `a4949aba08e3591534e5b3f82253412244d056e4e305396e589aa2e875129bb9`，**326条实际CLI命令，30支持源 / 7明确拒绝**。脚本 `scripts/check-word-contextual-spacing.py` 与独立预期 `tests/fixtures/word-contextual-spacing-expected.json` 分开；真正未改造模板、受控合成包、另行创作的数值参考及固定原件明确分类。完整模型可信重开、实际固定值编辑后可信重开、独立 python-docx/XML 数值与文字、另存不覆盖、源/输出/参考/脚本/manifest/CLI散列检查均通过。外部重新导入单列，未代替可信模型相等。审计及import的准确规范化警告均有断言：28个相关源出现，2个不活动对照不出现。
+
+**164份本轮新LibreOffice PDF**：37源 +37独立数值参考 +30导出 +30实际编辑导出 +30独立编辑参考。受支持的**60组应用保留比较**（30源→输出、30编辑参考→编辑输出）以及另30组源→数值参考校准，所有标记的页面和绝对 y 基线一致，最大实测差 **0.0 pt**；坐标与相邻距离断言阈值为小于0.3pt，未放宽以吞掉已发现的0.5–1.35pt差。7组拒绝校准单独记录，其中4组非对称数值、2组样式名称/缺名身份碰撞、1组无已声明默认样式的混合身份；不将它们计为支持版式正例。不把有限 Latin 标记基线扩展为整个文件/任意字体/自动分页的保真承诺。
+
+最终运行在磁盘故障后写入独立 `/tmp` 目录；恢复空间后复制到上述仓库证据目录，456个原始/复制文件逐一SHA相同，路径映射及原报告内绝对路径保留在 `tmp/word-contextual-spacing/final2-y9n0nsdy-copy-provenance.json`。三张联系图从14份已生成PDF制作并实际查看，覆盖原始列表、非对称拒绝、表格边界、空段和外侧锚点；未重新生成源DOCX或PDF。检查清单 `tmp/word-contextual-spacing/final2-y9n0nsdy-visual/visual-review.json`。
+
+本轮真实发现的旧规范化差异不被掩盖：裸 python-docx 表格因既有作者边框增加0.5–1pt纵向差；源DejaVu12空段没有可保存的段落基线字体，作者缺省行框造成1.35pt差。冻结旧CLI在分别创作的数值参考上也复现，证据 `tmp/contextual-independent/table-baseline/report.json`、`tmp/contextual-independent/empty-baseline/report.json`。最终上下文表格控件明确作者声明0.5pt六边边框，空段控件采用一致Arial11字体以隔离该能力；没有静默改动原始stock列表或放宽测量容差。原差异及失败报告保留，任意空段基线字体仍是已知缺口。
+
+**3份未改造、固定revision/大小/SHA/Git blob的上游活动上下文原件**：LibreOffice `indentation.docx`、POI `61787.docx`、`60316.docx`，仍因独立页面/缩进或附属内容问题拒绝。来源与许可范围在 `scripts/contextual-spacing-corpus.json`；没有找到完整正向原件，不将拒绝样本称为保真支持，不提交原二进制，也不称为用户生产文件。两种原样python-docx列表是未修改模板正例，与这些上游原件分开。
+
+### 历史兼容和保护
+
+最终 `tmp/contextual-legacy/run-h1sni1hf/acceptance-report.json` 为PASS，完整原始差异报告保留为同目录 `report.json`。使用上述最终2CLI，重放先前受验收间距、缩进、表格宽度/位置/边距、图片尺寸/段落、页面、隐藏文字及附属内容等报告的 **1,520条去重read/audit/import契约**：
+
+- **1,510条完全相等**；没有用“返回任意错误”替代原保护
+- **8条有意支持扩展**：4个旧单段上下文样本（直接、已用样式、文档默认、表格单元格）各audit/import。audit只将已解决的间距阻断换为精确规范化警告；完整新模型按独立固定的页面、文字、字体、容器与0/0/240预期核对
+- **2条仅诊断增加**：原单图直接/样式上下文拒绝的audit新增具体“drawing无法通过上下文证明”原因；原阻断集合和import精确错误保持，未放宽图片保护
+- **302份按整文件SHA去重的历史DOCX字节金样**重新编码完全相同，含无新属性V1/V2及此前间距/缩进/表格/页面/图片模型；**604次完整可信重开、604次不覆盖检查**通过。各旧输入/参考报告、冻结CLI散列不变。旧路径与专项存在交集，不把它们简单相加为独立文件总数
+- **325份旧PDF仅登记并核对散列**；这一重放组新渲染数为0，不称为325次新视觉验收。当前视觉证据使用上述164份新上下文PDF及下一条14份新旧间距PDF
+
+原段落间距独立脚本在最终CLI重新通过 **23支持 / 19拒绝 / 14新LibreOffice PDF**，`tmp/contextual-old-spacing-final2-retry/run-qoba7ozi/report.json`；此前19/23改为23/19正是上述4个单段受支持扩展，未删除这些测试。固定POI `SampleDoc.docx`普通基线、完整可信重开、源散列和禁止覆盖继续通过，不把这份普通基线称为真实上下文正例。最终410个产品/解析库/测试/脚本/配置散列与冻结快照 `tmp/contextual-product-final-identity.json` 相同；文档单独完成并纳入最终审查树。
+
+### 下一步
+
+本轮新增19个无浏览器用例包含一个明确标注的既有缺陷回归：多段选区转为标题会把各段间距重置为缺省，单段转换则保持；撤销恢复原值。最小复现及成因在 `tests/ui/word-contextual-spacing-model.spec.mjs`：选两个不同间距段落后调用 `setHeading`，Tiptap只在同一父节点选区复制属性。下一独立增量应在应用层段落种类工具栏实现逐段格式保留和一次撤销，不编辑node_modules，也不把当前重置行为说成理想语义。完整DOC/DOCX/PDF复制仍未完成，Excel/PPT优先级不变。
+
+## 上一轮：简单表格统一水平单元格边距（2026-10-13）
 
 基于 `a4a2bf26f1b8c279342a5999b7d53d27dd4186ce` 新增 `table.attrs.tableCellMarginsTwips` 完整物理左右整数 twip 对。支持当前正文顶层简单表格、显式零、一次撤销、草稿、DOCX 与可信重开和不可变打印声明。所有列须保留正正文宽度；段落行框按实际边距复查，缩窄页面/列宽或增列失败时整次拒绝。范围、旧字节与继承/规范化边界见 [TABLE_CELL_MARGINS.md](TABLE_CELL_MARGINS.md)。
 

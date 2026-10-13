@@ -13,7 +13,11 @@ pub(crate) const PARAGRAPH_SPACING_RISK: &str =
 // Audit declarations before conversion can clamp negative values, default an
 // unknown line rule, or discard automatic/contextual/grid behavior. Only used
 // style chains are inspected, so unrelated template styles do not block editing.
-fn has_unsupported_paragraph_spacing(data: &[u8], used: &BTreeSet<String>) -> Result<bool> {
+fn has_unsupported_paragraph_spacing(
+    data: &[u8],
+    used: &BTreeSet<String>,
+    allow_contextual: bool,
+) -> Result<bool> {
     let mut reader = Reader::from_reader(data);
     let mut stack: Vec<String> = Vec::new();
     let mut unsupported = false;
@@ -99,7 +103,7 @@ fn has_unsupported_paragraph_spacing(data: &[u8], used: &BTreeSet<String>) -> Re
                         }
                     }
                     unsupported |= has_rule && !has_line;
-                } else if tag == "contextualSpacing" {
+                } else if tag == "contextualSpacing" && !allow_contextual {
                     unsupported |= may_hide_text(&e)?;
                 } else if tag == "docGrid" {
                     let mut explicit_default = true;
@@ -456,6 +460,7 @@ pub(crate) struct DocxGeometryAudit {
     pub images: Vec<crate::image_dimensions::ImageGeometry>,
     pub page: Option<crate::document::PageGeometry>,
     pub paragraph_indents: crate::paragraph_indentation::ParagraphIndentAudit,
+    pub contextual_spacing: crate::paragraph_contextual_spacing::ContextualSpacingAudit,
 }
 
 pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometryAudit> {
@@ -478,6 +483,8 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
     let mut table_widths = Vec::new();
     let mut page = None;
     let mut paragraph_indents = crate::paragraph_indentation::ParagraphIndentAudit::default();
+    let mut contextual_spacing =
+        crate::paragraph_contextual_spacing::ContextualSpacingAudit::default();
     // Inspect exactly the main/style parts that the downstream parser will
     // consume, including OPC relationship resolution and ZIP name handling.
     // Minimal inventory-only ZIPs may lack content types; import itself still
@@ -496,9 +503,6 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         let main_xml = package.read_part(&main)?;
         if has_hidden_text_declaration(&main_xml)? {
             report.risks.insert(HIDDEN_TEXT_RISK.into());
-        }
-        if has_unsupported_paragraph_spacing(&main_xml, &BTreeSet::new())? {
-            report.risks.insert(PARAGRAPH_SPACING_RISK.into());
         }
         normalized_main = Some(main_xml);
         let relationships = package.read_rels_for(&main)?;
@@ -548,6 +552,33 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             .get(rel_types::STYLES)
             .map(Vec::as_slice)
             .unwrap_or(empty_styles);
+        match crate::paragraph_contextual_spacing::analyze(
+            normalized_main.as_deref().expect("main read"),
+            styles,
+            spacing_parts.get(rel_types::NUMBERING).map(Vec::as_slice),
+        ) {
+            Ok(audit) => {
+                if audit.proved {
+                    report
+                        .risks
+                        .insert(crate::paragraph_contextual_spacing::NORMALIZATION_WARNING.into());
+                }
+                contextual_spacing = audit;
+            }
+            Err(error) => {
+                report.risks.insert(PARAGRAPH_SPACING_RISK.into());
+                report
+                    .risks
+                    .insert(format!("Contextual spacing proof refused: {error}"));
+            }
+        }
+        if has_unsupported_paragraph_spacing(
+            normalized_main.as_deref().expect("main read"),
+            &BTreeSet::new(),
+            contextual_spacing.proved,
+        )? {
+            report.risks.insert(PARAGRAPH_SPACING_RISK.into());
+        }
         let settings_relationships = relationships
             .all()
             .iter()
@@ -600,6 +631,9 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             report
                 .risks
                 .insert(crate::paragraph_indentation::PARAGRAPH_INDENT_RISK.into());
+            if contextual_spacing.proved {
+                report.risks.insert(PARAGRAPH_SPACING_RISK.into());
+            }
         }
         let page_relationships = raw_relationships
             .as_deref()
@@ -626,7 +660,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         if has_hidden_text_declaration(styles)? {
             report.risks.insert(HIDDEN_TEXT_RISK.into());
         }
-        if has_unsupported_paragraph_spacing(styles, &used)? {
+        if has_unsupported_paragraph_spacing(styles, &used, contextual_spacing.proved)? {
             report.risks.insert(PARAGRAPH_SPACING_RISK.into());
         }
         if let Some(data) = spacing_parts.get(rel_types::NUMBERING)
@@ -635,7 +669,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             report.risks.insert(PARAGRAPH_SPACING_RISK.into());
         }
         if let Some(data) = spacing_parts.get(rel_types::SETTINGS)
-            && has_unsupported_paragraph_spacing(data, &BTreeSet::new())?
+            && has_unsupported_paragraph_spacing(data, &BTreeSet::new(), false)?
         {
             report.risks.insert(PARAGRAPH_SPACING_RISK.into());
         }
@@ -659,7 +693,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             .insert(crate::page_geometry::PAGE_GEOMETRY_NORMALIZED_RISK.into());
     }
     if normalized_main.is_none()
-        && has_unsupported_paragraph_spacing(&parts["word/document.xml"], &BTreeSet::new())?
+        && has_unsupported_paragraph_spacing(&parts["word/document.xml"], &BTreeSet::new(), false)?
     {
         report.risks.insert(PARAGRAPH_SPACING_RISK.into());
     }
@@ -898,5 +932,6 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         images,
         page,
         paragraph_indents,
+        contextual_spacing,
     })
 }
