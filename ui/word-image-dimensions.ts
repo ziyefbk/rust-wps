@@ -1,3 +1,4 @@
+import {omitDefaultPageGeometry, validatePageGeometryDocument} from './word-page-geometry';
 import {mergeAttributes, type JSONContent} from '@tiptap/core';
 import {inspectWordImageMedia, supportedImagePixelDimensions, validateImageDisplayMedia} from './word-image-media';
 import {imageParagraphDOM, imageParagraphFontStyle, imageParagraphHtmlImage, imageParagraphError, isImageParagraph, parseImageParagraphMetadata, validateImageParagraphDocument, IMAGE_PARAGRAPH_METADATA, type ImageParagraph} from './word-image-paragraph';
@@ -153,6 +154,7 @@ function validateProspectiveImageDocument(document: Node): void {
   }
   const snapshot = omitDefaultImageDimensions(document.toJSON());
   validateImageDimensionsDocument(snapshot);
+  validatePageGeometryDocument(omitDefaultPageGeometry(snapshot));
   if (encoder.encode(JSON.stringify({version: 1, document: snapshot})).length > 32 * 1024 * 1024) {
     throw new Error('图片修改后草稿超过 32 MiB 保存上限，未修改正文。');
   }

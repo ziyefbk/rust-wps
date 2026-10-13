@@ -17,7 +17,7 @@
 
 新增位置元数据的 DOCX 表格显式写入水平单元格边距 108 twip，编辑与打印快照声明对应的水平内边距和表格偏移。没有位置属性的表格继续使用原来的编码和 CSS。设置了位置但仍自动宽度的表格以 450 pt 为作者默认宽度，仍是自动布局，内容可能撑宽；未设置位置的自动表格继续旧宽度行为。
 
-这是有界实现，不是 Word/WPS 完整布局保证。超过正文区的表格允许溢出；CSS 自动边距与 DOCX 对超宽居中/右对齐的处理可能不同，没有声明溢出版式等价。真实浏览器、Windows WebView2 和本应用原生打印尚未验证。
+这是有界实现，不是 Word/WPS 完整布局保证。无显式页面属性的旧模型允许表格超出正文区；CSS 自动边距与 DOCX 对超宽居中/右对齐的处理可能不同，没有声明溢出版式等价。真实浏览器、Windows WebView2 和本应用原生打印尚未验证。
 
 ## 外部 DOCX 的安全边界
 
@@ -51,3 +51,5 @@ python scripts/check-word-table-position.py --help
 ### 标准说明来源
 
 [Microsoft TableIndentation](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.tableindentation?view=openxml-3.0.1)、[Word 对非左对齐缩进的差异](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oe376/a129dffd-ef75-4faa-ab1f-47c3fd4cff26) 和 [TableJustification](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.wordprocessing.tablejustification?view=openxml-3.0.1) 用于确定标准/消费者边界。compatibilityMode 与隐式/显式样式零缩进的实际距离结论来自报告中的受控实验，不把单个消费者的实验当作所有 Word/WPS 版本行为。
+
+显式单节页面的尺寸/边距及对象适配限制另见 [PAGE_GEOMETRY.md](PAGE_GEOMETRY.md)。无页面属性保留本文件所述历史行为；有页面属性时新增正文区检查，不自动缩放图片或固定/定位表格；未定位自动表格按正文区明确规范化。

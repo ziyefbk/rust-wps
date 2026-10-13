@@ -139,13 +139,16 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     ensure!(bytes.len() <= 64 * 1024 * 1024, "Input exceeds 64 MiB");
     let audit = audit_docx_bytes_with_geometry(&bytes)?;
     let compatibility = audit.compatibility;
-    for risk in &compatibility.risks {
-        ensure!(
-            !matches!(
+    let blocking: Vec<_> = compatibility
+        .risks
+        .iter()
+        .filter(|risk| {
+            matches!(
                 risk.as_str(),
                 "Tracked changes"
                     | crate::compatibility::HIDDEN_TEXT_RISK
                     | crate::compatibility::PARAGRAPH_SPACING_RISK
+                    | crate::page_geometry::PAGE_GEOMETRY_RISK
                     | crate::table_widths::TABLE_GEOMETRY_RISK
                     | crate::image_dimensions::IMAGE_GEOMETRY_RISK
                     | "Custom theme color mapping is unsupported"
@@ -156,16 +159,35 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
                     | "Mathematical equations"
                     | "Content controls or embedded content"
                     | "Floating objects, legacy drawings or text boxes"
-            ) && !risk.starts_with("Additional document content:")
-                && !risk.starts_with("Embedded object or executable content:"),
-            "Import cannot preserve {risk}; source remains read-only"
-        );
-    }
+            ) || risk.starts_with("Additional document content:")
+                || risk.starts_with("Embedded object or executable content:")
+        })
+        .map(String::as_str)
+        .collect();
+    ensure!(
+        blocking.is_empty(),
+        "Import cannot preserve {}; source remains read-only",
+        blocking.join("; ")
+    );
     let parsed = office_oxide::Document::from_reader(
         std::io::Cursor::new(bytes),
         office_oxide::DocumentFormat::Docx,
     )?;
+    if let Some(page) = &audit.page {
+        crate::page_geometry::verify_parsed(
+            page,
+            parsed
+                .as_docx()
+                .ok_or_else(|| anyhow::anyhow!("Expected DOCX parser"))?,
+        )?;
+    }
     let mut report = convert_ir(parsed.to_ir(), compatibility, true)?;
+    if let Some(page) = audit.page {
+        report
+            .document
+            .attrs
+            .insert("pageGeometry".into(), serde_json::to_value(page)?);
+    }
     // Attach only geometry proven from the exact audited package snapshot.
     // A count or shape mismatch means the converter discarded table structure.
     fn attach_widths(
@@ -207,6 +229,25 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         widths.next().is_none(),
         "Source table was discarded during import"
     );
+    if let Some(page) = crate::document::page_geometry(&report.document)? {
+        for table in report
+            .document
+            .content
+            .iter()
+            .filter(|node| node.kind == "table")
+        {
+            if !table.attrs.contains_key("columnWidthsTwips")
+                && !table.attrs.contains_key("tableAlign")
+                && !table.attrs.contains_key("tableIndentTwips")
+                && crate::document::table_layout_width(table, Some(&page))? < 9000
+            {
+                report
+                    .compatibility
+                    .risks
+                    .insert(crate::page_geometry::PAGE_AUTO_WIDTH_RISK.into());
+            }
+        }
+    }
     verify_image_conversion(&mut report.document, &audit.images)?;
     if !audit.images.is_empty() {
         report

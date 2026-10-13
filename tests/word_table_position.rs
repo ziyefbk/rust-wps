@@ -447,8 +447,23 @@ fn direct_alignment_and_indent_survive_fixed_and_automatic_import() {
             assert!(!report.compatibility.risks.contains(NORMALIZED_ALIGNMENT));
             let output = dir.path().join(format!("copy-{fixed_layout}-{index}.docx"));
             document::export_docx(&report.document, &output).unwrap();
-            let reimported = importing::import_docx(&output).unwrap();
-            assert_eq!(reimported.document.content[0].attrs, *attrs);
+            if !fixed_layout && indent.is_some_and(|indent| indent > 26) {
+                // The old implicit-page model keeps its historical overflow.
+                // External conversion now proves A4's 9026-twip content area;
+                // the 9000-twip automatic authoring width plus indent cannot
+                // be advertised as a supported page-preserving copy.
+                assert!(
+                    importing::import_docx(&output)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("exceed the explicit page content width")
+                );
+                let trusted = document::load_authored_docx(&output).unwrap().unwrap();
+                assert_eq!(trusted.content[0].attrs, *attrs);
+            } else {
+                let reimported = importing::import_docx(&output).unwrap();
+                assert_eq!(reimported.document.content[0].attrs, *attrs);
+            }
             assert_eq!(fs::read(&source).unwrap(), original);
         }
     }

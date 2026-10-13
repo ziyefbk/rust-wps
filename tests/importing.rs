@@ -229,7 +229,8 @@ fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
     document::export_docx(&report.document, &output).unwrap();
     let reopened = importing::import_docx(&output).unwrap();
     let mut exported_expected = expected;
-    // External re-import now retains the effective V2 paragraph defaults.
+    // External re-import retains the explicit exported page as well as V2 defaults.
+    exported_expected["attrs"]["pageGeometry"] = serde_json::json!({"widthTwips":11906,"heightTwips":16838,"marginTopTwips":1440,"marginRightTwips":1440,"marginBottomTwips":1440,"marginLeftTwips":1440});
     for index in [0, 1, 3] {
         exported_expected["content"][index]["attrs"] = serde_json::json!({
             "spaceBefore":0,"spaceAfter":120,"lineSpacing":360

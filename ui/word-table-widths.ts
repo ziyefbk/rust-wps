@@ -1,3 +1,4 @@
+import {isPageGeometry, omitDefaultPageGeometry, pageTableWidthTwips, validatePageGeometryDocument} from './word-page-geometry';
 import {mergeAttributes, type CommandProps, type JSONContent} from '@tiptap/core';
 import {Table, TableView, type TableOptions} from '@tiptap/extension-table';
 import type {DOMOutputSpec, Node} from '@tiptap/pm/model';
@@ -171,6 +172,7 @@ function validateProspectiveDocument(document: Node): void {
   }
   const snapshot = omitDefaultTableWidths(document.toJSON());
   validateTableWidthsDocument(snapshot);
+  validatePageGeometryDocument(omitDefaultPageGeometry(snapshot));
   if (encoder.encode(JSON.stringify({version: 1, document: snapshot})).length > 32 * 1024 * 1024) {
     throw new Error('表格修改后草稿超过 32 MiB 保存上限，未修改正文。');
   }
@@ -182,8 +184,10 @@ export function createTableColumnWidthTransaction(state: EditorState, width: num
   if (!selected) return null;
   const {table, pos, column} = selected;
   const columns = table.firstChild?.childCount ?? 0;
-  const defaults = Array.from({length: columns}, (_, index) => Math.floor(DEFAULT_TABLE_WIDTH_TWIPS / columns)
-    + Number(index < DEFAULT_TABLE_WIDTH_TWIPS % columns));
+  const page = state.doc.attrs.pageGeometry;
+  const defaultWidth = pageTableWidthTwips(table.attrs, isPageGeometry(page) ? page : null);
+  const defaults = Array.from({length: columns}, (_, index) => Math.floor(defaultWidth / columns)
+    + Number(index < defaultWidth % columns));
   const widths = width === null ? null : [...(selected.widths ?? defaults)];
   if (widths) widths[column] = width!;
   if (JSON.stringify(widths) === JSON.stringify(selected.widths)) return null;

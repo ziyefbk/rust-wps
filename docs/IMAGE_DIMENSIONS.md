@@ -44,3 +44,5 @@ cargo test --locked --test word_image_dimensions
 ```
 
 最终次数、日志和证据目录见 [REGRESSION.md](REGRESSION.md)。LibreOfficeDev 是外部消费者，不是简文打印或 Windows WebView2。浏览器和原生环境有已核实的连接/依赖限制，本轮没有绕过或重试；无浏览器 ProseMirror/DOM 声明测试不能替代实际焦点、CSS 布局、原生 PDF、真实输入法及 Office/WPS 视觉等价验收。
+
+显式单节页面的尺寸/边距及对象适配限制另见 [PAGE_GEOMETRY.md](PAGE_GEOMETRY.md)。无页面属性保留本文件所述历史行为；有页面属性时新增正文区检查，不自动缩放图片或固定/定位表格；未定位自动表格按正文区明确规范化。

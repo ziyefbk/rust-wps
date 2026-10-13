@@ -28,6 +28,17 @@
       <div id="page-nav" hidden><button id="prev-page" aria-label="上一页">‹</button><span id="page-position"></span><button id="next-page" aria-label="下一页">›</button></div>
     </nav>
     <nav id="editor-toolbar" class="editor-toolbar" hidden aria-label="编辑工具">
+      <span id="page-geometry-controls" role="group" aria-label="页面设置">
+        <label>纸张 <select id="edit-page-size" aria-label="纸张大小"><option value="A4">A4</option><option value="Letter">Letter</option><option value="A5">A5</option></select></label>
+        <label>方向 <select id="edit-page-orientation" aria-label="页面方向"><option value="portrait">纵向</option><option value="landscape">横向</option></select></label>
+        <label>上 <input id="edit-page-margin-top" type="text" inputmode="decimal" aria-label="上页边距（pt）" title="0–216 pt，0.05 pt 递增；修改后正文宽高至少 72 pt" autocomplete="off"> pt</label>
+        <label>右 <input id="edit-page-margin-right" type="text" inputmode="decimal" aria-label="右页边距（pt）" title="0–216 pt，0.05 pt 递增；修改后正文宽高至少 72 pt" autocomplete="off"> pt</label>
+        <label>下 <input id="edit-page-margin-bottom" type="text" inputmode="decimal" aria-label="下页边距（pt）" title="0–216 pt，0.05 pt 递增；修改后正文宽高至少 72 pt" autocomplete="off"> pt</label>
+        <label>左 <input id="edit-page-margin-left" type="text" inputmode="decimal" aria-label="左页边距（pt）" title="0–216 pt，0.05 pt 递增；修改后正文宽高至少 72 pt" autocomplete="off"> pt</label>
+        <button id="edit-page-apply" title="整页应用纸张、方向和四边页边距；无定位自动表格随正文宽度重排，固定宽度/定位表格及图片不会自动缩放；超限会拒绝，可一次撤销">应用页面</button>
+        <button id="edit-page-reset" title="移除显式页面属性，恢复该文档原有默认页面和打印行为">默认页面</button>
+        <span id="edit-page-state" aria-live="polite"></span>
+      </span>
       <select id="edit-style" aria-label="段落样式"><option value="0">正文</option><option value="1">标题 1</option><option value="2">标题 2</option><option value="3">标题 3</option></select>
       <select id="edit-align" aria-label="段落对齐"><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option><option value="justify">两端对齐</option></select>
       <span id="paragraph-spacing-controls" role="group" aria-label="段落间距">
@@ -44,7 +55,7 @@
       <button id="edit-bulletList">无序列表</button><button id="edit-orderedList">编号列表</button>
       <button id="edit-table">插入表格</button><button id="edit-row">增加行</button><button id="edit-column">增加列</button><button id="edit-delete-row">删除行</button><button id="edit-delete-column">删除列</button><button id="edit-delete-table">删除表格</button>
       <span id="table-width-controls" role="group" aria-label="表格列宽">
-        <label>当前列宽 <input id="edit-column-width" type="number" min="0.05" max="1584" step="0.05" aria-label="当前列宽（pt）" placeholder="先选表格" title="0.05–1584 pt；整表总宽最多 1584 pt。首次固定时先以 450 pt 总宽均分各列，再应用当前列；单元格选区使用末端列"> pt</label>
+        <label>当前列宽 <input id="edit-column-width" type="number" min="0.05" max="1584" step="0.05" aria-label="当前列宽（pt）" placeholder="先选表格" title="0.05–1584 pt；整表总宽最多 1584 pt。首次固定时，有显式页面的无定位自动表格按正文宽度（最多 450 pt）均分；其余以 450 pt 均分，再应用当前列；单元格选区使用末端列"> pt</label>
         <button id="edit-column-width-apply" title="固定当前列宽；所有行使用同一列宽，可一次撤销">应用列宽</button>
         <button id="edit-column-width-reset" title="移除整表固定列宽，恢复默认布局">自动列宽</button>
         <span id="edit-column-width-state" aria-live="polite"></span>

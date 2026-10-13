@@ -2,7 +2,8 @@
 // orientation and animation metadata until browser and DOCX consumers agree.
 const mediaError = '仅支持嵌入的 PNG/JPEG 图片；每张最多 8 MiB，合计最多 20 MiB、100 张。';
 const displayMediaError = '这张图片包含不支持的方向或动画元数据，或图片结构无效/源像素超限；暂不能设置显示尺寸，原始图片不会改写。';
-const cache = new Map<string, {bytes: number; displayError: string | null}>();
+interface WordImageMedia {bytes: number; displayError: string | null; width: number | null; height: number | null}
+const cache = new Map<string, WordImageMedia>();
 let cacheBytes = 0;
 export function supportedImagePixelDimensions(width: number, height: number): boolean {
   return Number.isInteger(width) && Number.isInteger(height) && width > 0 && height > 0
@@ -51,7 +52,28 @@ function metadataError(bytes: Uint8Array, mime: string): string | null {
   }
   return fail();
 }
-export function inspectWordImageMedia(src: unknown): {bytes: number; displayError: string | null} {
+// Read the same bounded intrinsic frame used by the historical DOCX exporter.
+// This does not apply EXIF orientation; explicit page geometry requires the
+// strict metadata check above to pass before these dimensions are consumed.
+function intrinsicFrame(bytes: Uint8Array, mime: string): {width: number | null; height: number | null} {
+  if (mime === 'png' && bytes.length >= 24) {
+    const integer = (offset: number) => bytes[offset] * 16777216 + bytes[offset + 1] * 65536 + bytes[offset + 2] * 256 + bytes[offset + 3];
+    return {width: integer(16), height: integer(20)};
+  }
+  let position = 2;
+  while (position + 4 <= bytes.length && bytes[position] === 255) {
+    while (bytes[position] === 255) position++;
+    const marker = bytes[position++], length = bytes[position] * 256 + bytes[position + 1];
+    if (length < 2 || position + length > bytes.length) break;
+    if ([192, 193, 194, 195, 197, 198, 199, 201, 202, 203, 205, 206, 207].includes(marker) && length >= 8) {
+      return {width: bytes[position + 5] * 256 + bytes[position + 6], height: bytes[position + 3] * 256 + bytes[position + 4]};
+    }
+    if (marker === 218 || marker === 217) break;
+    position += length;
+  }
+  return {width: null, height: null};
+}
+export function inspectWordImageMedia(src: unknown): WordImageMedia {
   if (typeof src !== 'string') throw new Error(mediaError);
   const cached = cache.get(src);
   if (cached) return cached;
@@ -67,7 +89,7 @@ export function inspectWordImageMedia(src: unknown): {bytes: number; displayErro
   try {binary = atob(encoded);} catch {throw new Error(mediaError);}
   if (btoa(binary) !== encoded) throw new Error('图片 base64 编码无效。');
   const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
-  const result = {bytes: size, displayError: metadataError(bytes, prefix[1])};
+  const result = {bytes: size, displayError: metadataError(bytes, prefix[1]), ...intrinsicFrame(bytes, prefix[1])};
   // Retain only small bounded metadata, never decoded image bytes. Bound keys
   // as well: closed/replaced documents cannot leave unbounded base64 in cache.
   while (cache.size >= 100 || cacheBytes + src.length > 32 * 1024 * 1024) {

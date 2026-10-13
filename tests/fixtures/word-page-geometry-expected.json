@@ -1,0 +1,193 @@
+{
+  "description": "Preset expected model geometry, maintained separately from python-docx source authoring; never learned from the tested CLI. Numeric values are exact twips, not rounded nominal sizes.",
+  "expected": {
+    "a4-portrait": {
+      "widthTwips": 11906,
+      "heightTwips": 16838,
+      "marginTopTwips": 1440,
+      "marginRightTwips": 1440,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1440
+    },
+    "a4-landscape": {
+      "widthTwips": 16838,
+      "heightTwips": 11906,
+      "marginTopTwips": 720,
+      "marginRightTwips": 1080,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1800
+    },
+    "letter-portrait": {
+      "widthTwips": 12240,
+      "heightTwips": 15840,
+      "marginTopTwips": 1080,
+      "marginRightTwips": 720,
+      "marginBottomTwips": 1800,
+      "marginLeftTwips": 1440
+    },
+    "letter-landscape": {
+      "widthTwips": 15840,
+      "heightTwips": 12240,
+      "marginTopTwips": 900,
+      "marginRightTwips": 1260,
+      "marginBottomTwips": 1620,
+      "marginLeftTwips": 1980
+    },
+    "a5-portrait": {
+      "widthTwips": 8391,
+      "heightTwips": 11906,
+      "marginTopTwips": 720,
+      "marginRightTwips": 720,
+      "marginBottomTwips": 1080,
+      "marginLeftTwips": 1440
+    },
+    "a5-landscape": {
+      "widthTwips": 11906,
+      "heightTwips": 8391,
+      "marginTopTwips": 720,
+      "marginRightTwips": 1080,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1800
+    },
+    "a4-tolerance-plus": {
+      "widthTwips": 11908,
+      "heightTwips": 16840,
+      "marginTopTwips": 1440,
+      "marginRightTwips": 1440,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1440
+    },
+    "a4-tolerance-minus": {
+      "widthTwips": 11904,
+      "heightTwips": 16836,
+      "marginTopTwips": 1440,
+      "marginRightTwips": 1440,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1440
+    },
+    "letter-asymmetric": {
+      "widthTwips": 12240,
+      "heightTwips": 15840,
+      "marginTopTwips": 1260,
+      "marginRightTwips": 1800,
+      "marginBottomTwips": 1080,
+      "marginLeftTwips": 720
+    },
+    "a4-zero-margins": {
+      "widthTwips": 11906,
+      "heightTwips": 16838,
+      "marginTopTwips": 0,
+      "marginRightTwips": 0,
+      "marginBottomTwips": 0,
+      "marginLeftTwips": 0
+    },
+    "a4-max-margins": {
+      "widthTwips": 11906,
+      "heightTwips": 16838,
+      "marginTopTwips": 4320,
+      "marginRightTwips": 4320,
+      "marginBottomTwips": 4320,
+      "marginLeftTwips": 4320
+    },
+    "a5-min-content": {
+      "widthTwips": 8391,
+      "heightTwips": 11906,
+      "marginTopTwips": 4320,
+      "marginRightTwips": 2631,
+      "marginBottomTwips": 4320,
+      "marginLeftTwips": 4320
+    },
+    "neutral-section-options": {
+      "widthTwips": 11906,
+      "heightTwips": 16838,
+      "marginTopTwips": 1440,
+      "marginRightTwips": 1440,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1440
+    },
+    "neutral-settings-options": {
+      "widthTwips": 11906,
+      "heightTwips": 16838,
+      "marginTopTwips": 1440,
+      "marginRightTwips": 1440,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1440
+    },
+    "paper-code-metadata": {
+      "widthTwips": 11907,
+      "heightTwips": 16840,
+      "marginTopTwips": 1440,
+      "marginRightTwips": 1440,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1440
+    },
+    "harmless-distances": {
+      "widthTwips": 11906,
+      "heightTwips": 16838,
+      "marginTopTwips": 1440,
+      "marginRightTwips": 1440,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1440
+    },
+    "a5-unpositioned-auto": {
+      "widthTwips": 8391,
+      "heightTwips": 11906,
+      "marginTopTwips": 720,
+      "marginRightTwips": 720,
+      "marginBottomTwips": 1080,
+      "marginLeftTwips": 1440
+    },
+    "letter-default-unpositioned-auto": {
+      "widthTwips": 12240,
+      "heightTwips": 15840,
+      "marginTopTwips": 1440,
+      "marginRightTwips": 1800,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1800
+    }
+  },
+  "normalized_without_geometry": [
+    "missing-section",
+    "missing-size",
+    "missing-margins"
+  ],
+  "edit_geometry": {
+    "widthTwips": 15840,
+    "heightTwips": 12240,
+    "marginTopTwips": 1260,
+    "marginRightTwips": 1620,
+    "marginBottomTwips": 1080,
+    "marginLeftTwips": 900
+  },
+  "automatic_table_expectations": {
+    "a5-unpositioned-auto": {
+      "source_grid_twips": [
+        1440,
+        1440
+      ],
+      "export_total_twips": 6231,
+      "export_columns_twips": [
+        3116,
+        3115
+      ]
+    },
+    "letter-default-unpositioned-auto": {
+      "source_grid_twips": [
+        1440,
+        1440
+      ],
+      "export_total_twips": 8640,
+      "export_columns_twips": [
+        4320,
+        4320
+      ]
+    }
+  },
+  "automatic_edit_expectation": {
+    "export_total_twips": 9000,
+    "export_columns_twips": [
+      4500,
+      4500
+    ]
+  }
+}

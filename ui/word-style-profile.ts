@@ -1,3 +1,4 @@
+import {documentPageGeometry, omitDefaultPageGeometry} from './word-page-geometry';
 import type {Editor, JSONContent} from '@tiptap/core';
 
 export const STANDARD_WORD_STYLE_PROFILE = 'standard-v2' as const;
@@ -8,9 +9,10 @@ export function documentStyleProfile(document: JSONContent): WordStyleProfile {
   if (document.type !== 'doc') throw new Error('文档根节点必须为 doc。');
   const attrs = document.attrs;
   if (attrs === undefined) return null;
-  if (!attrs || typeof attrs !== 'object' || Array.isArray(attrs) || Object.keys(attrs).some(key => key !== 'styleProfile')) {
+  if (!attrs || typeof attrs !== 'object' || Array.isArray(attrs) || Object.keys(attrs).some(key => key !== 'styleProfile' && key !== 'pageGeometry')) {
     throw new Error('文档根属性不受支持。');
   }
+  documentPageGeometry(document);
   if (!Object.prototype.hasOwnProperty.call(attrs, 'styleProfile')) return null;
   if (attrs.styleProfile !== STANDARD_WORD_STYLE_PROFILE) throw new Error('不支持的文档默认样式版本。');
   return STANDARD_WORD_STYLE_PROFILE;
@@ -29,7 +31,7 @@ export function editorStyleProfile(owner: Pick<Editor, 'state'>): WordStyleProfi
 }
 
 export function snapshotDocument(owner: Pick<Editor, 'getJSON'>): JSONContent {
-  const document = {...owner.getJSON()};
+  const document = {...omitDefaultPageGeometry(owner.getJSON())};
   if (document.attrs) {
     document.attrs = {...document.attrs};
     if (document.attrs.styleProfile === null) delete document.attrs.styleProfile;

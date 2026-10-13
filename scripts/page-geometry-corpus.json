@@ -1,0 +1,103 @@
+{
+  "repository": "apache/poi",
+  "revision": "ae62bb5116b9aee19ebd5834e3a82066132c9f7f",
+  "directory": "test-data/document",
+  "license": {
+    "repository_license": "Apache License 2.0",
+    "url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/legal/LICENSE",
+    "caveat": "Unmodified public upstream fixtures for local validation only. Original fixture authorship and redistribution rights have not been separately reviewed. No binary is committed."
+  },
+  "fixtures": [
+    {
+      "name": "SampleDoc.docx",
+      "local_default": "tmp/corpus/SampleDoc.docx",
+      "bytes": 11611,
+      "sha256": "ea2c517bd7be4628887eb97f630334b93b894f4522d2c0adae263e602d76df92",
+      "git_blob_sha": "a43c77ae236716a4cc5e4b22ea486a00cc81fbd6",
+      "source_url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/SampleDoc.docx",
+      "raw_url": "https://raw.githubusercontent.com/apache/poi/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/SampleDoc.docx",
+      "retrieval": "Existing untouched corpus download, SHA-256 checked against the previously committed corpus manifest; Git blob identifier recomputed from original bytes. No source mutation or re-save.",
+      "fixture_kind": "original unmodified upstream test fixture, not a user production document",
+      "expected_action": "geometry-roundtrip",
+      "expected_geometry": {
+        "widthTwips": 11907,
+        "heightTwips": 16840,
+        "marginTopTwips": 1440,
+        "marginRightTwips": 1440,
+        "marginBottomTwips": 1440,
+        "marginLeftTwips": 1440
+      },
+      "inventory": {
+        "section_count": 1,
+        "terminal_body_section": true,
+        "size_attributes": {
+          "w": "11907",
+          "h": "16840",
+          "code": "9"
+        },
+        "margin_attributes": {
+          "top": "1440",
+          "right": "1440",
+          "bottom": "1440",
+          "left": "1440",
+          "header": "709",
+          "footer": "709",
+          "gutter": "0"
+        },
+        "column_attributes": {
+          "space": "708"
+        },
+        "grid_attributes": {
+          "linePitch": "360"
+        },
+        "actual_header_footer_parts": []
+      },
+      "scope": "Exact section size and four margins only. Paragraph style, automatic table widths, pagination and whole-document visual fidelity are not claimed preserved."
+    },
+    {
+      "name": "table-alignment.docx",
+      "local_default": "tmp/table-corpus/table-alignment.docx",
+      "bytes": 15519,
+      "sha256": "ee36729e0d050e529fea0b444006a194bea72b35cf8958ae58c6624c26156b41",
+      "git_blob_sha": "76fd85c338a1515c2ba2736953ba8424a9bc9367",
+      "source_url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/table-alignment.docx",
+      "raw_url": "https://raw.githubusercontent.com/apache/poi/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/table-alignment.docx",
+      "retrieval": "Existing untouched corpus download, SHA-256 checked against the previously committed corpus manifest; Git blob identifier recomputed from original bytes. No source mutation or re-save.",
+      "fixture_kind": "original unmodified upstream test fixture, not a user production document",
+      "expected_action": "geometry-roundtrip",
+      "expected_geometry": {
+        "widthTwips": 12240,
+        "heightTwips": 15840,
+        "marginTopTwips": 1440,
+        "marginRightTwips": 1440,
+        "marginBottomTwips": 1440,
+        "marginLeftTwips": 1440
+      },
+      "inventory": {
+        "section_count": 1,
+        "terminal_body_section": true,
+        "size_attributes": {
+          "w": "12240",
+          "h": "15840"
+        },
+        "margin_attributes": {
+          "top": "1440",
+          "right": "1440",
+          "bottom": "1440",
+          "left": "1440",
+          "header": "720",
+          "footer": "720",
+          "gutter": "0"
+        },
+        "column_attributes": {
+          "space": "720"
+        },
+        "grid_attributes": {
+          "linePitch": "360"
+        },
+        "actual_header_footer_parts": []
+      },
+      "scope": "Exact section size and four margins only. Paragraph style, automatic table widths, pagination and whole-document visual fidelity are not claimed preserved."
+    }
+  ]
+}

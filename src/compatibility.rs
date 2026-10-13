@@ -454,6 +454,7 @@ pub(crate) struct DocxGeometryAudit {
     pub compatibility: CompatibilityReport,
     pub tables: Vec<crate::table_widths::TableGeometry>,
     pub images: Vec<crate::image_dimensions::ImageGeometry>,
+    pub page: Option<crate::document::PageGeometry>,
 }
 
 pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometryAudit> {
@@ -474,6 +475,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
     let mut links = std::collections::BTreeMap::new();
     let mut normalized_main = None;
     let mut table_widths = Vec::new();
+    let mut page = None;
     // Inspect exactly the main/style parts that the downstream parser will
     // consume, including OPC relationship resolution and ZIP name handling.
     // Minimal inventory-only ZIPs may lack content types; import itself still
@@ -518,10 +520,25 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             }
         }
         let mut spacing_parts = std::collections::BTreeMap::new();
+        let mut unreadable_settings = false;
         for kind in [rel_types::STYLES, rel_types::NUMBERING, rel_types::SETTINGS] {
             if let Some(relationship) = relationships.first_by_type(kind) {
-                let target = main.resolve_relative(&relationship.target)?;
-                spacing_parts.insert(kind, package.read_part(&target)?);
+                if kind == rel_types::SETTINGS {
+                    match main
+                        .resolve_relative(&relationship.target)
+                        .and_then(|target| package.read_part(&target))
+                    {
+                        Ok(data) => {
+                            spacing_parts.insert(kind, data);
+                        }
+                        Err(_) => {
+                            unreadable_settings = true;
+                        }
+                    }
+                } else {
+                    let target = main.resolve_relative(&relationship.target)?;
+                    spacing_parts.insert(kind, package.read_part(&target)?);
+                }
             }
         }
         let empty_styles = br#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
@@ -534,10 +551,11 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             .iter()
             .filter(|r| r.rel_type == rel_types::SETTINGS)
             .count();
-        // Ambiguous settings affect the new indentation proof only; do not
-        // tighten unrelated legacy table imports as a side effect.
+        // Settings identity is part of both indentation and page proofs.
+        // A declared unreadable target must never be mistaken for absence.
         let ambiguous_settings = b"<ambiguous-settings/>";
-        let table_settings = if settings_relationships > 1
+        let table_settings = if unreadable_settings
+            || settings_relationships > 1
             || relationships.all().iter().any(|r| {
                 r.rel_type == rel_types::SETTINGS
                     && r.target_mode == office_oxide::core::relationships::TargetMode::External
@@ -555,6 +573,31 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         report.risks.extend(table_audit.risks);
         let (used, numbers) =
             spacing_usage(normalized_main.as_deref().expect("main read"), styles)?;
+        let rels_part = office_oxide::core::opc::PartName::new(&main.rels_path())?;
+        let page_relationships = if package.has_part(&rels_part) {
+            crate::page_geometry::validate_relationships(&package.read_part(&rels_part)?)
+        } else {
+            Ok(())
+        };
+        let page_audit = page_relationships.and_then(|()| {
+            crate::page_geometry::analyze(
+                normalized_main.as_deref().expect("main read"),
+                table_settings,
+                styles,
+                &used,
+            )
+        });
+        match page_audit {
+            Ok(audit) => {
+                page = audit.geometry;
+                report.risks.extend(audit.risks);
+            }
+            Err(_) => {
+                report
+                    .risks
+                    .insert(crate::page_geometry::PAGE_GEOMETRY_RISK.into());
+            }
+        }
         if has_hidden_text_declaration(styles)? {
             report.risks.insert(HIDDEN_TEXT_RISK.into());
         }
@@ -584,6 +627,11 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         )?;
         table_widths = table_audit.tables;
         report.risks.extend(table_audit.risks);
+        // Inventory-only archives cannot prove OPC settings/style identities.
+        // They never advertise preserved page geometry.
+        report
+            .risks
+            .insert(crate::page_geometry::PAGE_GEOMETRY_NORMALIZED_RISK.into());
     }
     if normalized_main.is_none()
         && has_unsupported_paragraph_spacing(&parts["word/document.xml"], &BTreeSet::new())?
@@ -789,7 +837,6 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
                         "sdt" | "altChunk" | "object" => {
                             Some("Content controls or embedded content")
                         }
-                        "sectPr" | "pgSz" | "pgMar" | "cols" => Some("Section and page geometry"),
                         "color" | "sz" | "rFonts" | "shd" | "spacing" | "ind" | "jc" => {
                             Some("Typography, spacing or alignment outside the basic editor model")
                         }
@@ -824,5 +871,6 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         compatibility: report,
         tables: table_widths,
         images,
+        page,
     })
 }

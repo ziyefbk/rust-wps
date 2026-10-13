@@ -1,6 +1,52 @@
 # 当前跨格式回归记录
 
-## 当前：单图段落间距、对齐与有限基线字体（2026-10-13）
+## 当前：单节页面尺寸、正文边距与共享打印几何（2026-10-13）
+
+基于 `60c1dd08c196889205ce3ce312c98fea073d0295` 新增可选根属性 `pageGeometry`。受支持的 A4/Letter/A5 横纵向和四边正文边距以整数 twip 保存；±2 twip 名义尺寸容差只用于识别，不修改源整数。完整模型、缺省历史语义、源页面证明/拒绝边界与自动表格规范化见 [PAGE_GEOMETRY.md](PAGE_GEOMETRY.md)。没有扩展为多节、页眉页脚、完整 Word 分页或任意纸张。
+
+### 最终源码与前端
+
+- Rust **1.99 / 1.88 核心各 315 项通过**（原 287 + 17 个模型/导出/草稿/保护测试 + 11 个源页面测试组），最终日志 `tmp/page-core-final3.log`、`tmp/page-core-1.88-final3.log`。两版本是同一套集合，不重复累计；1.88 使用独立 `tmp/msrv-target`
+- **165 项无浏览器前端检查通过**（原 141 + 新 24），日志 `tmp/page-geometry-ui-regression-final.log`，完整命令 `tmp/page-geometry-ui-command.json`。覆盖精确整数、选区/存储 marks、预设/方向/边距、过期控件/锁、一次撤销/重做、草稿、DOM 声明、自然图片框、普通自动表格派生宽度、固定/定位拒绝、重置后的装饰清除和不可变打印快照。使用真实 ProseMirror/CommandManager 的失败 `chain/can` 检查，假 DOM 仍不是浏览器布局
+- `npm run build`、CLI 构建、`cargo fmt --check`、Python/JS 语法与 `git diff --check` 通过；构建仍有既有大 chunk 提示。新增 **11 个浏览器规格仅发现/语法检查，未执行**；`tmp/page-geometry-build-final.log`、`tmp/page-geometry-browser-discovery.log`
+- 原始严格 Clippy 仍各仅既有跨格式单项：1.99 的 XLS `chunks_exact_to_as_chunks`、1.88 的 PPT `uninlined_format_args`。只排除各自单项后 all-targets 通过，`tmp/page-clippy-final3.log`、`tmp/page-clippy-1.88-final3.log`；原始失败日志 `tmp/page-clippy-raw-final.log`、`tmp/page-clippy-1.88-raw-final.log`。不声称原始严格检查全绿，没有修改 Excel/PPT 来避开它们
+- 原生 PDF 的纯几何/验证/发布函数与测试从最终源文件逐字提取，**15 项在两种 Rust 版本均通过**；`tmp/native-page-geometry-tests-final.log`、`tmp/native-page-geometry-tests-final-1.88.log`，该独立 harness 的严格 Clippy 通过。提取身份核对 `tmp/native-page-geometry-source-identity.json`；不包含 Tauri command/WebView2 COM 的执行或原生渲染
+- 新显式 Word PDF 路径验证所有页的 MediaBox，以及继承/引用的 Rotate/CropBox、UserUnit、循环/深度、错误发布原子性；没有套用演示文稿的固定页数，也没有收紧旧无页面/演示发布路径。实际 Windows 构建、WebView2/系统打印仍未验收
+- vendor、Cargo.lock 和 package-lock.json 未改。没有重试已确认的 Chromium socket EPERM、云浏览器访问本地预览失败、Linux Tauri glib/WebKit 缺失或 Windows 不可用限制
+
+早期完整回归发现颜色/字号/DOC 转存的“外部重导入”预期没有新页面属性；更新预期时保留完整根几何，没有删除新证据来假装模型相同。可信自有重开保持原模型语义。多项保护风险共存时现在报告全部阻断原因，避免新的页面风险按字母顺序掩盖既有间距/表格/隐藏内容风险。
+
+审查修复：页面候选事务不能先修改 Tiptap 共享事务；原生 MediaBox 正确仍可能被 Rotate/CropBox/UserUnit 改变可见页面；自动表格派生宽度必须用于首次数值固定列宽设置，否则窄页面中的合法编辑会被旧 9000 twip 初始化阻止。相应失败原子性和反例已纳入测试。
+
+### 独立页面文件与 PDF
+
+最终 CLI SHA-256：`32c4fa62845fccba00d7e29f11a11484d67f546b5ab21d3dd09597148e289e64`。页面报告 `tmp/word-page-geometry/run-zti35phg/report.json`：
+
+- **18 个支持源 + 3 个整项缺失的规范化源 + 49 个明确拒绝源**；另有 **73 个非法模型、4 个包/模型篡改、5 个历史整包/逐部件/重置字节基线**。定向源由 python-docx 生成，期望另列 `tests/fixtures/word-page-geometry-expected.json`，不由应用输出反推
+- **40 个 LibreOffice PDF**，其中 9 份受控源与输出、9 次真正页面编辑与独立作者参考的文字/图片中心/表格锚点差均为 **0.0 pt**。覆盖六种纸张/方向、非对称边距、原始舍入整数和实际编辑；原始 OOXML/python-docx 保持精确 twip，LibreOffice 对临近标准尺寸会吸附纸张，PDF MediaBox 因此允许 0.15 pt 测量容差
+- 普通未定位自动表格另列为**明确宽度规范化**：A5 的 6231 twip 总宽对应 `[3116,3115]`，默认 python-docx Letter 的 8640 正文宽对应 `[4320,4320]`；更宽页面恢复 9000。输出与独立规范化参考的位置差为 0.0 pt，不能把它称作原自动列宽保真。固定或带任意位置属性的表格仍不自动缩放；源或编辑超出正文区时明确拒绝
+- **2 份未改造、固定哈希的真实上游正对照**单列：Apache POI `SampleDoc.docx` 的 11907×16840/四边 1440，以及六张自动表格的 `table-alignment.docx` 的 Letter 页面。尺寸保留与自动表格宽度/继承位置规范化分别核对；不是用户生产文件，原作者与再分发许可范围未全部审查。来源/版本/哈希及库存见 `scripts/page-geometry-corpus.json`
+- 源文件哈希不变、禁止覆盖、失败无新输出、完整可信模型重开、包部件集合/哈希/重编码反篡改通过。源/输出/页面编辑的联系表单独实际查看；可见变更与预期一致，没有把 PNG 检查当作浏览器或 Word/WPS 验收
+
+### 既有路径回归
+
+同一最终 CLI 复测图片尺寸 **13 支持 / 51 拒绝 / 27 非法模型 / 1 原件 / 26 PDF**，`tmp/word-image-dimensions/run-r6_j6kxt/report.json`；单图段落 **21 支持 / 36 拒绝 / 88 非法模型 / 2 边界模型 / 13 历史整包字节 / 1 原件 / 46 PDF**，`tmp/word-image-paragraphs/run-we2dcump/report.json`。两个既有脚本完全未改；图像位置/基线证据与最终视觉检查继续通过。
+
+最终六组旧路径与历史字节汇总 **PASS**：`tmp/page-geometry-final3-legacy-wtjyqaze/report.json`，217 个产品源码、脚本、CLI 和原件的前后哈希完全一致，验证错误为零；文档编辑不在源码冻结快照内。
+
+- **117 份此前接受的无页面属性模型**在旧 CLI `b68e823c…` 与本轮最终 CLI 下输出整文件字节完全一致；468 次完整可信模型重读、234 次禁止覆盖检查通过。`absent-page-goldens/report.json`。与页面/图片专项中的基线组有重叠，不把它们相加为独立文件总数
+- 段落间距 **19 支持 / 23 精确间距保护拒绝 / 14 PDF**，脚本未改；两份普通 python-docx Letter 自动表格额外由独立读取器确认 8640 总宽、`[4320,4320]`、原页面边距和明确规范化警告，`default-letter-auto/report.json`
+- 固定列宽 **11 固定 + 2 规范化 / 26 拒绝 / 16 非法模型 / 6 PDF**；26 包含原 24 个具体保护及新增 2 个显式页面超宽拒绝。位置 **32 支持 / 42 拒绝 / 29 非法模型 / 51 PDF**；42 包含原 39 个具体保护及新增 3 个显式页面定位超宽拒绝，另验证 3 次页面感知编辑失败无输出
+- 原始 POI 语料 3 份、2 次 DOC 转 DOCX/完整可信模型相等、独立完整段落/手动分页、替换后的其余 13 个部件不变及 5 次禁止覆盖通过；这是 Linux 等价 CLI 步骤，没有声称执行 PowerShell 或独立 DOC 视觉验收
+- 隐藏文字定向 2 个精确拒绝与正对照、原始 Tika、4 个 PDF；附属内容 6 个精确拒绝与正对照、8 个 PDF 均通过。真实 Tika 或七表 POI 原件可能同时有多个阻断原因，保留组合诊断，不将其误称为单独页面或隐藏文字分支证明
+
+所有旧套件中的 83 个 PDF 仍只是相应受控 LibreOffice 探针。一次中间汇总因最终 UI 补丁/模块格式变动而正确报告源码哈希变化；最终在所有产品文件冻结后从新目录完整重跑通过，没有复用旧输出冒充最终验证。
+
+本轮期间普通 python-docx Letter 自动表格暴露了旧固定 9000 twip 作者宽度造成的新拒绝。最终没有去掉这些源的页面来隐藏回归，而是仅在显式页面、没有任何固定宽度/位置属性的自动表格路径使用 `min(9000, 正文宽度)`，保留原件为正对照并明确提示规范化。少量既有超宽固定/定位资源上限样本则保留原始显式页面作为新拒绝探针，另有明确缺页规范化变体继续测试旧资源上限；既有具体保护原因未被任意拒绝替代。
+
+下一步继续 DOC/DOCX/PDF：可研究有界现代兼容模式的表格缩进参照与水平单元格边距，减少真实 `table-indent.docx` 的布局拒绝；不能只删除保护检查。更广真实文件、Word/WPS 对照、实际浏览器/原生渲染、中文字体替代、多节和附属内容仍未完成，Excel/PPT 优先级不变。
+
+## 上一轮：单图段落间距、对齐与有限基线字体（2026-10-13）
 
 基于 `7a50b54d10493961dd750e88b7ffc0091e8f99d7` 新增可选 `imageParagraph`，保留受支持单图段落有效间距/对齐和可证明的 Latin 段落样式/图片 run 字体。实际图片选择、数值控件、原子撤销、草稿、另存 DOCX 与可信重开贯通；显示尺寸与段落格式独立重置。完整支持/规范化/拒绝边界见 [IMAGE_PARAGRAPHS.md](IMAGE_PARAGRAPHS.md)。没有扩大为混合行内文本、多图同段、浮动或完整页面布局。
 

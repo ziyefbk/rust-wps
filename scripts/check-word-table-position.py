@@ -5,6 +5,8 @@ user files. ORIGINAL POI fixtures are separately hash-pinned in the companion
 manifest; alignment is an autofit normalization positive, indentation a refusal.
 LibreOffice PDF probes validate controlled external-consumer border positions,
 not the app's rendering, pagination, Windows/WebView2, Microsoft Word or WPS.
+Explicit-page overflow is separately refused; historical absent-page position
+limits and edits are still exercised without silently changing table values.
 
   python scripts/check-word-table-position.py --generate-only
   python scripts/check-word-table-position.py --cli target/debug/rust-wps --render --corpus-dir tmp/table-corpus
@@ -97,14 +99,21 @@ def verify_model(model, targets, label):
 def make_fixtures(directory):
     sources = {}
 
-    def save(name, doc, expected=None, reject=None, render=False):
+    def save(name, doc, expected=None, reject=None, render=False, page_fit=False, legacy_no_page=False):
         path = directory / (name + ".docx")
         w.check(not path.exists(), "Fixture exists: " + str(path))
         doc.save(path)
         sources[name] = {"path": str(path), "sha256": w.digest(path), "bytes": path.stat().st_size,
                          "fixture_kind": "directed synthetic python-docx fixture, not an original upstream/user document",
                          "expected_action": "reject" if reject else "roundtrip", "unsupported_form": reject,
-                         "source_independent": snapshot(path), "expected": expected, "render_probe": render}
+                         "source_independent": snapshot(path), "expected": expected, "render_probe": render,
+                         "page_fit_refusal": page_fit, "legacy_absent_page": legacy_no_page}
+        if page_fit:
+            tables = sources[name]["source_independent"]["ooxml"]
+            targets = [{"widths": [int(g["w"]) for g in table["grid"]] if table["layout"] == {"type": "fixed"} else None,
+                        "indent": None if table["indent"] is None else int(table["indent"]["w"])} for table in tables]
+            sources[name]["page_fit_evidence"] = w.external_page_fit(path, targets)
+            w.check(not sources[name]["page_fit_evidence"]["fits"], name + ": page-fit rejection fixture actually fits")
         if expected is not None:
             verify_positions(sources[name]["source_independent"], expected, name + " source", source=True)
 
@@ -123,7 +132,12 @@ def make_fixtures(directory):
                      "header_rows": [False], "align": {"start": "left", "end": "right"}.get(jc, jc), "indent": indent}]
         if effective_indent is not None:
             expected[0].update(indent=effective_indent, source_indent=indent)
-        save(name, doc, None if reject else expected, reject, render)
+        if name in ("auto-left-indent", "fixed-max-combined", "auto-max-combined"):
+            save("reject-page-fit-" + name, doc, reject="known table extent exceeds explicit A4 content width", page_fit=True)
+            w.without_page_declaration(doc)
+            save(name, doc, expected, render=render, legacy_no_page=True)
+        else:
+            save(name, doc, None if reject else expected, reject, render)
 
     for jc in [None, "left", "center", "right", "start", "end"]:
         fixture("fixed-align-" + str(jc), jc, render=jc in [None, "left", "center", "right"])
@@ -246,9 +260,16 @@ def exported(cli, evidence, directory, name, model, targets):
     verify_model(reopened, targets, name + " trusted reopen")
     w.check(reopened == model, name + ": full trusted model equality failed")
     result["trusted_full_model_equal"] = True
-    external = w.run_cli(cli, evidence["commands"], "import-docx", path)["document"]
-    verify_model(external, targets, name + " external reimport")
-    result["external_position_and_width_equal"] = True
+    result["external_page_fit"] = w.external_page_fit(path, targets)
+    if not result["external_page_fit"]["fits"]:
+        w.check("pageGeometry" not in model.get("attrs", {}), "Explicit-page model wrote overflowing table")
+        error = w.run_cli(cli, evidence["commands"], "import-docx", path, success=False)
+        w.check(w.PAGE_FIT in error, name + ": wrong external page-fit refusal")
+        result.update(external_reimport_refusal=error, external_reimport_expected_action="refuse emitted explicit page overflow; trusted legacy model remains exact")
+    else:
+        external = w.run_cli(cli, evidence["commands"], "import-docx", path)["document"]
+        verify_model(external, targets, name + " external reimport")
+        result["external_position_and_width_equal"] = True
     error = w.run_cli(cli, evidence["commands"], "create-docx", model_path, path, success=False)
     w.check("Output already exists" in error and w.digest(path) == result["sha256"], "Output overwritten: " + name)
     result["overwrite_refused"] = True
@@ -387,9 +408,10 @@ def main():
             if cli:
                 item["audit"] = w.run_cli(cli, evidence["commands"], "audit-docx", path)
                 if item["expected_action"] == "reject":
-                    w.check(w.RISK in item["audit"]["risks"], name + ": precise geometry risk missing")
+                    w.check(item.get("page_fit_refusal") or w.RISK in item["audit"]["risks"], name + ": precise geometry risk missing")
                     item["refusal"] = w.run_cli(cli, evidence["commands"], "import-docx", path, success=False)
-                    w.check(w.RISK in item["refusal"], name + ": refused for unrelated reason")
+                    diagnostic = w.PAGE_FIT if item.get("page_fit_refusal") else w.RISK
+                    w.check(diagnostic in item["refusal"], name + ": refused for unrelated reason")
                 else:
                     w.check(w.RISK not in item["audit"]["risks"], name + ": supported source refused")
                     if item["expected"][0]["widths"] is None:
@@ -397,6 +419,8 @@ def main():
                     if name == "auto-modern-inherited-zero":
                         w.check(INHERITED_WARNING in item["audit"]["risks"], "Modern auto inherited-position warning missing")
                     model = w.run_cli(cli, evidence["commands"], "import-docx", path)["document"]
+                    if item.get("legacy_absent_page"):
+                        w.check(w.PAGE_WARNING in item["audit"]["risks"] and "pageGeometry" not in model.get("attrs", {}), name + ": missing-page normalization not explicit")
                     verify_model(model, item["expected"], name + " import")
                     item["unchanged_export"] = exported(cli, evidence, directory, name + "-unchanged", model, item["expected"])
                     if safe_model is None:
@@ -413,6 +437,17 @@ def main():
                             for key in [ALIGN, INDENT]: table.get("attrs", {}).pop(key, None)
                     w.check(original_copy == edited_copy, "Position edit changed non-position content")
                     item["edited_expected"] = targets
+                    if w.model_exceeds_page(edited):
+                        # The exact historical position edit is now unsafe for an explicit page.
+                        # Prove atomic refusal, then exercise the same old edit in legacy mode.
+                        jp, dp = directory / (name + "-edited-overflow.json"), directory / (name + "-edited-overflow.docx")
+                        w.write_model(jp, edited)
+                        error = w.run_cli(cli, evidence["commands"], "create-docx", jp, dp, success=False)
+                        w.check(w.PAGE_FIT in error and not dp.exists(), name + ": explicit-page edit did not refuse precisely without output")
+                        item["explicit_page_edit_refusal"] = {"error": error, "output_absent": True, "model_path": str(jp)}
+                        edited = copy.deepcopy(edited)
+                        edited["attrs"].pop("pageGeometry")
+                        item["edited_export_scope"] = "Historical position edit in explicit legacy absent-page model; same edit on preserved source page refused"
                     item["edited_export"] = exported(cli, evidence, directory, name + "-edited", edited, targets)
                     if args.render and item["render_probe"]:
                         item["unchanged_pdf"] = rendered(soffice, directory, Path(item["unchanged_export"]["path"]), item["expected"][0])
@@ -471,6 +506,9 @@ def main():
         evidence["summary"] = {"positive_sources": sum(i["expected_action"] == "roundtrip" for i in sources.values()),
                                "refusal_sources": sum(i["expected_action"] == "reject" for i in sources.values()),
                                "invalid_models_refused": len(evidence.get("invalid_model_refusals", [])),
+                               "explicit_page_fit_refusals": sum(bool(i.get("page_fit_refusal")) for i in sources.values()),
+                               "legacy_absent_page_sources": sum(bool(i.get("legacy_absent_page")) for i in sources.values()),
+                               "explicit_page_edit_refusals": sum("explicit_page_edit_refusal" in i for i in sources.values()),
                                "rendered_sources": sum("source_pdf" in i for i in sources.values()),
                                "rejected_sources_rendered_for_calibration": sum("rejected_source_semantics_pdf" in i for i in sources.values()),
                                "rendered_exports": sum("unchanged_pdf" in i for i in sources.values()) + sum("edited_pdf" in i for i in sources.values()),

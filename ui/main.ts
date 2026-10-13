@@ -62,7 +62,13 @@ async function operation(label: string, action: () => Promise<void>) {
         ? '文档包含暂不支持的段落间距、行距或网格声明，无法创建编辑副本。已使用样式链中的不支持声明也会保守拦截；原文件保持不变。'
         : String(error).includes('Unsupported table geometry cannot be preserved in an editable copy')
           ? '文档包含暂不支持的表格宽度或布局声明，无法创建编辑副本。固定列宽仅支持一致的矩形网格；百分比、冲突宽度、合并及嵌套固定表格等会保守拦截，原文件保持不变。'
-          : String(error);
+          : String(error).includes('Unsupported page geometry cannot be preserved in an editable copy')
+            ? '文档包含暂不支持或无法证明的页面设置，无法创建编辑副本。仅支持单节、A4/Letter/A5 横纵向和有界四边页边距；多节、分栏、镜像或装订线等会保守拒绝，原文件保持不变。'
+            : String(error).includes('Table width and indentation exceed the explicit page content width')
+              ? '表格宽度加缩进超出源页面正文区域，无法创建编辑副本。定位自动表格按 450 pt 计算；请在原文件中明确设置合适的固定列宽或清除表格位置后再导入，原文件保持不变。'
+              : String(error).includes('Image frame exceeds the explicit page content area')
+                ? '图片显示框超出源页面正文区域，无法创建编辑副本。请在原文件中明确调整图片尺寸后再导入；不会自动缩放或裁剪，原文件保持不变。'
+                : String(error);
     notice(`操作未完成：${message}`, true);
   }
   finally { busy = false; pauseAuthoring(false); pauseWorkbook(false); pausePresentation(false); el('status').textContent = '就绪'; controls(); }
@@ -261,6 +267,9 @@ el('import-document').addEventListener('click', () => operation('正在准备编
     'Legacy whitespace and paragraph boundaries may be normalized': '旧版文档的空白和段落边界可能改变',
     'Page layout, fonts and pagination require visual verification': '页面布局、字体和分页需要人工核对',
     'Section and page geometry': '分节、纸张尺寸和页边距不保留',
+    'Unsupported page geometry cannot be preserved in an editable copy': '页面设置超出受支持的单节纸张和页边距范围，暂不能建立编辑副本，避免改变原页面几何',
+    'Source page geometry is incomplete; editable copy uses default A4 margins': '源文件缺少完整纸张或页边距证据；编辑副本使用默认 A4 和四边 72 pt，不宣称保留源页面',
+    'Paper code and header/footer distance metadata normalized; only page size and body margins preserved': '已保留纸张尺寸和正文四边页边距；纸张代码、页眉页脚距离等附属元数据会规范化，仍需核对分页',
     'Typography, spacing or alignment outside the basic editor model': '可解析的字体名称、字号与 RGB 颜色会保留；DOCX 中受支持的段前/段后间距和倍数行距会保留；自动色和复杂样式可能改变',
     'Font names are preserved; unavailable fonts may be substituted locally': '保留可解析的字体名称；未安装的字体由本机替代，请核对显示效果',
     'Parser warning: DOCX_FONT_THEME_UNRESOLVED': '部分主题字体无法确定，相关文字使用编辑器默认字体，请核对原文',
@@ -269,15 +278,16 @@ el('import-document').addEventListener('click', () => operation('正在准备编
   'Unsupported theme color scheme content': '文字引用的主题包含尚不支持的颜色来源或变换，暂时只能只读查看',
   'Default document style normalized in editable copy': '编辑副本使用统一的正文和标题默认样式；保留可解析的字体名称、字号与颜色；DOCX 有效段落间距单独保留，请核对字体和换页',
     'List marker appearance normalized to editor defaults': '列表编号外观改为编辑器默认样式',
+    'Unpositioned automatic table widths normalized to the explicit page content area; source widths are not preserved': '无定位的自动表格按当前正文宽度重排；不保留原始表格列宽，固定宽度/定位表格及图片不会自动缩放',
     'Autofit table widths normalized; fixed column widths were not inferred': '自动调整表格的宽度使用默认布局；不会仅凭网格推断固定列宽，请核对原文',
     'Table alignment normalized to editor defaults': '表格整体对齐改为编辑器默认位置，请核对页面中的摆放',
     'Inherited table indentation normalized; automatic table geometry not preserved': '继承的表格缩进已规范化；自动表格的原始几何布局不保留，请核对位置、宽度和换行',
     'Table borders and cell formatting normalized': '受支持的固定列宽会保留；表格边框和单元格格式改为默认样式，请核对换行和分页',
     'Table widths, borders and cell formatting normalized': '表格宽度、边框和单元格格式改为默认样式',
     'Unsupported image geometry cannot be preserved in an editable copy': '图片包含尚不支持的几何布局，暂时只能只读查看，避免改变原始显示效果',
-    'Image-only paragraph spacing and alignment preserved; other page and paragraph layout may be normalized': '已保留单图段落的间距和对齐；其他页面和段落版式可能规范化，请核对换行和分页',
+    'Image-only paragraph spacing and alignment preserved; other page and paragraph layout may be normalized': '已保留单图段落的间距和对齐；其他段落版式可能规范化，受支持的页面尺寸和页边距另行保留，请核对换行和分页',
     'Image paragraph baseline font is unspecified; editor defaults may change its line box': '图片段落的基线字体未能确定，编辑器默认字体可能改变行框和后续正文位置，请核对原文',
-    'Image paragraph placement and formatting normalized; original layout not preserved': '受支持的图片显示尺寸会保留；图片所在段落的位置和格式会规范化，不保留原始页面布局，请核对换行和分页',
+    'Image paragraph placement and formatting normalized; original layout not preserved': '受支持的图片显示尺寸会保留；图片所在段落的位置和格式会规范化，整体原始版式未完整恢复，请核对换行和分页',
     'Image position and display dimensions normalized': '图片位置和显示尺寸会改变',
     'Page and column breaks converted to paragraph boundaries': '分页和分栏改为段落分隔',
     'Column breaks converted to paragraph boundaries': '分栏符改为段落分隔；手动分页符保留',

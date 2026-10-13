@@ -1,7 +1,13 @@
+import {isPageGeometry, pageGeometryPrintCss, type PageGeometry} from './word-page-geometry';
 // Print an immutable snapshot so edits made while a platform print dialog is
 // open cannot change the document being printed. Native print UI chooses the
 // printer or PDF destination; this does not claim that a file was saved.
-export async function preparePrintSnapshot(source: HTMLElement): Promise<void> {
+export async function preparePrintSnapshot(source: HTMLElement, geometry: PageGeometry | null = null): Promise<void> {
+  if (geometry !== null && !isPageGeometry(geometry)) throw new Error('打印页面设置无效');
+  // Capture validated plain scalars before font/image awaits; neither later
+  // document edits nor a caller mutation can affect this print transaction.
+  const page = geometry ? {...geometry} : null;
+  const css = pageGeometryPrintCss(page);
   const host = document.getElementById('print-document')!;
   host.replaceChildren();
   const snapshot = source.cloneNode(true) as HTMLElement;
@@ -14,5 +20,9 @@ export async function preparePrintSnapshot(source: HTMLElement): Promise<void> {
   }
   await document.fonts.ready;
   await Promise.all(images.map(image => image.decode()));
-  host.replaceChildren(snapshot);
+  if (page) {
+    snapshot.dataset.pageGeometry = JSON.stringify(page);
+    const style = document.createElement('style'); style.dataset.wordPageStyle = ''; style.textContent = css;
+    host.replaceChildren(style, snapshot);
+  } else {snapshot.removeAttribute('data-page-geometry'); host.replaceChildren(snapshot);}
 }

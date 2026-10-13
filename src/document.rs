@@ -254,6 +254,120 @@ fn is_block(kind: &str) -> bool {
 /// Product limit shared by the editor and import audit, not the OOXML maximum.
 pub const MAX_TABLE_WIDTH_TWIPS: u64 = 31680;
 
+/// Optional explicit single-section page geometry. Absence retains the exact
+/// historical V1/V2 page and print contracts; recognition never rounds values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PageGeometry {
+    pub width_twips: u64,
+    pub height_twips: u64,
+    pub margin_top_twips: u64,
+    pub margin_right_twips: u64,
+    pub margin_bottom_twips: u64,
+    pub margin_left_twips: u64,
+}
+
+pub fn validate_page_geometry(page: &PageGeometry) -> Result<()> {
+    let recognized = [(11906u64, 16838u64), (12240, 15840), (8391, 11906)]
+        .into_iter()
+        .any(|(width, height)| {
+            (page.width_twips.abs_diff(width) <= 2 && page.height_twips.abs_diff(height) <= 2)
+                || (page.width_twips.abs_diff(height) <= 2
+                    && page.height_twips.abs_diff(width) <= 2)
+        });
+    ensure!(
+        recognized,
+        "Page size is outside supported A4, Letter and A5 bounds"
+    );
+    ensure!(
+        [
+            page.margin_top_twips,
+            page.margin_right_twips,
+            page.margin_bottom_twips,
+            page.margin_left_twips
+        ]
+        .into_iter()
+        .all(|margin| margin <= 4320),
+        "Page margins must be integer twips in 0..=4320"
+    );
+    ensure!(
+        page.margin_left_twips + page.margin_right_twips + 1440 <= page.width_twips
+            && page.margin_top_twips + page.margin_bottom_twips + 1440 <= page.height_twips,
+        "Page content area must be at least 1440 twips in each direction"
+    );
+    Ok(())
+}
+
+pub fn page_geometry(doc: &Node) -> Result<Option<PageGeometry>> {
+    let Some(value) = doc.attrs.get("pageGeometry") else {
+        return Ok(None);
+    };
+    let geometry: PageGeometry = serde_json::from_value(value.clone())
+        .context("Page geometry requires exactly six integer-twip fields")?;
+    validate_page_geometry(&geometry)?;
+    Ok(Some(geometry))
+}
+
+/// Check bounded object frames, not text pagination or intrinsic auto-table
+/// layout. Legacy explicit-left-indent tables can protrude 108 twips left;
+/// this conservative size/right-edge check does not promise full containment.
+fn validate_page_content(doc: &Node, page: &PageGeometry) -> Result<()> {
+    let width = page.width_twips - page.margin_left_twips - page.margin_right_twips;
+    let height = page.height_twips - page.margin_top_twips - page.margin_bottom_twips;
+    let mut stack = vec![(doc, 0usize)];
+    while let Some((node, depth)) = stack.pop() {
+        if node.kind == "table" {
+            ensure!(
+                depth == 1,
+                "Explicit page geometry supports only top-level tables"
+            );
+            let total = table_layout_width(node, Some(page))?;
+            let (_, indent) = table_position(node)?;
+            ensure!(
+                total + indent.unwrap_or(0) <= width,
+                "Table width and indentation exceed the explicit page content width; resize it explicitly first"
+            );
+        } else if node.kind == "image" {
+            let source = node.attrs["src"].as_str().context("Missing image source")?;
+            let (header, encoded) = source.split_once(',').context("Invalid embedded image")?;
+            let mime = header
+                .strip_prefix("data:")
+                .and_then(|s| s.strip_suffix(";base64"))
+                .context("Invalid image MIME")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .context("Invalid image base64")?;
+            validate_image_display_media(mime, &bytes)?;
+            let dimensions = if let Some(dimensions) = image_display_dimensions(node)? {
+                dimensions
+            } else {
+                let format = if mime == "image/png" {
+                    image::ImageFormat::Png
+                } else {
+                    image::ImageFormat::Jpeg
+                };
+                let (pixels_w, pixels_h) =
+                    image::ImageReader::with_format(Cursor::new(&bytes), format)
+                        .into_dimensions()
+                        .context("Invalid image dimensions")?;
+                let scale = (600.0 / f64::from(pixels_w))
+                    .min(1.0)
+                    .min(800.0 / f64::from(pixels_h));
+                (
+                    (f64::from(pixels_w) * scale * 9525.0).round() as u64,
+                    (f64::from(pixels_h) * scale * 9525.0).round() as u64,
+                )
+            };
+            ensure!(
+                dimensions.0 <= width * 635 && dimensions.1 <= height * 635,
+                "Image frame exceeds the explicit page content area; resize it explicitly first"
+            );
+        }
+        stack.extend(node.content.iter().map(|child| (child, depth + 1)));
+    }
+    Ok(())
+}
+
 /// Canonical image display geometry, in English Metric Units (914400/inch).
 /// These fit the standard A4 content box and keep the historical 600x800px
 /// authoring ceiling. Pixel dimensions and original media bytes are separate.
@@ -510,9 +624,28 @@ pub fn table_position(node: &Node) -> Result<(Option<&str>, Option<u64>)> {
     Ok((alignment, indent))
 }
 
+/// Only automatic tables without any explicit position metadata reflow to a
+/// smaller explicit page. Their width was already an authored normalization,
+/// never a preserved source width. Fixed/positioned geometry is not rescaled.
+pub fn table_layout_width(node: &Node, page: Option<&PageGeometry>) -> Result<u64> {
+    if let Some(widths) = table_column_widths(node)? {
+        return Ok(widths.iter().sum());
+    }
+    let (alignment, indent) = table_position(node)?;
+    if alignment.is_none()
+        && indent.is_none()
+        && let Some(page) = page
+    {
+        validate_page_geometry(page)?;
+        return Ok(9000.min(page.width_twips - page.margin_left_twips - page.margin_right_twips));
+    }
+    Ok(9000)
+}
+
 pub fn validate(doc: &Node) -> Result<()> {
     ensure!(doc.kind == "doc", "Root must be doc");
     style_profile(doc)?;
+    let page = page_geometry(doc)?;
     let mut nodes = 0usize;
     let mut text_bytes = 0usize;
     fn visit(
@@ -529,7 +662,7 @@ pub fn validate(doc: &Node) -> Result<()> {
             "Document structure exceeds limits"
         );
         let allowed: &[&str] = match node.kind.as_str() {
-            "doc" if depth == 0 => &["styleProfile"],
+            "doc" if depth == 0 => &["styleProfile", "pageGeometry"],
             "heading" => &[
                 "level",
                 "textAlign",
@@ -853,9 +986,11 @@ pub fn validate(doc: &Node) -> Result<()> {
         }
         stack.extend(&node.content);
     }
-    if images.iter().any(|node| {
-        node.attrs.contains_key("displayWidthEmu") || node.attrs.contains_key("imageParagraph")
-    }) {
+    if page.is_some()
+        || images.iter().any(|node| {
+            node.attrs.contains_key("displayWidthEmu") || node.attrs.contains_key("imageParagraph")
+        })
+    {
         ensure!(images.len() <= 100, "Image count exceeds 100");
         let mut total = 0usize;
         for image in images {
@@ -871,12 +1006,16 @@ pub fn validate(doc: &Node) -> Result<()> {
             );
         }
     }
+    if let Some(page) = page {
+        validate_page_content(doc, &page)?;
+    }
     Ok(())
 }
 
 #[derive(Default)]
 struct Writer {
     profile: StyleProfile,
+    page: Option<PageGeometry>,
     media: Vec<(String, Vec<u8>)>,
     image_rels: Vec<String>,
     image_styles: Vec<String>,
@@ -1037,14 +1176,18 @@ impl Writer {
             "table" => {
                 let columns = node.content[0].content.len();
                 let fixed_widths = table_column_widths(node)?;
-                let widths = fixed_widths
-                    .clone()
-                    .unwrap_or_else(|| vec![9000 / columns as u64; columns]);
-                let total = if fixed_widths.is_some() {
-                    widths.iter().sum()
-                } else {
-                    9000
-                };
+                let total = table_layout_width(node, self.page.as_ref())?;
+                let normalized = self.page.is_some()
+                    && !node.attrs.contains_key("tableAlign")
+                    && !node.attrs.contains_key("tableIndentTwips");
+                let widths = fixed_widths.clone().unwrap_or_else(|| {
+                    (0..columns)
+                        .map(|index| {
+                            total / columns as u64
+                                + u64::from(normalized && (index as u64) < total % columns as u64)
+                        })
+                        .collect()
+                });
                 let layout = if fixed_widths.is_some() {
                     "<w:tblLayout w:type=\"fixed\"/>"
                 } else {
@@ -1223,14 +1366,33 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
     let model_part = profile.model_part();
     let mut writer = Writer {
         profile,
+        page: page_geometry(doc)?,
         ..Writer::default()
     };
     let mut body = String::new();
     for block in &doc.content {
         body.push_str(&writer.block(block, 0)?);
     }
+    let section = if let Some(page) = page_geometry(doc)? {
+        let orientation = if page.width_twips > page.height_twips {
+            r#" w:orient="landscape""#
+        } else {
+            ""
+        };
+        format!(
+            r#"<w:pgSz w:w="{}" w:h="{}"{orientation}/><w:pgMar w:top="{}" w:right="{}" w:bottom="{}" w:left="{}" w:header="720" w:footer="720" w:gutter="0"/>"#,
+            page.width_twips,
+            page.height_twips,
+            page.margin_top_twips,
+            page.margin_right_twips,
+            page.margin_bottom_twips,
+            page.margin_left_twips
+        )
+    } else {
+        r#"<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>"#.to_owned()
+    };
     let document = format!(
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>{body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>"#
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>{body}<w:sectPr>{section}</w:sectPr></w:body></w:document>"#
     );
     let mut styles = match profile {
         StyleProfile::LegacyV1 => r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Microsoft YaHei"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>"#,

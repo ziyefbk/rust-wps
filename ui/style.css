@@ -116,3 +116,21 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
 #image-paragraph-controls label { white-space:nowrap; }
 #image-paragraph-controls input { width:72px; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
 #edit-image-paragraph-state { font-size:11px; color:#61738a; }
+
+#page-geometry-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#page-geometry-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+#page-geometry-controls input { width:5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; }
+#edit-page-state { font-size:11px; color:#61738a; }
+.authoring-sheet[data-page-geometry] { outline:1px solid var(--line); }
+/* Page-aware natural images retain the historical DOCX frame. Decorations
+   disappear on reset/undo and survive the immutable print clone. */
+.tiptap img[data-page-natural-image], .tiptap [data-page-natural-image] img {
+  width:var(--word-image-width)!important; height:var(--word-image-height)!important;
+  max-width:none!important; max-height:none!important; object-fit:fill;
+}
+
+/* Only explicit-page, unpositioned automatic tables use this derived width.
+   The variable lives on the table or the editor's TableView wrapper. */
+.tiptap table[data-page-auto-table], .tiptap [data-page-auto-table] > table {
+  width:var(--word-table-width)!important; min-width:0!important; table-layout:auto!important;
+}

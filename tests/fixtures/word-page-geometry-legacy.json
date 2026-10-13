@@ -1,0 +1,778 @@
+{
+  "provenance": "Captured with pre-page-feature immutable CLI before implementation; optional root geometry is absent from every model. Exact whole-package and per-part goldens.",
+  "baseline_cli_sha256": "b68e823cf193b49d2753c839581f775b4acc15ec6f3386b207fdb2f17ab5bb37",
+  "cases": {
+    "legacy-v1": {
+      "model": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": {
+              "level": 1
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Rust \u529e\u516c\u6587\u6863"
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "\u4e2d\u6587 & <\u6b63\u6587> ",
+                "marks": [
+                  {
+                    "type": "bold"
+                  },
+                  {
+                    "type": "italic"
+                  },
+                  {
+                    "type": "underline"
+                  }
+                ]
+              },
+              {
+                "type": "hardBreak"
+              },
+              {
+                "type": "text",
+                "text": "\u7b2c\u4e8c\u884c\t\u7f29\u8fdb"
+              }
+            ]
+          },
+          {
+            "type": "orderedList",
+            "attrs": {
+              "start": 3,
+              "type": null
+            },
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "\u7b2c\u4e00\u4e2a\u7f16\u53f7\u9879\u76ee"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "\u5d4c\u5957\u5217\u8868"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "\u7b2c\u4e8c\u4e2a\u7f16\u53f7\u9879\u76ee"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "table",
+            "content": [
+              {
+                "type": "tableRow",
+                "content": [
+                  {
+                    "type": "tableHeader",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1,
+                      "colwidth": null,
+                      "align": null
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "\u59d3\u540d"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableHeader",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "\u5206\u6570"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "content": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "\u6d4b\u8bd5"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "100"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "sha256": "b2447b811a85619a45d2252c6c045280d54eae8133b0f5f9b36810d489863948",
+      "parts_sha256": {
+        "[Content_Types].xml": "2aff16a2a64c5edf2b160f83628843b24033c78e62a634181a6e38fd1ce5c00f",
+        "_rels/.rels": "a5fccacd8d31d827860f143df0e03e2eef8668de711575e026c26db6b8474915",
+        "word/document.xml": "73322798e2a6f6e2392bc45c02f3a1de802625fcf8ececa367fad63d9ff877c1",
+        "word/styles.xml": "4772c8b1fcbd537d5f57da2c4aeabfa731eb773d94ed1e4e359e842ca4fde2be",
+        "word/numbering.xml": "e4a15ec15694113d38d89730b86904b397fc98a102cf549eb2d0ce576a2c0aba",
+        "word/_rels/document.xml.rels": "3be698b16c95e2553190848bafd3c083b1754ede1ed4ea8aa784d56aa952a783",
+        "rust-wps/model-v1.json": "fae865fa01f3a38fab9c67f9c453ade5e30d1eb3071964da1448f6d0d82f2ab6"
+      }
+    },
+    "standard-v2": {
+      "model": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "heading",
+            "attrs": {
+              "level": 1
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "Rust \u529e\u516c\u6587\u6863"
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "content": [
+              {
+                "type": "text",
+                "text": "\u4e2d\u6587 & <\u6b63\u6587> ",
+                "marks": [
+                  {
+                    "type": "bold"
+                  },
+                  {
+                    "type": "italic"
+                  },
+                  {
+                    "type": "underline"
+                  }
+                ]
+              },
+              {
+                "type": "hardBreak"
+              },
+              {
+                "type": "text",
+                "text": "\u7b2c\u4e8c\u884c\t\u7f29\u8fdb"
+              }
+            ]
+          },
+          {
+            "type": "orderedList",
+            "attrs": {
+              "start": 3,
+              "type": null
+            },
+            "content": [
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "\u7b2c\u4e00\u4e2a\u7f16\u53f7\u9879\u76ee"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "bulletList",
+                    "content": [
+                      {
+                        "type": "listItem",
+                        "content": [
+                          {
+                            "type": "paragraph",
+                            "content": [
+                              {
+                                "type": "text",
+                                "text": "\u5d4c\u5957\u5217\u8868"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "\u7b2c\u4e8c\u4e2a\u7f16\u53f7\u9879\u76ee"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "table",
+            "content": [
+              {
+                "type": "tableRow",
+                "content": [
+                  {
+                    "type": "tableHeader",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1,
+                      "colwidth": null,
+                      "align": null
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "\u59d3\u540d"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableHeader",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "\u5206\u6570"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableRow",
+                "content": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "\u6d4b\u8bd5"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "100"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "attrs": {
+          "styleProfile": "standard-v2"
+        }
+      },
+      "sha256": "2aeaf027c82781ae4e414e8d6227597e89db4a068539e074f3f5d3382b5682b0",
+      "parts_sha256": {
+        "[Content_Types].xml": "2aff16a2a64c5edf2b160f83628843b24033c78e62a634181a6e38fd1ce5c00f",
+        "_rels/.rels": "b501469ad7b4d918d24c98f4f75a64009513112cc176a0617d065b8ddb3eeb41",
+        "word/document.xml": "53069f3bfec2c10fe3495554042f5972f42d77749cfea7f2b1b59cb5e860bc50",
+        "word/styles.xml": "2af4c5d632cee6f8ea02eebf3d96310a55b882df494fef2ea32d59ebc05ee67a",
+        "word/numbering.xml": "e4a15ec15694113d38d89730b86904b397fc98a102cf549eb2d0ce576a2c0aba",
+        "word/_rels/document.xml.rels": "3be698b16c95e2553190848bafd3c083b1754ede1ed4ea8aa784d56aa952a783",
+        "rust-wps/model-v2.json": "044a836870a97a5c5662ed2ac75191d8e53e566b676b9b1d34ff1b9df66b2a7c"
+      }
+    },
+    "image-paragraph": {
+      "model": {
+        "type": "doc",
+        "attrs": {
+          "styleProfile": "standard-v2"
+        },
+        "content": [
+          {
+            "type": "paragraph",
+            "attrs": {
+              "lineSpacing": 240,
+              "spaceAfter": 0,
+              "spaceBefore": 0
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "BeforeImage",
+                "marks": [
+                  {
+                    "type": "fontSize",
+                    "attrs": {
+                      "halfPoints": 24
+                    }
+                  },
+                  {
+                    "type": "fontFamily",
+                    "attrs": {
+                      "name": "DejaVu Sans"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "image",
+            "attrs": {
+              "displayHeightEmu": 95250,
+              "displayWidthEmu": 95250,
+              "imageParagraph": {
+                "lineSpacing": 240,
+                "paragraphFont": {
+                  "bold": false,
+                  "family": "DejaVu Sans",
+                  "halfPoints": 24,
+                  "italic": false
+                },
+                "runFont": {
+                  "bold": false,
+                  "family": "DejaVu Sans",
+                  "halfPoints": 24,
+                  "italic": false
+                },
+                "spaceAfter": 0,
+                "spaceBefore": 0,
+                "textAlign": "left"
+              },
+              "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHgAAABQCAIAAABd+SbeAAAA90lEQVR4nO3aMQ0CQRBA0YXgAQEIQA0WKBFDiQXUIAAB54KChO4Kmn/keK+aZIud/Gy5YwB8bfOZ9pf7gnus1XQ9vYftsnv8D6EjQkeEjuzmDh7PW7nHGON4OMc3lrzoiNARoSNCR4SOCB0ROiJ0ROiI0BGhI0JHhI4IHRE6InRE6IjQEaEjQkeEjggdEToidEToiNARoSOzf+/W/ROu50VHhI4IHRE6InRE6IjQEaEjQkeEjggdEToidEToiNARoSNCR4SOCB0ROiJ0ROiI0BGhI0JHhI4IHRE6InRE6IjQEaEjQkeEjggdEToidEToiNARoQF+1wspJAdQdirGtAAAAABJRU5ErkJggg=="
+            }
+          },
+          {
+            "type": "paragraph",
+            "attrs": {
+              "lineSpacing": 240,
+              "spaceAfter": 0,
+              "spaceBefore": 0
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "AfterImage0",
+                "marks": [
+                  {
+                    "type": "fontSize",
+                    "attrs": {
+                      "halfPoints": 24
+                    }
+                  },
+                  {
+                    "type": "fontFamily",
+                    "attrs": {
+                      "name": "DejaVu Sans"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "sha256": "dd7bb2719bf2347cfab86a40d2018bbd59a4d0d64c5fc27d77589ba6f28cb248",
+      "parts_sha256": {
+        "[Content_Types].xml": "910e5b007ed782b8ced03d05986f6081e7787586779c16d31e25461fd428ba77",
+        "_rels/.rels": "b501469ad7b4d918d24c98f4f75a64009513112cc176a0617d065b8ddb3eeb41",
+        "word/document.xml": "f9f0e4b9184834144cbfb6f502cc752bdb0d30b48b0b59f2f590801f7622af5e",
+        "word/styles.xml": "59e6a1286e405fbae2b9a5f27ef33ff98154c4e203bcdde4229151af4df77b7e",
+        "word/numbering.xml": "d95c31a2b1622fb3d9ab5a268c40f0fdf6790ace3c9f3bdffec0173151632974",
+        "word/_rels/document.xml.rels": "23aec54ee9ac0457611f2890fdc11ae26fa03f8d6929bcdeb79b336a0caf76e7",
+        "word/settings.xml": "23bbc7637f0ee8acd3365be9b554ffab913e6457f089e77fe909bb659b7c222f",
+        "word/media/image1.png": "205c3b32a6ade608c9a046b9f1666636bd6d58d74121b944ee015e7966676ef4",
+        "rust-wps/model-v2.json": "613ba216ffa98accceb2648f9d645835afcb229b5520d8e98ff187c9539d0c00"
+      }
+    },
+    "table-position": {
+      "model": {
+        "type": "doc",
+        "attrs": {
+          "styleProfile": "standard-v2"
+        },
+        "content": [
+          {
+            "type": "table",
+            "attrs": {
+              "columnWidthsTwips": [
+                1800,
+                4200
+              ],
+              "tableAlign": "center"
+            },
+            "content": [
+              {
+                "type": "tableRow",
+                "content": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "attrs": {
+                          "lineSpacing": 240,
+                          "spaceAfter": 0,
+                          "spaceBefore": 0
+                        },
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Wrap01 Wrap02 Wrap03 Wrap04 Wrap05 Wrap06 Wrap07 Wrap08 Wrap09 Wrap10 Wrap11 Wrap12",
+                            "marks": [
+                              {
+                                "type": "fontSize",
+                                "attrs": {
+                                  "halfPoints": 24
+                                }
+                              },
+                              {
+                                "type": "fontFamily",
+                                "attrs": {
+                                  "name": "DejaVu Sans"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "attrs": {
+                          "lineSpacing": 240,
+                          "spaceAfter": 0,
+                          "spaceBefore": 0
+                        },
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "RightProbe",
+                            "marks": [
+                              {
+                                "type": "fontSize",
+                                "attrs": {
+                                  "halfPoints": 24
+                                }
+                              },
+                              {
+                                "type": "fontFamily",
+                                "attrs": {
+                                  "name": "DejaVu Sans"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "sha256": "bcb9d0e31b238b7051a8e1c27278f573079971cdefe8d8d1397d4c27c67979af",
+      "parts_sha256": {
+        "[Content_Types].xml": "910e5b007ed782b8ced03d05986f6081e7787586779c16d31e25461fd428ba77",
+        "_rels/.rels": "b501469ad7b4d918d24c98f4f75a64009513112cc176a0617d065b8ddb3eeb41",
+        "word/document.xml": "cc642d5ea15c3214a9dc61523568b263a013398b1d2889d75071037085259e97",
+        "word/styles.xml": "2af4c5d632cee6f8ea02eebf3d96310a55b882df494fef2ea32d59ebc05ee67a",
+        "word/numbering.xml": "d95c31a2b1622fb3d9ab5a268c40f0fdf6790ace3c9f3bdffec0173151632974",
+        "word/_rels/document.xml.rels": "972b34407491d1ee477a7dd93e8e4453c178fe4644148321e8e683d2d4fb28e6",
+        "word/settings.xml": "23bbc7637f0ee8acd3365be9b554ffab913e6457f089e77fe909bb659b7c222f",
+        "rust-wps/model-v2.json": "2e2e2493c7927350eee387e22999f12ebd990330995c74734f9e1462759ce7ea"
+      }
+    },
+    "unpositioned-auto-page-reset": {
+      "model": {
+        "type": "doc",
+        "attrs": {
+          "styleProfile": "standard-v2"
+        },
+        "content": [
+          {
+            "type": "paragraph",
+            "attrs": {
+              "lineSpacing": 240,
+              "spaceAfter": 0,
+              "spaceBefore": 0
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "LeftText",
+                "marks": [
+                  {
+                    "type": "fontSize",
+                    "attrs": {
+                      "halfPoints": 24
+                    }
+                  },
+                  {
+                    "type": "fontFamily",
+                    "attrs": {
+                      "name": "DejaVu Sans"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "attrs": {
+              "lineSpacing": 240,
+              "spaceAfter": 0,
+              "spaceBefore": 0,
+              "textAlign": "center"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "CenterText",
+                "marks": [
+                  {
+                    "type": "fontSize",
+                    "attrs": {
+                      "halfPoints": 24
+                    }
+                  },
+                  {
+                    "type": "fontFamily",
+                    "attrs": {
+                      "name": "DejaVu Sans"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "paragraph",
+            "attrs": {
+              "lineSpacing": 240,
+              "spaceAfter": 0,
+              "spaceBefore": 0,
+              "textAlign": "right"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "RightText",
+                "marks": [
+                  {
+                    "type": "fontSize",
+                    "attrs": {
+                      "halfPoints": 24
+                    }
+                  },
+                  {
+                    "type": "fontFamily",
+                    "attrs": {
+                      "name": "DejaVu Sans"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "table",
+            "content": [
+              {
+                "type": "tableRow",
+                "content": [
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "attrs": {
+                          "lineSpacing": 240,
+                          "spaceAfter": 0,
+                          "spaceBefore": 0
+                        },
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Row1Column1",
+                            "marks": [
+                              {
+                                "type": "fontSize",
+                                "attrs": {
+                                  "halfPoints": 24
+                                }
+                              },
+                              {
+                                "type": "fontFamily",
+                                "attrs": {
+                                  "name": "DejaVu Sans"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "tableCell",
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "attrs": {
+                          "lineSpacing": 240,
+                          "spaceAfter": 0,
+                          "spaceBefore": 0
+                        },
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "Row1Column2",
+                            "marks": [
+                              {
+                                "type": "fontSize",
+                                "attrs": {
+                                  "halfPoints": 24
+                                }
+                              },
+                              {
+                                "type": "fontFamily",
+                                "attrs": {
+                                  "name": "DejaVu Sans"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "sha256": "bd2e2d624c1d592159e26cb29a6b5a023a1f1fcd3ab01f048bcff264d2fcf497",
+      "parts_sha256": {
+        "[Content_Types].xml": "910e5b007ed782b8ced03d05986f6081e7787586779c16d31e25461fd428ba77",
+        "_rels/.rels": "b501469ad7b4d918d24c98f4f75a64009513112cc176a0617d065b8ddb3eeb41",
+        "word/document.xml": "7bdcff81f65c6b4ab3e8d501dc449967c7bc810132065cd8c236df48211b2ea1",
+        "word/styles.xml": "2af4c5d632cee6f8ea02eebf3d96310a55b882df494fef2ea32d59ebc05ee67a",
+        "word/numbering.xml": "d95c31a2b1622fb3d9ab5a268c40f0fdf6790ace3c9f3bdffec0173151632974",
+        "word/_rels/document.xml.rels": "972b34407491d1ee477a7dd93e8e4453c178fe4644148321e8e683d2d4fb28e6",
+        "word/settings.xml": "23bbc7637f0ee8acd3365be9b554ffab913e6457f089e77fe909bb659b7c222f",
+        "rust-wps/model-v2.json": "a0b60a8e8b99defda14d522c40e9da1b861b983c789bd50ec6e465ca6a879999"
+      }
+    }
+  }
+}

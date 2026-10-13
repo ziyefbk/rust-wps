@@ -1,3 +1,5 @@
+import {WordPageGeometry, documentPageGeometry, validatePageGeometryDocument} from './word-page-geometry';
+import {WordPageControls} from './word-page-controls';
 import {searchWord,type WordMatch} from './word-search';
 import {createWordReplacement} from './word-replace';
 import {FontSize, createFontSizeTransaction, parseFontSizePoints, selectedFontSize} from './word-font-size';
@@ -80,6 +82,7 @@ let fontFamilyInputChanged = false;
 let fontFamilyInputEditing = false;
 let paragraphSpacingInputEditing = false;
 let tableWidthInputEditing = false;
+let pageControls: WordPageControls | null = null;
 let imageControls: WordImageControls | null = null;
 let imageParagraphControls: WordImageParagraphControls | null = null;
 let tableIndentInputEditing = false;
@@ -324,6 +327,7 @@ function updateToolbar() {
   el<HTMLInputElement>('edit-replacement').disabled=locked;
   for (const button of document.querySelectorAll<HTMLButtonElement>('#editor-toolbar button')) button.disabled = locked;
   // Image-specific selection/saving locks must follow the toolbar defaults.
+  pageControls?.update();
   imageControls?.update();
   imageParagraphControls?.update();
   for (const mark of ['bold', 'italic', 'underline', 'strike', 'superscript', 'subscript', 'bulletList', 'orderedList']) {
@@ -453,6 +457,7 @@ function queueDraft(doc: JSONContent) {
   });
 }
 export function closeAuthoring() {
+  pageControls?.reset();
   imageControls?.reset();
   imageParagraphControls?.reset();
   tableWidthInputEditing = false;
@@ -477,6 +482,7 @@ async function create(content?: JSONContent, ask = true) {
   validateParagraphSpacingDocument(initial);
   validateTableWidthsDocument(initial);
   validateImageDimensionsDocument(initial);
+  validatePageGeometryDocument(initial);
   if (ask && !(await canLeaveAuthoring())) return;
   // Flush the previous document before a new draft enters the same slot.
   closeAuthoring();
@@ -488,10 +494,10 @@ async function create(content?: JSONContent, ask = true) {
     editable: !paused,
     element: el('editor-content'),
     extensions: [FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
-      ParagraphAlignment, ParagraphSpacing, PageBreak, TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
+      WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, PageBreak, TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
     content: initial,
     editorProps: {
-      attributes: state => ({ 'aria-label': '文档编辑区', spellcheck: 'false', 'data-style-profile': state.doc.attrs.styleProfile ?? 'legacy-v1' }),
+      attributes: state => ({ 'aria-label': '文档编辑区', spellcheck: 'false', 'data-style-profile': state.doc.attrs.styleProfile ?? 'legacy-v1', ...(state.doc.attrs.pageGeometry ? {'data-page-geometry': JSON.stringify(state.doc.attrs.pageGeometry)} : {}) }),
       handleKeyDown: (_view,event) => {
         // WebView may deliver the next editing key before selectionchange.
         if (!event.isComposing && event.keyCode !== 229 && ['Enter','Backspace','Delete'].includes(event.key)) syncDomTextSelection();
@@ -527,6 +533,7 @@ async function create(content?: JSONContent, ask = true) {
 
 export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof showNotice, beforeLeave: () => Promise<boolean> = async () => true) {
   imageParagraphControls = new WordImageParagraphControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
+  pageControls = new WordPageControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
   imageControls = new WordImageControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
   canLeaveOther = beforeLeave;
   onChangeMode = onMode; showNotice = notice;
@@ -766,8 +773,8 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
     if (!editor || paused || leaving || saving || printing) return;
     printing = true; editor.setEditable(false, false); updateToolbar();
     try {
-      await preparePrintSnapshot(el('editor-content').querySelector<HTMLElement>('.tiptap')!);
-      showNotice('已准备 A4 打印副本。请在系统打印窗口选择打印机或 PDF 目标，并核对预览、纸张、缩放和页眉页脚设置。');
+      await preparePrintSnapshot(el('editor-content').querySelector<HTMLElement>('.tiptap')!, documentPageGeometry(snapshotDocument(editor!)));
+      showNotice(`${editor!.state.doc.attrs.pageGeometry ? '已准备所选页面的打印副本' : '已准备 A4 打印副本'}。请在系统打印窗口选择打印机或 PDF 目标，并核对预览、纸张、缩放和页眉页脚设置。`);
       window.print();
     } catch (error) { showNotice(`打印准备失败：${String(error)}`, true); }
     finally { printing = false; editor?.setEditable(!paused && !leaving, false); updateToolbar(); }
@@ -776,11 +783,12 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
   el('edit-export-pdf').addEventListener('click', async () => {
     if (!editor || paused || leaving || saving || printing || !isTauri()) return;
     const wordStyleProfile = editorStyleProfile(editor);
+    const wordPageGeometry = documentPageGeometry(snapshotDocument(editor));
     printing = true; editor.setEditable(false, false); updateToolbar();
     try {
-      await preparePrintSnapshot(el('editor-content').querySelector<HTMLElement>('.tiptap')!);
-      const saved = wordStyleProfile
-        ? await invoke<{ path: string; bytes: number } | null>('export_current_pdf', {wordStyleProfile})
+      await preparePrintSnapshot(el('editor-content').querySelector<HTMLElement>('.tiptap')!, documentPageGeometry(snapshotDocument(editor!)));
+      const saved = wordStyleProfile || wordPageGeometry
+        ? await invoke<{ path: string; bytes: number } | null>('export_current_pdf', {...(wordStyleProfile ? {wordStyleProfile} : {}), ...(wordPageGeometry ? {wordPageGeometry} : {})})
         : await invoke<{ path: string; bytes: number } | null>('export_current_pdf');
       showNotice(saved ? `已另存 PDF：${saved.path}。DOCX 中的修改仍需另存。` : '已取消 PDF 导出，文档保留。');
     } catch (error) { showNotice(`PDF 导出失败：${String(error)}`, true); }

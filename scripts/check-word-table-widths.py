@@ -6,6 +6,9 @@ fixed before import and checked by an independent XML reader and python-docx.
 The path is source -> import -> unchanged and width-edited model -> DOCX ->
 independent XML -> trusted read-docx-model exact equality. External reimport,
 invalid-model refusal, source hashes and no-clobber are separate assertions.
+Historical resource-maximum fixtures also retain explicit-page refusal controls;
+absent-page models still reopen exactly, while external imports of their emitted
+explicit pages must reject known overflow. No table is silently resized.
 
   python scripts/check-word-table-widths.py --generate-only
   python scripts/check-word-table-widths.py --cli target/debug/rust-wps --render
@@ -47,6 +50,8 @@ KEY = "columnWidthsTwips"
 # cannot silently weaken a refusal assertion. CLI switches allow planned changes.
 RISK = "Unsupported table geometry cannot be preserved in an editable copy"
 WARNING = "Autofit table widths normalized; fixed column widths were not inferred"
+PAGE_WARNING = "Source page geometry is incomplete; editable copy uses default A4 margins"
+PAGE_FIT = "Table width and indentation exceed the explicit page content width; resize it explicitly first"
 WRAP_WORDS = [f"Wrap{i:02d}" for i in range(1, 13)]
 
 
@@ -70,6 +75,36 @@ def child(parent, tag, **attrs):
         element.set(qn("w:" + key), str(value))
     parent.append(element)
     return element
+
+
+def without_page_declaration(doc):
+    """Isolate historical resource bounds without changing table declarations."""
+    for section in doc.sections:
+        remove(section._sectPr, "pgSz")
+        remove(section._sectPr, "pgMar")
+
+
+def model_exceeds_page(model):
+    page = model.get("attrs", {}).get("pageGeometry")
+    if page is None:
+        return False
+    body_width = page["widthTwips"] - page["marginLeftTwips"] - page["marginRightTwips"]
+    return any(sum(t.get("attrs", {}).get(KEY, [9000])) + t.get("attrs", {}).get("tableIndentTwips", 0) > body_width
+               for t in model_tables(model))
+
+
+def external_page_fit(path, targets):
+    """Read the actual emitted page with an independent OOXML consumer."""
+    with zipfile.ZipFile(path) as package:
+        root = ET.fromstring(package.read("word/document.xml"))
+    sections = root.findall("w:body/w:sectPr", NS)
+    check(len(sections) == 1, "Authored output must declare one body section")
+    size, margin = sections[0].find("w:pgSz", NS), sections[0].find("w:pgMar", NS)
+    check(size is not None and margin is not None, "Authored output page declarations missing")
+    body_width = int(size.get(qn("w:w"))) - int(margin.get(qn("w:left"))) - int(margin.get(qn("w:right")))
+    table_widths = [(sum(t["widths"]) if t["widths"] is not None else 9000) + (t.get("indent") or 0) for t in targets]
+    return {"content_width_twips": body_width, "table_width_plus_indent_twips": table_widths,
+            "fits": all(width <= body_width for width in table_widths)}
 
 
 def declaration(element):
@@ -207,7 +242,7 @@ def verify_independent(snapshot, targets, label, fixed_required=True):
 def make_fixtures(directory):
     sources = {}
 
-    def save(name, doc, widths=None, reject=None, normalize=False, render=False, transform=None):
+    def save(name, doc, widths=None, reject=None, normalize=False, render=False, transform=None, page_fit=False, legacy_no_page=False):
         path = directory / (name + ".docx")
         check(not path.exists(), f"Fixture destination exists: {path}")
         if transform is None:
@@ -222,7 +257,12 @@ def make_fixtures(directory):
         item = {"path": str(path), "sha256": digest(path), "bytes": path.stat().st_size,
                 "fixture_kind": "directed synthetic python-docx fixture; not upstream/user corpus",
                 "expected_action": "reject" if reject else "normalize" if normalize else "fixed-roundtrip",
-                "source_xml": xml_snapshot(path)}
+                "source_xml": xml_snapshot(path), "page_fit_refusal": page_fit, "legacy_absent_page": legacy_no_page}
+        if page_fit:
+            targets = [{"widths": [int(g["w"]) for g in table["grid"]] if table["layout"] == {"type": "fixed"} else None,
+                        "indent": None if table["indent"] is None else int(table["indent"]["w"])} for table in item["source_xml"]]
+            item["page_fit_evidence"] = external_page_fit(path, targets)
+            check(not item["page_fit_evidence"]["fits"], name + ": declared page-fit rejection fixture actually fits")
         if reject:
             item["unsupported_form"] = reject
         else:
@@ -244,7 +284,12 @@ def make_fixtures(directory):
                                        ("fixed-maximum-single", [31680], 1, False)):
         doc = fresh_document()
         add_table(doc, widths, rows=rows, header=header)
-        save(name, doc, [widths])
+        if name in ("fixed-maximum-total", "fixed-maximum-single"):
+            save("reject-page-fit-" + name, doc, reject="explicit A4 body cannot fit historical 31680twip resource maximum", page_fit=True)
+            without_page_declaration(doc)
+            save(name, doc, [widths], legacy_no_page=True)
+        else:
+            save(name, doc, [widths])
     doc = fresh_document()
     add_table(doc, [1200, 4800])
     doc.add_paragraph("BetweenTables")
@@ -386,9 +431,16 @@ def export_verify(cli, evidence, directory, name, model, targets):
     verify_model(reopened, targets, name + " trusted authored reopen")
     check(reopened == model, name + ": trusted authored reopen changed full model")
     result["full_model_equal_after_authored_reopen"] = True
-    external = run_cli(cli, evidence["commands"], "import-docx", output)["document"]
-    result["external_reimported_tables"] = verify_model(external, targets, name + " external reimport")
-    result["full_model_equal_after_external_reimport"] = external == model
+    result["external_page_fit"] = external_page_fit(output, targets)
+    if not result["external_page_fit"]["fits"]:
+        check("pageGeometry" not in model.get("attrs", {}), "Explicit-page model unexpectedly wrote an overflowing table")
+        error = run_cli(cli, evidence["commands"], "import-docx", output, success=False)
+        check(PAGE_FIT in error, name + ": legacy oversized output refused for unrelated reason")
+        result.update(external_reimport_refusal=error, external_reimport_expected_action="refuse explicit emitted page overflow; trusted legacy model remains exact")
+    else:
+        external = run_cli(cli, evidence["commands"], "import-docx", output)["document"]
+        result["external_reimported_tables"] = verify_model(external, targets, name + " external reimport")
+        result["full_model_equal_after_external_reimport"] = external == model
     failure = run_cli(cli, evidence["commands"], "create-docx", model_path, output, success=False)
     check("Output already exists" in failure and digest(output) == result["sha256"], name + ": output no-clobber failed")
     result["existing_output_overwrite_refused"] = True
@@ -614,8 +666,8 @@ def main():
                 item["audit"] = run_cli(cli, evidence["commands"], "audit-docx", path)
                 if item["expected_action"] == "reject":
                     # Merged cells already have a distinct longstanding guard.
-                    diagnostic = "Merged table cells" if name == "reject-merged" else args.risk
-                    check(diagnostic in item["audit"]["risks"], f"{name}: missing diagnostic {diagnostic!r}: {item['audit']}")
+                    diagnostic = PAGE_FIT if item.get("page_fit_refusal") else "Merged table cells" if name == "reject-merged" else args.risk
+                    check(item.get("page_fit_refusal") or diagnostic in item["audit"]["risks"], f"{name}: missing diagnostic {diagnostic!r}: {item['audit']}")
                     item["import_error"] = run_cli(cli, evidence["commands"], "import-docx", path, success=False)
                     check(diagnostic in item["import_error"], f"{name}: wrong import refusal")
                 else:
@@ -623,6 +675,8 @@ def main():
                     if item["expected_action"] == "normalize":
                         check(args.normalization_warning in item["audit"]["risks"], f"{name}: missing normalization warning")
                     imported = run_cli(cli, evidence["commands"], "import-docx", path)["document"]
+                    if item.get("legacy_absent_page"):
+                        check(PAGE_WARNING in item["audit"]["risks"] and "pageGeometry" not in imported.get("attrs", {}), name + ": missing-page pathway not explicitly normalized")
                     item["imported_tables"] = verify_model(imported, item["expected"], name + " imported")
                     item["unchanged_export"] = export_verify(cli, evidence, directory, name + "-unchanged", imported, item["expected"])
                     if safe_model is None:
@@ -668,6 +722,8 @@ def main():
                                "normalization_fixtures": sum(i["expected_action"] == "normalize" for i in sources.values()),
                                "rejection_fixtures": sum(i["expected_action"] == "reject" for i in sources.values()),
                                "bad_models_refused": len(evidence.get("bad_model_refusals", [])),
+                               "explicit_page_fit_refusals": sum(bool(i.get("page_fit_refusal")) for i in sources.values()),
+                               "legacy_absent_page_sources": sum(bool(i.get("legacy_absent_page")) for i in sources.values()),
                                "rendered_sources": sum("source_render" in i for i in sources.values()),
                                "rendered_exports": sum("unchanged_render" in i for i in sources.values()) + sum("edited_render" in i for i in sources.values())}
     except Exception as error:

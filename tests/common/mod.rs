@@ -49,3 +49,14 @@ pub fn materialize_standard_spacing(node: &mut Node) {
         materialize_standard_spacing(child);
     }
 }
+
+// Re-importing an authored DOCX now proves its explicit historical A4 section.
+// This does not alter trusted reopens or erase newly preserved evidence.
+pub fn materialize_exported_page(node: &mut Node) {
+    assert_eq!(node.kind, "doc");
+    node.attrs.entry("pageGeometry").or_insert(json!({
+        "widthTwips":11906,"heightTwips":16838,
+        "marginTopTwips":1440,"marginRightTwips":1440,
+        "marginBottomTwips":1440,"marginLeftTwips":1440
+    }));
+}
