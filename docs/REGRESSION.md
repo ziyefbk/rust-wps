@@ -1,6 +1,50 @@
 # 当前跨格式回归记录
 
-## 本轮：PDF 当前页旋转另存（2026-10-13）
+## 本轮：PDF 纯旋转修订链重开（2026-10-13）
+
+基于 `a1f35cdcd1e54d7b1b97d736d50e57c26348824c`，保存后的旋转副本可显式重开后继续另存。仅接受从严格基础文件开始、逐步证明为单个叶页面有效方向恰好 +90° 的修订链；最多 16 次，且累计工作配额可能更早阻止追加。不支持一般增量修改，不依赖 Producer / 应用标记，不通过删除安全检查扩大兼容。实现 / 冷重开预算和精确字节 framing 见 [PDF_PAGE_ROTATION.md](PDF_PAGE_ROTATION.md)。桌面 API、源快照、会话 / 画布身份、源会话保持与不覆盖发布路径没有改动。
+
+### 最终门禁与冻结身份
+
+- Rust **1.99 / 1.88 各 554 项通过**，即原 537 + 17 个修订链检查；旋转模块共 43 项，不跨工具链重复累计。日志 `tmp/pdf-rotation-chain-core-{stable,msrv}-final.log`
+- 新检查覆盖同页四转、多页交替后重访、继承方向、每次完整源前缀和 ID、七种基础 EOF / 空白结尾、原终端语法与严格 loader 一致性、16 次成功 / 第 17 次拒绝、旧历史及原始字节篡改、额外对象 / 几何 / 引用变化、跳转 / 循环 / 向前 Prev、旋转跳跃、重新序列化与尾部添加、累计配额及先前文件不覆盖
+- **42 MiB 原始 stream 的受控文件成功另存，并经全新 `selection` 审计重开**；50 MiB 对照因累计工作配额明确拒绝。另用 301 个 stream 共享带 2 MiB 空白的间接 Length 对象，证明重复物理扫描也计费并提前拒绝。它们是资源边界合成样本，不是真实文件兼容或吞吐量承诺
+- **35 项 Tauri-free 实际生产后端检查在两工具链各通过**；`scripts/pdf-rotation-probe.rs` 原样编译 / 运行，日志 `tmp/pdf-rotation-chain-backend-{build,tests}-{stable,msrv}-final.log`。stable 生产 worker / 发布 probe 另经真实修订文件检查，不能等同系统对话框或原生 IPC
+- **509 项无浏览器前端检查通过**，前端源码未改。先完成 TypeScript / Vite build，再使用旧精确 argv 运行全量；日志 `tmp/pdf-rotation-chain-ui-{build,aggregate}.log`，命令与结果 `tmp/pdf-rotation-chain-ui-gates.json` SHA **`5bd97ff65dc1ae417a728a8f18e85579936b7f2eaf8502b67b9dbb842d056c65`**。保留既有 bundle 大小提示
+- 核心库 / CLI 两工具链 build、`cargo +stable fmt --check`、probe rustfmt、新 Python checker 语法及 `git diff --check` 通过。原始严格 Clippy 仍各只有旧跨格式单项：stable XLS `chunks_exact_to_as_chunks`、1.88 PPT `uninlined_format_args`；只排除各自原单项后通过。日志 `tmp/pdf-rotation-chain-clippy-{stable,msrv}-{raw,scoped}-final.log`
+- 缓存仍为 `../toolchains/{cargo,rustup}`，`CARGO_INCREMENTAL=0`；stable 使用 `target`，1.88 使用 `tmp/msrv-target`，前端 `USERPROFILE=$PWD/tmp/linux-home`。无 RUSTFLAGS / profile 覆盖、新 target、依赖 / 锁文件 / vendor 修改；没有清理证据或构建目录
+- 除本轮 `src/pdf_rotation.rs` 外，**357 个受保护的 tracked 产品源码 / vendor / 依赖 / 旧脚本逐字节等于基线**。清单 `tmp/pdf-rotation-chain-protected-identity.json` SHA **`50140a3a9fd966bac9ab264bb0a86429167e0299c8b5831e57d264f5a32ac702`**
+
+冻结产品源码 SHA **`c5a2eae5321cc3ca0c25f718e34b76592b282184de6e22a2e7a1f937eed2ea04`**；CLI `tmp/pdf-rotation-chain-final-cli` SHA **`e4c874a13af3317d794e650525e0ac04d535aa75318ca1c32386ccc124fe7e88`**；生产 probe `tmp/pdf-rotation-chain-probe` SHA **`a151ee75596e810a59afc437b944128d1214cd1b665fd54bc42b76ce2d60ba17`**。链接来源及真实命令在 `tmp/pdf-rotation-chain-backend-provenance-stable-final.json`，SHA **`ce14d5e19c45dabb0ec502e9f0096e03879c17c39bec7a72a5e90a650dc13b5a`**。
+
+### 独立原件、逐次保存与图像
+
+后继 checker 单独新增，旧 `scripts/check-pdf-rotation.py` 及首版报告原样保留；首版“所有旧修订拒绝”的预期只适用于历史版本。本轮实际命令：
+
+```sh
+python3 scripts/check-pdf-rotation-chains.py --candidate tmp/pdf-rotation-chain-final-cli --probe tmp/pdf-rotation-chain-probe --provenance tmp/pdf-rotation-chain-backend-provenance-stable-final.json --output tmp/pdf-rotation-chain-independent-final
+```
+
+新 checker SHA **`d6801ef5b4a5b1e889dd2a680de0ed01c5c2976cd318089db9b5104fab399511`**；最终报告 `tmp/pdf-rotation-chain-independent-final/report.json` SHA **`a404a45d16ff76d10e92f286d31ad5a4dedf215a15d066a206048d881cfb670e`**。固定原件仍是同一份未改造 Mozilla tracemonkey.pdf，1,016,315 字节，SHA **`3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`**，不能把多个保存结果计成更多真实文档。
+
+- **3 组路径 / 9 个中间保存文件**：同页 `[1,1,1,1]`、混合 `[1,7,14,1]`、冻结首版输出继续旋转。每个中间文件用 pypdf 独立核对 **996 个对象、377 个 stream 的原始及解码字节**、前驱及原件完整前缀、活动 xref、精确单叶替换、Prev、独立重算 ID、逐页正文 / 页序 / 几何 / 内容及资源引用
+- **9 次实际 production publication** 显式打开前一已保存文件、建立新会话、调用生产 worker 与父进程发布；每份输出逐字节等于独立检查的 CLI 文件，源会话和所有前驱文件保持。另有一次原始 worker reopened-chain 请求，输出身份与已检查的第三次旋转一致
+- **117/117 次未选页面的前驱 / 输出 Splash 光栅完全相同**；**112 次从未选中页面的原件对照相同**。字节哈希完全相同的 PDF 渲染明确复用，不把复用计成新的渲染。其余每页由新 Poppler 进程生成，配置与命令记录在报告。原 helper 的 Splash 身份记录停在第二层 wrapper；补充 `tmp/pdf-rotation-chain-renderer-provenance-postrun.json`（SHA **`6c4c4d72b8b94a9e78f46a9dcbe20a92aceb1057205b4bffd2d600ecded98e69`**）另记录实际 ELF、字体配置及动态库，明确属于运行后观察，不冒称运行前已冻结。Splash 26.05.0 与 Cairo 25.03.0 的差异单列
+- **28/28 次已触及页面的独立累计方向参考对照相同**，覆盖 Splash 与 Cairo；9 份 pypdf 参考由原件独立应用累计方向生成。两个 Poppler 路径不等于两套无关 PDF 引擎。同页四转后的 **14/14 页原件光栅完全相同**；这不是一般性 PDF 重写保真承诺
+- **36 个安全 / 拒绝控制通过**：源 / 既有目标 / 硬链接 / 符号链接不覆盖、无效页号和全部选中身份、旧历史 / 新方向 / ID / 几何 / Prev 篡改、取消 / 过期会话、源改变 / worker 身份错误；两份原有未改造不支持原件与六份受控加密 / 注释 / 表单 / 动作 / 签名字典派生件继续拒绝。派生件可能含额外阻断，不把它们当作有效密码学签名或单因子证明
+- **45 个受保护原件、历史证据、二进制与派生文件在检查前后不变**。重复调用已存在证据目录在写入前拒绝，报告散列不变；`tmp/pdf-rotation-chain-existing-evidence-rejection.json` 记录这次负向结果。证据约 66 MiB；另查看原件及第 1 页 90 / 180 / 270 / 0° 的实际图像，页面有真实论文内容，没有空白图像假通过
+- 独立只读 reviewer 另以公开 CLI 完成 **55 项对抗性检查**，包含独立构造且与冻结旧 writer 字节相等的追加修订、完整链深度、物理 framing / stream 假标记、所有额外修改及不发布保护。`tmp/pdf-rotation-chain-reviewer/report.json` SHA **`818cd50d223fafddb52c9e8cc613e2a2be3be56e7b2b3ad54c4b43c5aa615b1e`**；该受控 harness 不充当更多真实文档
+
+### 原样保留的限制与失败证据
+
+本轮 **9 个直接“前驱光栅精确转置”诊断全部失败并保留**，没有放宽阈值、删图或改写成通过。验收仍采用首版已明确区分的“独立旋转参考 + 未选页精确图像 + 字节 / 对象 / stream 保护”；首版三页失败计数及原报告散列再次核对。pypdf 每页正文不变；Poppler 对旋转后的复制文字可能重排或拼接断词，本轮只确认相同工具下候选和独立累计参考的正文精确一致。
+
+早期测试的 Debug 约束表达式、被 writer 自动重算 Size 的无效负向夹具，以及误将 `+startxref` 的 raw 语法接受当成 strict loader 接受的预期已修正，失败日志保留；没有放松产品 guard。独立审查推动补齐 32 位 xref 加法边界、共享 Length 扫描计费和首次输出的冷重开预算预留。
+
+Chromium EPERM、云 localhost 隔离、Linux GLib/WebKit 缺失与离线 Windows 路线没有重试；Tauri 薄适配器仍只有既有源审查，实际 WebView2 / 系统对话框 / 原生 IPC / Windows Job / 窗口关闭未在本轮验收。没有重跑 vendor 或借用历史原生计数。资源计费不是文件锁、历史真实性认证、进程 CPU / 解码内存配额或通用修订解析；复杂 PDF、OCR / 编辑与整个 DOC/DOCX/PDF 阶段仍未完成。
+
+
+## 历史：首版 PDF 当前页旋转另存（2026-10-13）
 
 基于 `42482a5e166eb5ed46615d6ee04428c078974b95`，新增严格子集的“当前页顺时针旋转 90°，另存副本”。当前页面必须已经完成渲染，PDF.js 页号 / ref / 有效方向 / 总页数与源 SHA、精确会话 token 交叉验证。只追加选中叶页面的 Rotate 及必要 xref / trailer / 第二文件 ID，完整源前缀保留，源会话不切换，任何已有文件都不覆盖。已有修订、加密、线性化、签名 / 表单 / 注释 / 动作及未证明语法拒绝；保存后的副本可以预览，但首版不能再次旋转另存。完整范围见 [PDF_PAGE_ROTATION.md](PDF_PAGE_ROTATION.md)。
 

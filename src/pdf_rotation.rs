@@ -15,6 +15,54 @@ const MAX_TOKENS: usize = 500_000;
 const MAX_DEPTH: usize = 64;
 const MAX_PAGES: usize = 1_000;
 const MAX_TREE: usize = 4_096;
+const MAX_REVISIONS: usize = 16;
+const MAX_WORK_BYTES: usize = 512 * 1024 * 1024;
+const MAX_WORK_TOKENS: usize = 2_000_000;
+const MAX_WORK_OBJECTS: usize = 200_000;
+// Physical syntax of the existing bounded writer, never evidence of trust.
+const REVISION_HEADER: &[u8] = b"%PDF-1.4\n%\xbb\xad\xc0\xde\n";
+
+#[derive(Clone, Default)]
+struct Budget {
+    bytes: usize,
+    tokens: usize,
+    objects: usize,
+}
+impl Budget {
+    fn bytes(&mut self, amount: usize) -> Result<()> {
+        self.bytes = self
+            .bytes
+            .checked_add(amount)
+            .context("PDF byte work overflow")?;
+        ensure!(
+            self.bytes <= MAX_WORK_BYTES,
+            "PDF cumulative byte work budget exceeded"
+        );
+        Ok(())
+    }
+    fn tokens(&mut self, amount: usize) -> Result<()> {
+        self.tokens = self
+            .tokens
+            .checked_add(amount)
+            .context("PDF token work overflow")?;
+        ensure!(
+            self.tokens <= MAX_WORK_TOKENS,
+            "PDF cumulative token budget exceeded"
+        );
+        Ok(())
+    }
+    fn objects(&mut self, amount: usize) -> Result<()> {
+        self.objects = self
+            .objects
+            .checked_add(amount)
+            .context("PDF object work overflow")?;
+        ensure!(
+            self.objects <= MAX_WORK_OBJECTS,
+            "PDF cumulative object/tree work budget exceeded"
+        );
+        Ok(())
+    }
+}
 const UNSUPPORTED: &str = "此 PDF 不在当前旋转另存的安全支持范围内";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,7 +348,10 @@ struct Raw {
     xref: usize,
     trailer: Dictionary,
 }
-fn raw_source(source: &[u8]) -> Result<Raw> {
+// The last startxref is only a candidate anchored to the terminal EOF. The
+// exact section grammar and physical base audit must still prove it. Historical
+// EOFs are never searched: Prev offsets and next-revision boundaries bound them.
+fn terminal_xref(source: &[u8]) -> Result<usize> {
     ensure!(
         source.len() as u64 <= MAX_BYTES
             && source.starts_with(b"%PDF-1.")
@@ -319,71 +370,158 @@ fn raw_source(source: &[u8]) -> Result<Raw> {
     );
     let start = source[..eof - 5]
         .windows(9)
-        .rposition(|w| w == b"startxref")
+        .rposition(|part| part == b"startxref")
         .context("Missing PDF startxref")?;
     let mut tail = Cursor::new(&source[start..eof - 5]);
     tail.keyword(b"startxref")?;
     let xref = usize::try_from(tail.integer()?)?;
     tail.finish_span()?;
+    ensure!(xref < start, "Invalid PDF xref offset");
+    Ok(xref)
+}
+
+struct Section {
+    xref: usize,
+    // Object ID -> (physical offset, generation, in-use).
+    records: BTreeMap<u32, (usize, u16, bool)>,
+    subsections: usize,
+    trailer: Dictionary,
+    eof: usize,
+}
+// Starts at an exact xref offset and consumes the EOF through the grammar.
+// This cannot discover a predecessor by blindly searching stream payloads.
+fn section(source: &[u8], xref: usize, limit: usize, budget: &mut Budget) -> Result<Section> {
     ensure!(
-        xref < start && source.get(xref..xref + 4) == Some(b"xref"),
-        "Invalid PDF xref offset"
+        xref < limit && limit <= source.len(),
+        "Invalid PDF section bounds"
     );
-    let mut cursor = Cursor::new(&source[xref..start]);
+    budget.bytes(limit - xref)?;
+    let mut cursor = Cursor::new(&source[xref..limit]);
+    ensure!(
+        cursor.bytes.starts_with(b"xref"),
+        "Only exact classic xref supported"
+    );
     cursor.keyword(b"xref")?;
+    let mut records = BTreeMap::new();
+    let mut subsections = 0;
+    loop {
+        cursor.skip();
+        if cursor.bytes.get(cursor.pos..cursor.pos + 7) == Some(b"trailer") {
+            break;
+        }
+        subsections += 1;
+        ensure!(subsections <= 2, "Too many PDF xref subsections");
+        let start = u32::try_from(cursor.integer()?)?;
+        let count = usize::try_from(cursor.integer()?)?;
+        ensure!(
+            count > 0 && count <= MAX_OBJECTS + 1 && records.len() + count <= MAX_OBJECTS + 1,
+            "PDF xref record budget exceeded"
+        );
+        ensure!(
+            start <= MAX_OBJECTS as u32 && start as usize + count <= MAX_OBJECTS + 1,
+            "PDF xref ID budget exceeded"
+        );
+        while matches!(cursor.bytes.get(cursor.pos), Some(b' ' | b'\t')) {
+            cursor.pos += 1;
+        }
+        if cursor.bytes.get(cursor.pos) == Some(&b'\r') {
+            cursor.pos += 1;
+        }
+        ensure!(
+            cursor.bytes.get(cursor.pos) == Some(&b'\n'),
+            "Invalid classic xref header"
+        );
+        cursor.pos += 1;
+        for id in start..start + count as u32 {
+            let record = cursor
+                .bytes
+                .get(cursor.pos..cursor.pos + 20)
+                .context("Truncated classic xref")?;
+            cursor.pos += 20;
+            ensure!(
+                record[..10].iter().all(u8::is_ascii_digit)
+                    && record[10] == b' '
+                    && record[11..16].iter().all(u8::is_ascii_digit)
+                    && record[16] == b' '
+                    && matches!(record[17], b'f' | b'n')
+                    && (record[18..] == *b" \n" || record[18..] == *b"\r\n"),
+                "Invalid fixed-width classic xref record"
+            );
+            let offset = std::str::from_utf8(&record[..10])?.parse::<usize>()?;
+            let generation = std::str::from_utf8(&record[11..16])?.parse::<u16>()?;
+            ensure!(
+                records
+                    .insert(id, (offset, generation, record[17] == b'n'))
+                    .is_none(),
+                "Duplicate PDF xref record"
+            );
+        }
+    }
+    cursor.keyword(b"trailer")?;
+    let trailer = cursor.small_dictionary(&[b"Size", b"Root", b"Info", b"ID", b"Prev"], true)?;
+    cursor.keyword(b"startxref")?;
     ensure!(
-        cursor.integer()? == 0,
-        "Only one contiguous classic xref subsection supported"
+        cursor.integer()? == xref as i64,
+        "PDF section startxref mismatch"
     );
-    let count = usize::try_from(cursor.integer()?)?;
+    // The current file end or next revision header is already known. Strip
+    // whitespace there, never search for an EOF marker inside arbitrary bytes.
+    let mut eof = limit;
+    while eof > xref && ws(source[eof - 1]) {
+        eof -= 1;
+    }
+    ensure!(
+        source[xref..eof].ends_with(b"%%EOF"),
+        "PDF section EOF mismatch"
+    );
+    let eof_start = eof - 5;
+    ensure!(xref + cursor.pos <= eof_start, "PDF trailer crossed EOF");
+    let mut ending = Cursor::new(&source[xref + cursor.pos..eof_start]);
+    ending.finish_span()?;
+    budget.tokens(cursor.tokens)?;
+    budget.objects(records.len())?;
+    Ok(Section {
+        xref,
+        records,
+        subsections,
+        trailer,
+        eof,
+    })
+}
+fn raw_source(source: &[u8], budget: &mut Budget) -> Result<Raw> {
+    budget.bytes(source.len())?;
+    let xref = terminal_xref(source)?;
+    let section = section(source, xref, source.len(), budget)?;
+    ensure!(
+        source[section.eof..].iter().all(|b| ws(*b)),
+        "Extra PDF terminal material"
+    );
+    ensure!(
+        !section.trailer.has(b"Prev") && section.subsections == 1,
+        "Only strict single base xref supported"
+    );
+    let count = section.records.len();
     ensure!(
         (2..=MAX_OBJECTS + 1).contains(&count),
         "PDF object count outside rotation budget"
     );
-    // The subsection ends with exactly one line break; records are exactly20 bytes.
-    while matches!(cursor.bytes.get(cursor.pos), Some(b' ' | b'\t')) {
-        cursor.pos += 1;
-    }
-    if cursor.bytes.get(cursor.pos) == Some(&b'\r') {
-        cursor.pos += 1;
-    }
-    ensure!(
-        cursor.bytes.get(cursor.pos) == Some(&b'\n'),
-        "Invalid classic xref header"
-    );
-    cursor.pos += 1;
     let mut offsets = vec![0];
-    for id in 0..count {
-        let record = cursor
-            .bytes
-            .get(cursor.pos..cursor.pos + 20)
-            .context("Truncated classic xref")?;
-        cursor.pos += 20;
+    ensure!(
+        section.records.get(&0) == Some(&(0, 65535, false)),
+        "Invalid PDF object-zero free entry"
+    );
+    for id in 1..count as u32 {
+        let &(offset, generation, live) = section
+            .records
+            .get(&id)
+            .context("Noncontiguous PDF base xref")?;
         ensure!(
-            record[..10].iter().all(u8::is_ascii_digit)
-                && record[10] == b' '
-                && record[11..16].iter().all(u8::is_ascii_digit)
-                && record[16] == b' '
-                && (record[18..] == *b" \n" || record[18..] == *b"\r\n"),
-            "Invalid fixed-width classic xref record"
+            generation == 0 && live && (9..xref).contains(&offset),
+            "Only live generation-zero PDF objects supported"
         );
-        let offset = std::str::from_utf8(&record[..10])?.parse::<usize>()?;
-        if id == 0 {
-            ensure!(
-                offset == 0 && &record[11..18] == b"65535 f",
-                "Invalid PDF object-zero free entry"
-            );
-        } else {
-            ensure!(
-                &record[11..18] == b"00000 n" && (9..xref).contains(&offset),
-                "Only live generation-zero PDF objects supported"
-            );
-            offsets.push(offset);
-        }
+        offsets.push(offset);
     }
-    cursor.keyword(b"trailer")?;
-    let trailer = cursor.small_dictionary(&[b"Size", b"Root", b"Info", b"ID"], true)?;
-    cursor.finish_span()?;
+    let trailer = section.trailer;
     ensure!(
         trailer.get(b"Size")?.as_i64()? == count as i64,
         "PDF Size/xref mismatch"
@@ -415,7 +553,7 @@ fn raw_source(source: &[u8]) -> Result<Raw> {
         ends[id] = physical.get(index + 1).map_or(xref, |p| p.0);
         let mut object = Cursor::new(&source[offset..ends[id]]);
         ensure!(
-            object.pos == 0 && object.bytes.first().is_some_and(u8::is_ascii_digit),
+            object.bytes.first().is_some_and(u8::is_ascii_digit),
             "Xref must point exactly to object start"
         );
         ensure!(
@@ -423,6 +561,7 @@ fn raw_source(source: &[u8]) -> Result<Raw> {
             "PDF xref/object header mismatch"
         );
         object.keyword(b"obj")?;
+        budget.tokens(object.tokens)?;
     }
     Ok(Raw {
         offsets,
@@ -431,6 +570,45 @@ fn raw_source(source: &[u8]) -> Result<Raw> {
         trailer,
     })
 }
+
+struct Revision {
+    section: Section,
+    selected: u32,
+    header: usize,
+}
+fn revision(source: &[u8], section: Section) -> Result<Revision> {
+    ensure!(
+        section.records.len() == 2 && section.records.get(&0) == Some(&(0, 65535, false)),
+        "Rotation revision requires one replacement and object zero"
+    );
+    let (&selected, &(offset, generation, live)) = section
+        .records
+        .iter()
+        .next_back()
+        .context("Missing replacement")?;
+    ensure!(
+        selected > 0 && generation == 0 && live && offset < section.xref,
+        "Invalid rotation replacement xref"
+    );
+    let header = offset
+        .checked_sub(REVISION_HEADER.len())
+        .context("Missing rotation framing")?;
+    ensure!(
+        source.get(header..offset) == Some(REVISION_HEADER),
+        "Unexpected rotation framing"
+    );
+    let prev = usize::try_from(section.trailer.get(b"Prev")?.as_i64()?)?;
+    ensure!(
+        prev < header && prev > 8,
+        "PDF Prev must move strictly backwards"
+    );
+    Ok(Revision {
+        section,
+        selected,
+        header,
+    })
+}
+
 fn reference(value: &Object) -> Result<ObjectId> {
     let id = value.as_reference()?;
     ensure!(id.0 > 0 && id.1 == 0, "Invalid generation-zero reference");
@@ -647,9 +825,11 @@ fn frame_value(
         }
     }
 }
-fn body<'a>(source: &'a [u8], raw: &Raw, id: u32) -> Result<Cursor<'a>> {
+fn body<'a>(source: &'a [u8], raw: &Raw, id: u32, budget: &mut Budget) -> Result<Cursor<'a>> {
     let index = id as usize;
     ensure!(index > 0 && index < raw.offsets.len(), "Missing PDF object");
+    budget.bytes(raw.ends[index] - raw.offsets[index])?;
+    budget.objects(1)?;
     let mut cursor = Cursor::new(&source[raw.offsets[index]..raw.ends[index]]);
     ensure!(
         cursor.integer()? == id as i64 && cursor.integer()? == 0,
@@ -658,10 +838,10 @@ fn body<'a>(source: &'a [u8], raw: &Raw, id: u32) -> Result<Cursor<'a>> {
     cursor.keyword(b"obj")?;
     Ok(cursor)
 }
-fn audit_frames(source: &[u8], raw: &Raw, doc: &Document) -> Result<()> {
+fn audit_frames(source: &[u8], raw: &Raw, doc: &Document, budget: &mut Budget) -> Result<()> {
     let mut tokens = 0;
     for id in 1..raw.offsets.len() {
-        let mut cursor = body(source, raw, id as u32)?;
+        let mut cursor = body(source, raw, id as u32, budget)?;
         let mut refs = Vec::new();
         let mut length = None;
         let dictionary = frame_value(&mut cursor, 0, &mut refs, &mut length)?;
@@ -691,10 +871,11 @@ fn audit_frames(source: &[u8], raw: &Raw, doc: &Document) -> Result<()> {
             let length = match length.context("Missing PDF stream Length")? {
                 Object::Integer(n) => n,
                 Object::Reference((object, 0)) => {
-                    let mut number = body(source, raw, object)?;
+                    let mut number = body(source, raw, object, budget)?;
                     let n = number.integer()?;
                     number.keyword(b"endobj")?;
                     number.finish_span()?;
+                    budget.tokens(number.tokens)?;
                     ensure!(
                         doc.objects.get(&(object, 0)) == Some(&Object::Integer(n)),
                         "PDF Length raw/parser mismatch"
@@ -737,6 +918,7 @@ fn audit_frames(source: &[u8], raw: &Raw, doc: &Document) -> Result<()> {
         }
         cursor.keyword(b"endobj")?;
         cursor.finish_span()?;
+        budget.tokens(cursor.tokens)?;
         tokens += cursor.tokens;
         ensure!(
             tokens <= MAX_TOKENS,
@@ -753,11 +935,13 @@ fn raw_dictionary(
     doc: &Document,
     id: ObjectId,
     allowed: &[&[u8]],
+    budget: &mut Budget,
 ) -> Result<Dictionary> {
-    let mut cursor = body(source, raw, id.0)?;
+    let mut cursor = body(source, raw, id.0, budget)?;
     let dict = cursor.small_dictionary(allowed, false)?;
     cursor.keyword(b"endobj")?;
     cursor.finish_span()?;
+    budget.tokens(cursor.tokens)?;
     ensure!(
         doc.objects.get(&id) == Some(&Object::Dictionary(dict.clone())),
         "PDF raw dictionary/parser mismatch"
@@ -797,6 +981,7 @@ struct Tree<'a> {
     source: &'a [u8],
     raw: &'a Raw,
     doc: &'a Document,
+    budget: &'a mut Budget,
     visited: BTreeSet<ObjectId>,
     pages: Vec<Page>,
 }
@@ -820,7 +1005,7 @@ impl Tree<'_> {
             b"Contents",
         ];
         allowed.extend_from_slice(INHERITED);
-        let dict = raw_dictionary(self.source, self.raw, self.doc, id, &allowed)?;
+        let dict = raw_dictionary(self.source, self.raw, self.doc, id, &allowed, self.budget)?;
         match parent {
             Some(parent) => ensure!(
                 reference(dict.get(b"Parent")?)? == parent,
@@ -931,9 +1116,12 @@ struct Audited {
     raw: Raw,
     doc: Document,
     pages: Vec<Page>,
+    budget: Budget,
+    revisions: usize,
 }
-fn audit(source: &[u8]) -> Result<Audited> {
-    let raw = raw_source(source)?;
+fn audit_base(source: &[u8], mut budget: Budget) -> Result<Audited> {
+    let raw = raw_source(source, &mut budget)?;
+    budget.bytes(source.len())?;
     let doc = load(source)?;
     ensure!(
         !doc.is_encrypted() && !doc.was_encrypted(),
@@ -970,9 +1158,9 @@ fn audit(source: &[u8]) -> Result<Audited> {
             "PDF Info must reference an existing dictionary"
         );
     }
-    audit_frames(source, &raw, &doc)?;
+    audit_frames(source, &raw, &doc, &mut budget)?;
     let root = reference(raw.trailer.get(b"Root")?)?;
-    let catalog = raw_dictionary(source, &raw, &doc, root, &[b"Type", b"Pages"])?;
+    let catalog = raw_dictionary(source, &raw, &doc, root, &[b"Type", b"Pages"], &mut budget)?;
     ensure!(
         catalog.get(b"Type")?.as_name()? == b"Catalog",
         "Invalid PDF Catalog"
@@ -981,6 +1169,7 @@ fn audit(source: &[u8]) -> Result<Audited> {
         source,
         raw: &raw,
         doc: &doc,
+        budget: &mut budget,
         visited: BTreeSet::new(),
         pages: Vec::new(),
     };
@@ -991,7 +1180,123 @@ fn audit(source: &[u8]) -> Result<Audited> {
         0,
     )?;
     let pages = tree.pages;
-    Ok(Audited { raw, doc, pages })
+    Ok(Audited {
+        raw,
+        doc,
+        pages,
+        budget,
+        revisions: 0,
+    })
+}
+fn audit(source: &[u8]) -> Result<Audited> {
+    let mut budget = Budget::default();
+    budget.bytes(source.len())?;
+    let mut xref = terminal_xref(source)?;
+    let mut limit = source.len();
+    let mut revisions = Vec::new();
+    let base_eof;
+    loop {
+        let current = section(source, xref, limit, &mut budget)?;
+        if !current.trailer.has(b"Prev") {
+            base_eof = current.eof;
+            break;
+        }
+        ensure!(
+            revisions.len() < MAX_REVISIONS,
+            "PDF rotation revision depth budget exceeded"
+        );
+        if revisions.is_empty() {
+            ensure!(
+                current.eof == source.len(),
+                "Rotation revision has extra terminal bytes"
+            );
+        } else {
+            ensure!(
+                source.get(current.eof..limit) == Some(b"\n"),
+                "Rotation predecessor boundary mismatch"
+            );
+        }
+        let current = revision(source, current)?;
+        xref = usize::try_from(current.section.trailer.get(b"Prev")?.as_i64()?)?;
+        limit = current.header;
+        revisions.push(current);
+    }
+    if revisions.is_empty() {
+        return audit_base(source, budget);
+    }
+    ensure!(
+        source[base_eof..limit].iter().all(|b| ws(*b)),
+        "Unexpected material after base PDF EOF"
+    );
+    // The writer adds LF only when absent. There are at most two possible base
+    // boundaries, never an unbounded EOF/whitespace hash search. IDs disambiguate.
+    let mut audited = audit_base(&source[..limit], budget)?;
+    let first = revisions.last().context("Missing first revision")?;
+    let selected = selected_revision(&audited, first.selected)?;
+    let mut source_end = None;
+    for end in [Some(limit), limit.checked_sub(1)].into_iter().flatten() {
+        if end < base_eof || !emitted_boundary(source, end, first.header) {
+            continue;
+        }
+        audited.budget.bytes(end)?;
+        let ids = output_ids(
+            &source[..end],
+            &audited,
+            &selected,
+            (selected.rotation + 90) % 360,
+        );
+        if first.section.trailer.get(b"ID")? == &ids {
+            ensure!(
+                source_end.replace(end).is_none(),
+                "Ambiguous PDF predecessor identity"
+            );
+        }
+    }
+    let mut source_end = source_end.context("PDF predecessor byte identity mismatch")?;
+    for revision in revisions.into_iter().rev() {
+        ensure!(
+            emitted_boundary(source, source_end, revision.header),
+            "PDF revision boundary mismatch"
+        );
+        let selected = selected_revision(&audited, revision.selected)?;
+        let target = (selected.rotation + 90) % 360;
+        let mut replacement = audited.doc.objects[&(selected.object_id, 0)]
+            .as_dict()?
+            .clone();
+        replacement.set("Rotate", target);
+        audited.budget.bytes(source_end)?;
+        let ids = output_ids(&source[..source_end], &audited, &selected, target);
+        audited = verify_candidate(
+            &source[..source_end],
+            &source[..revision.section.eof],
+            &audited,
+            &selected,
+            &replacement,
+            &ids,
+        )?;
+        source_end = revision.section.eof;
+    }
+    ensure!(
+        source_end == source.len(),
+        "Incomplete PDF revision verification"
+    );
+    Ok(audited)
+}
+fn emitted_boundary(source: &[u8], end: usize, header: usize) -> bool {
+    let separator = if source.get(end.wrapping_sub(1)) == Some(&b'\n') {
+        b"".as_slice()
+    } else {
+        b"\n".as_slice()
+    };
+    source.get(end..header) == Some(separator)
+}
+fn selected_revision(audit: &Audited, id: u32) -> Result<Selection> {
+    let index = audit
+        .pages
+        .iter()
+        .position(|page| page.id == (id, 0))
+        .context("Revision replacement is not an existing leaf page")?;
+    chosen(audit, index as u32 + 1)
 }
 fn chosen(audit: &Audited, page: u32) -> Result<Selection> {
     let entry = audit
@@ -1007,15 +1312,16 @@ fn chosen(audit: &Audited, page: u32) -> Result<Selection> {
     })
 }
 /// Derive a selection for command-line use; the desktop must pass its captured
-/// PDF.js identity instead. Both routes are audited again before mutation.
+/// PDF.js identity instead. Both routes are audited before mutation.
 pub fn selection(source: &[u8], page: u32) -> Result<Selection> {
     chosen(&audit(source).context(UNSUPPORTED)?, page)
 }
 
 fn output_ids(source: &[u8], audit: &Audited, selection: &Selection, target: i32) -> Object {
+    let digest = identity(source).sha256;
     let mut seed = Sha256::new();
     seed.update(b"jianwen-pdf-rotation-id-v1\0");
-    seed.update(identity(source).sha256);
+    seed.update(digest);
     seed.update(selection.object_id.to_be_bytes());
     seed.update(target.to_be_bytes());
     let second = seed.finalize()[..16].to_vec();
@@ -1026,12 +1332,7 @@ fn output_ids(source: &[u8], audit: &Audited, selection: &Selection, target: i32
         .ok()
         .and_then(|ids| ids.as_array().ok())
         .map(|ids| ids[0].clone())
-        .unwrap_or_else(|| {
-            Object::String(
-                identity(source).sha256[..16].to_vec(),
-                StringFormat::Hexadecimal,
-            )
-        });
+        .unwrap_or_else(|| Object::String(digest[..16].to_vec(), StringFormat::Hexadecimal));
     Object::Array(vec![
         first,
         Object::String(second, StringFormat::Hexadecimal),
@@ -1057,10 +1358,16 @@ impl std::io::Write for BoundedOutput {
 }
 /// Add an explicit effective clockwise 90 Rotate to exactly the displayed page.
 /// The complete source is retained as a prefix, including all resource streams.
-/// A saved result contains a prior revision and is deliberately not accepted as
-/// a new rotation source in this first release.
+/// Saved copies are accepted only after every bounded rotation revision is proved.
 pub fn rotate(source: &[u8], selection: &Selection) -> Result<Vec<u8>> {
     let audit = audit(source).context(UNSUPPORTED)?;
+    rotate_audited(source, selection, audit)
+}
+fn rotate_audited(source: &[u8], selection: &Selection, mut audit: Audited) -> Result<Vec<u8>> {
+    ensure!(
+        audit.revisions < MAX_REVISIONS,
+        "PDF rotation revision depth budget exceeded"
+    );
     ensure!(
         &chosen(&audit, selection.page)? == selection,
         "PDF 页面身份、页数或方向已变化，请重新打开文档"
@@ -1069,6 +1376,7 @@ pub fn rotate(source: &[u8], selection: &Selection) -> Result<Vec<u8>> {
     let target = (selection.rotation + 90) % 360;
     let mut replacement = audit.doc.objects[&id].as_dict()?.clone();
     replacement.set("Rotate", target);
+    audit.budget.bytes(source.len())?;
     let ids = output_ids(source, &audit, selection, target);
     if let Ok(old) = audit.raw.trailer.get(b"ID") {
         ensure!(
@@ -1076,20 +1384,71 @@ pub fn rotate(source: &[u8], selection: &Selection) -> Result<Vec<u8>> {
             "PDF changed ID unexpectedly matches original"
         );
     }
-    let mut incremental = IncrementalDocument::create_from(source.to_vec(), audit.doc.clone());
-    incremental
-        .new_document
-        .objects
-        .insert(id, Object::Dictionary(replacement.clone()));
-    incremental.new_document.trailer.set("ID", ids.clone());
     let mut output = BoundedOutput(Vec::with_capacity(
         source.len().saturating_add(4096).min(MAX_BYTES as usize),
     ));
-    incremental
-        .save_to(&mut output)
-        .context("Cannot create bounded PDF rotation candidate")?;
-    verify_candidate(source, &output.0, &audit, selection, &replacement, &ids)?;
+    audit.budget.bytes(source.len())?;
+    audit.budget.objects(audit.doc.objects.len())?;
+    emit(source, &audit, selection, &replacement, &ids, &mut output)?;
+    // Reserve cold-reopen discovery and the at-most-two base-boundary hashes.
+    // These conservative work units are not literal CPU bytes. A successful
+    // save must not exhaust a smaller budget than reopening its own candidate.
+    audit.budget.bytes(
+        output
+            .0
+            .len()
+            .checked_mul(2)
+            .context("PDF reopen work overflow")?,
+    )?;
+    let mut verified = verify_candidate(source, &output.0, &audit, selection, &replacement, &ids)?;
+    section(
+        &output.0,
+        verified.raw.xref,
+        output.0.len(),
+        &mut verified.budget,
+    )?;
     Ok(output.0)
+}
+fn emit<W: std::io::Write>(
+    source: &[u8],
+    audit: &Audited,
+    selection: &Selection,
+    replacement: &Dictionary,
+    ids: &Object,
+    output: &mut W,
+) -> Result<()> {
+    let mut incremental = IncrementalDocument::create_from(source.to_vec(), audit.doc.clone());
+    incremental.new_document.objects.insert(
+        (selection.object_id, 0),
+        Object::Dictionary(replacement.clone()),
+    );
+    incremental.new_document.trailer.set("ID", ids.clone());
+    incremental
+        .save_to(output)
+        .context("Cannot create bounded PDF rotation candidate")
+}
+// Compare serialized bytes without allocating another full output buffer.
+struct ExactOutput<'a> {
+    expected: &'a [u8],
+    pos: usize,
+}
+impl std::io::Write for ExactOutput<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let end = self
+            .pos
+            .checked_add(bytes.len())
+            .ok_or_else(|| std::io::Error::other("PDF comparison overflow"))?;
+        if self.expected.get(self.pos..end) != Some(bytes) {
+            return Err(std::io::Error::other(
+                "PDF revision differs from exact rotation serialization",
+            ));
+        }
+        self.pos = end;
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 fn verify_candidate(
     source: &[u8],
@@ -1098,11 +1457,19 @@ fn verify_candidate(
     selection: &Selection,
     replacement: &Dictionary,
     ids: &Object,
-) -> Result<()> {
+) -> Result<Audited> {
+    let mut budget = audit.budget.clone();
+    ensure!(
+        audit.revisions < MAX_REVISIONS,
+        "PDF rotation revision depth budget exceeded"
+    );
+    budget.bytes(output.len())?;
+    budget.objects(audit.doc.objects.len())?;
     ensure!(
         output.len() as u64 <= MAX_BYTES && output.starts_with(source),
         "PDF candidate did not preserve source prefix"
     );
+    budget.bytes(output.len())?;
     let loaded = load(output)?;
     let selected = (selection.object_id, 0);
     ensure!(
@@ -1146,6 +1513,11 @@ fn verify_candidate(
         );
     }
     let offset = selected_offset.context("Missing PDF candidate replacement")?;
+    ensure!(
+        offset < loaded.xref_start && loaded.xref_start < output.len(),
+        "Invalid candidate physical bounds"
+    );
+    budget.bytes(output.len() - source.len())?;
     let mut prefix = Cursor::new(&output[source.len()..offset]);
     prefix.finish_span()?;
     let mut page = Cursor::new(&output[offset..loaded.xref_start]);
@@ -1162,6 +1534,7 @@ fn verify_candidate(
     );
     page.keyword(b"endobj")?;
     page.finish_span()?;
+    budget.tokens(prefix.tokens + page.tokens)?;
     // Audit the generated incremental trailer directly: lopdf removes Prev on load.
     let mut tail = Cursor::new(&output[loaded.xref_start..]);
     tail.keyword(b"xref")?;
@@ -1174,7 +1547,7 @@ fn verify_candidate(
         let start = u32::try_from(tail.integer()?)?;
         let count = usize::try_from(tail.integer()?)?;
         ensure!(
-            count <= 2 && records.len() + count <= 2,
+            count > 0 && count <= 2 && records.len() + count <= 2 && start <= MAX_OBJECTS as u32,
             "Unexpected candidate xref records"
         );
         for index in 0..count {
@@ -1220,6 +1593,7 @@ fn verify_candidate(
         tail.bytes.get(tail.pos..) == Some(b"%%EOF"),
         "Candidate EOF mismatch"
     );
+    budget.tokens(tail.tokens)?;
     let mut merged = Raw {
         offsets: audit.raw.offsets.clone(),
         ends: audit.raw.ends.clone(),
@@ -1229,11 +1603,19 @@ fn verify_candidate(
     merged.offsets[selected.0 as usize] = offset;
     merged.ends[selected.0 as usize] = loaded.xref_start;
     let root = reference(loaded.trailer.get(b"Root")?)?;
-    let catalog = raw_dictionary(output, &merged, &loaded, root, &[b"Type", b"Pages"])?;
+    let catalog = raw_dictionary(
+        output,
+        &merged,
+        &loaded,
+        root,
+        &[b"Type", b"Pages"],
+        &mut budget,
+    )?;
     let mut tree = Tree {
         source: output,
         raw: &merged,
         doc: &loaded,
+        budget: &mut budget,
         visited: BTreeSet::new(),
         pages: Vec::new(),
     };
@@ -1249,7 +1631,25 @@ fn verify_candidate(
         tree.pages == expected_pages,
         "Candidate page order/geometry/resource identity changed"
     );
-    Ok(())
+    let pages = tree.pages;
+    budget.bytes(output.len())?;
+    budget.objects(audit.doc.objects.len())?;
+    let mut exact = ExactOutput {
+        expected: output,
+        pos: 0,
+    };
+    emit(source, audit, selection, replacement, ids, &mut exact)?;
+    ensure!(
+        exact.pos == output.len(),
+        "PDF revision contains extra serialized bytes"
+    );
+    Ok(Audited {
+        raw: merged,
+        doc: loaded,
+        pages,
+        budget,
+        revisions: audit.revisions + 1,
+    })
 }
 
 /// Bounded command-line export. Desktop publication additionally fences sessions.
@@ -1273,8 +1673,9 @@ pub fn rotate_file(
     std::fs::File::open(input)?
         .take(MAX_BYTES + 1)
         .read_to_end(&mut source)?;
-    let selected = selection(&source, page)?;
-    let candidate = rotate(&source, &selected)?;
+    let audited = audit(&source).context(UNSUPPORTED)?;
+    let selected = chosen(&audited, page)?;
+    let candidate = rotate_audited(&source, &selected, audited)?;
     let original = identity(&source);
     crate::read_verified_pdf(input, &original)?;
     let directory = output
@@ -1354,7 +1755,7 @@ mod tests {
         );
     }
     #[test]
-    fn simple_source_rotation_is_deterministic_prefix_preserving_and_not_repeatable() {
+    fn simple_source_rotation_is_deterministic_prefix_preserving_and_reopenable() {
         let source = source();
         let selected = selection(&source, 1).unwrap();
         assert_eq!(
@@ -1381,7 +1782,7 @@ mod tests {
                 .unwrap(),
             90
         );
-        assert!(selection(&output, 1).is_err());
+        assert_eq!(selection(&output, 1).unwrap().rotation, 90);
     }
     #[test]
     fn existing_first_id_is_preserved_and_second_changes() {
@@ -1618,7 +2019,7 @@ mod tests {
             .windows(payload.len())
             .rposition(|w| w == payload)
             .unwrap();
-        let raw = raw_source(&bytes).unwrap();
+        let raw = raw_source(&bytes, &mut Budget::default()).unwrap();
         let record = raw.xref + format!("xref\n0 {}\n", o.len() + 1).len() + 4 * 20;
         bytes[record..record + 10].copy_from_slice(format!("{fake:010}").as_bytes());
         assert!(selection(&bytes, 1).is_err());
@@ -1628,10 +2029,10 @@ mod tests {
         let mut o = objects();
         o.push(b"(4 0 obj << >> endobj)".to_vec());
         let mut bytes = pdf(&o, "");
-        let fake = raw_source(&bytes).unwrap().offsets[4];
+        let fake = raw_source(&bytes, &mut Budget::default()).unwrap().offsets[4];
         let actual = bytes.windows(10).rposition(|w| w == b"(4 0 obj <").unwrap() + 1;
         assert_ne!(fake, actual);
-        let raw = raw_source(&bytes).unwrap();
+        let raw = raw_source(&bytes, &mut Budget::default()).unwrap();
         let record = raw.xref + format!("xref\n0 {}\n", o.len() + 1).len() + 4 * 20;
         bytes[record..record + 10].copy_from_slice(format!("{actual:010}").as_bytes());
         assert!(selection(&bytes, 1).is_err());
@@ -1639,7 +2040,7 @@ mod tests {
     #[test]
     fn xref_records_headers_and_terminal_material_are_exact() {
         let good = source();
-        let raw = raw_source(&good).unwrap();
+        let raw = raw_source(&good, &mut Budget::default()).unwrap();
         for changed in [
             good.iter()
                 .copied()
@@ -1662,7 +2063,7 @@ mod tests {
     #[test]
     fn comment_cannot_continue_across_a_verified_object_boundary() {
         let mut bytes = source();
-        let raw = raw_source(&bytes).unwrap();
+        let raw = raw_source(&bytes, &mut Budget::default()).unwrap();
         let boundary = raw.ends[4];
         assert_eq!(bytes[boundary - 1], b'\n');
         bytes[boundary - 1] = b'%';
@@ -1686,7 +2087,7 @@ mod tests {
         reject_object(3, "<< >>\nBAD");
         reject_object(3, "definitely-not-an-object");
         let mut bytes = source();
-        let raw = raw_source(&bytes).unwrap();
+        let raw = raw_source(&bytes, &mut Budget::default()).unwrap();
         let start = raw.offsets[4];
         let end = raw.ends[4];
         let at = start
@@ -1786,5 +2187,408 @@ mod tests {
         assert!(rotate_file(&input, &alias, 1).is_err());
         assert_eq!(std::fs::read(&input).unwrap(), bytes);
         assert_eq!(std::fs::read(&output).unwrap(), saved);
+    }
+    fn multi_source() -> Vec<u8> {
+        let mut o = objects();
+        o[1] = b"<< /Type /Pages /Kids [3 0 R 6 0 R 7 0 R] /Count 3 /Resources 4 0 R /MediaBox [0 0 612 792] /Rotate -90 >>".to_vec();
+        o.push(b"<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Rotate 0 >>".to_vec());
+        o.push(b"<< /Type /Page /Parent 2 0 R /Contents [5 0 R] >>".to_vec());
+        pdf(&o, "")
+    }
+    // Deliberately bypass candidate validation to make adversarial revisions.
+    fn unverified_revision(
+        source: &[u8],
+        page: u32,
+        target: i32,
+        edit: impl FnOnce(&mut IncrementalDocument),
+    ) -> Vec<u8> {
+        let audited = audit(source).unwrap();
+        let selected = chosen(&audited, page).unwrap();
+        let mut dict = audited.doc.objects[&(selected.object_id, 0)]
+            .as_dict()
+            .unwrap()
+            .clone();
+        dict.set("Rotate", target);
+        let ids = output_ids(source, &audited, &selected, target);
+        let mut document = IncrementalDocument::create_from(source.to_vec(), audited.doc);
+        document
+            .new_document
+            .objects
+            .insert((selected.object_id, 0), Object::Dictionary(dict));
+        document.new_document.trailer.set("ID", ids);
+        edit(&mut document);
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).unwrap();
+        bytes
+    }
+    fn replace_last_same_size(bytes: &mut [u8], from: &[u8], to: &[u8]) {
+        assert_eq!(from.len(), to.len());
+        let offset = bytes
+            .windows(from.len())
+            .rposition(|part| part == from)
+            .unwrap();
+        bytes[offset..offset + to.len()].copy_from_slice(to);
+    }
+    #[test]
+    fn four_reopened_rotations_restore_effective_direction_with_exact_prefixes() {
+        let original = source();
+        let mut bytes = original.clone();
+        for turn in 1..=4 {
+            let selected = selection(&bytes, 1).unwrap();
+            let output = rotate(&bytes, &selected).unwrap();
+            assert!(output.starts_with(&bytes));
+            assert_eq!(selection(&output, 1).unwrap().rotation, (turn * 90) % 360);
+            assert_eq!(
+                load(&output).unwrap().objects[&(5, 0)],
+                load(&original).unwrap().objects[&(5, 0)]
+            );
+            bytes = output;
+        }
+        assert_eq!(audit(&bytes).unwrap().revisions, 4);
+    }
+    #[test]
+    fn mixed_page_revisions_preserve_inheritance_and_revisit_earlier_leaf() {
+        let original = multi_source();
+        let base = audit(&original).unwrap();
+        let mut bytes = original;
+        let mut expected = vec![270, 0, 270];
+        for page in [1, 2, 3, 1, 3, 2] {
+            let output = rotate(&bytes, &selection(&bytes, page).unwrap()).unwrap();
+            expected[page as usize - 1] = (expected[page as usize - 1] + 90) % 360;
+            let state = audit(&output).unwrap();
+            assert_eq!(
+                state
+                    .pages
+                    .iter()
+                    .map(|page| page.rotation)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(state.doc.objects[&(2, 0)], base.doc.objects[&(2, 0)]);
+            assert_eq!(state.doc.objects[&(5, 0)], base.doc.objects[&(5, 0)]);
+            assert!(output.starts_with(&bytes));
+            bytes = output;
+        }
+    }
+    #[test]
+    fn base_eof_whitespace_and_writer_inserted_lf_are_unambiguously_preserved() {
+        for suffix in [
+            b"".as_slice(),
+            b"\n",
+            b"\r",
+            b"\r\n",
+            b" \t\0",
+            b"\n \n",
+            b"\n\n",
+        ] {
+            let mut base = source();
+            base.pop(); // Fixture ends in one LF.
+            base.extend_from_slice(suffix);
+            let output = rotate(&base, &selection(&base, 1).unwrap()).unwrap();
+            assert!(output.starts_with(&base));
+            assert_eq!(selection(&output, 1).unwrap().rotation, 90);
+            let next = rotate(&output, &selection(&output, 1).unwrap()).unwrap();
+            assert!(next.starts_with(&output));
+            assert_eq!(selection(&next, 1).unwrap().rotation, 180);
+        }
+    }
+    #[test]
+    fn explicit_first_id_and_derived_first_id_survive_every_revision() {
+        for extra in [
+            "",
+            "/ID [<00112233445566778899AABBCCDDEEFF> <FFEEDDCCBBAA99887766554433221100>]",
+        ] {
+            let mut bytes = pdf(&objects(), extra);
+            let mut permanent = None;
+            let mut previous = None;
+            for _ in 0..4 {
+                bytes = rotate(&bytes, &selection(&bytes, 1).unwrap()).unwrap();
+                let audited = audit(&bytes).unwrap();
+                let ids = audited.raw.trailer.get(b"ID").unwrap().as_array().unwrap();
+                if let Some(first) = &permanent {
+                    assert_eq!(first, &ids[0]);
+                }
+                if let Some(second) = &previous {
+                    assert_ne!(second, &ids[1]);
+                }
+                permanent = Some(ids[0].clone());
+                previous = Some(ids[1].clone());
+            }
+        }
+    }
+    #[test]
+    fn rotation_chain_depth_is_bounded_and_never_publishes_an_unreopenable_next_step() {
+        let mut bytes = source();
+        for _ in 0..MAX_REVISIONS {
+            bytes = rotate(&bytes, &selection(&bytes, 1).unwrap()).unwrap();
+        }
+        let selected = selection(&bytes, 1).unwrap();
+        assert_eq!(audit(&bytes).unwrap().revisions, MAX_REVISIONS);
+        assert!(
+            rotate(&bytes, &selected)
+                .unwrap_err()
+                .to_string()
+                .contains("depth budget")
+        );
+        let too_deep = unverified_revision(&bytes, 1, 90, |_| {});
+        assert!(format!("{:#}", selection(&too_deep, 1).unwrap_err()).contains("depth budget"));
+    }
+    #[test]
+    fn rotation_jumps_noops_and_noncanonical_equivalents_are_rejected() {
+        for angle in [0, 180, 270, -270, 450] {
+            let bytes = unverified_revision(&source(), 1, angle, |_| {});
+            assert!(selection(&bytes, 1).is_err(), "accepted rotation {angle}");
+        }
+        let first = rotate(&source(), &selection(&source(), 1).unwrap()).unwrap();
+        for angle in [90, 0, 270, -180, 540] {
+            assert!(selection(&unverified_revision(&first, 1, angle, |_| {}), 1).is_err());
+        }
+    }
+    #[test]
+    fn altered_leaf_geometry_and_extra_active_or_orphan_objects_are_rejected() {
+        let original = source();
+        for key in ["MediaBox", "Contents", "Parent", "Resources", "Annots"] {
+            let bytes = unverified_revision(&original, 1, 90, |doc| {
+                doc.new_document
+                    .objects
+                    .get_mut(&(3, 0))
+                    .unwrap()
+                    .as_dict_mut()
+                    .unwrap()
+                    .set(key, 4);
+            });
+            assert!(selection(&bytes, 1).is_err(), "accepted modified {key}");
+        }
+        for id in [2, 4, 5, 6, 99] {
+            let bytes = unverified_revision(&original, 1, 90, |doc| {
+                doc.new_document
+                    .objects
+                    .insert((id, 0), Object::Integer(42));
+                doc.new_document.max_id = doc.new_document.max_id.max(id);
+            });
+            assert!(selection(&bytes, 1).is_err(), "accepted extra object {id}");
+        }
+    }
+    #[test]
+    fn previous_offsets_cannot_cycle_point_forward_or_skip_a_revision() {
+        let original = source();
+        let base_xref = terminal_xref(&original).unwrap();
+        let first = rotate(&original, &selection(&original, 1).unwrap()).unwrap();
+        let first_xref = terminal_xref(&first).unwrap();
+        for offset in [0, 9, base_xref, first.len(), usize::MAX / 2] {
+            let bytes = unverified_revision(&first, 1, 180, |doc| {
+                doc.new_document.trailer.set("Prev", offset as i64);
+            });
+            assert!(selection(&bytes, 1).is_err(), "accepted Prev {offset}");
+        }
+        let mut second = unverified_revision(&first, 1, 180, |_| {});
+        let second_xref = terminal_xref(&second).unwrap();
+        assert_eq!(first_xref.to_string().len(), second_xref.to_string().len());
+        replace_last_same_size(
+            &mut second,
+            format!("/Prev {first_xref}").as_bytes(),
+            format!("/Prev {second_xref}").as_bytes(),
+        );
+        assert!(selection(&second, 1).is_err());
+    }
+    #[test]
+    fn deterministic_ids_and_bookkeeping_are_verified_at_every_revision() {
+        for key in ["Root", "Info", "ID"] {
+            let bytes = unverified_revision(&source(), 1, 90, |doc| {
+                doc.new_document.trailer.set(key, 1);
+            });
+            assert!(selection(&bytes, 1).is_err(), "accepted changed {key}");
+        }
+        let mut bad_size = unverified_revision(&source(), 1, 90, |_| {});
+        replace_last_same_size(&mut bad_size, b"/Size 6", b"/Size 7");
+        assert!(selection(&bad_size, 1).is_err());
+        let first = rotate(&source(), &selection(&source(), 1).unwrap()).unwrap();
+        let old_id = load(&first).unwrap().trailer.get(b"ID").unwrap().clone();
+        let second = unverified_revision(&first, 1, 180, |doc| {
+            doc.new_document.trailer.set("ID", old_id);
+        });
+        assert!(selection(&second, 1).is_err());
+    }
+    #[test]
+    fn inactive_history_and_original_bytes_cannot_be_tampered_under_valid_latest_revision() {
+        let original = source();
+        let first = rotate(&original, &selection(&original, 1).unwrap()).unwrap();
+        let second = rotate(&first, &selection(&first, 1).unwrap()).unwrap();
+        let mut changed = second.clone();
+        replace_last_same_size(&mut changed[..first.len()], b"/Rotate 90", b"/Rotate 00");
+        assert!(selection(&changed, 1).is_err());
+        let mut changed = second;
+        replace_last_same_size(&mut changed[..original.len()], b"612 792", b"610 792");
+        assert!(selection(&changed, 1).is_err());
+    }
+    #[test]
+    fn exact_revision_serialization_rejects_reserialization_and_trailing_bytes() {
+        let original = source();
+        let output = rotate(&original, &selection(&original, 1).unwrap()).unwrap();
+        for suffix in [b"\n".as_slice(), b" ", b"%comment\n", b"junk"] {
+            let mut changed = output.clone();
+            changed.extend_from_slice(suffix);
+            assert!(selection(&changed, 1).is_err());
+        }
+        for (from, to) in [
+            (b"/Rotate 90".as_slice(), b"/Rotate\t90".as_slice()),
+            (b"00000 n \n", b"00000 n\r\n"),
+        ] {
+            let mut changed = output.clone();
+            replace_last_same_size(&mut changed, from, to);
+            assert!(selection(&changed, 1).is_err());
+        }
+        let mut changed = output;
+        let header = original.len();
+        assert_eq!(
+            &changed[header..header + REVISION_HEADER.len()],
+            REVISION_HEADER
+        );
+        changed[header + 7] = b'5';
+        assert!(selection(&changed, 1).is_err());
+    }
+    #[test]
+    fn eof_xref_and_header_text_inside_stream_is_data_not_revision_structure() {
+        let mut o = objects();
+        let payload = b"%%EOF\nstartxref\n9\n%PDF-1.4\n%\xbb\xad\xc0\xde\nxref\n0 1\n0000000000 65535 f \ntrailer\n<</Prev 9>>\n";
+        o[4] = [
+            format!("<< /Length {} >>\nstream\n", payload.len()).as_bytes(),
+            payload,
+            b"\nendstream",
+        ]
+        .concat();
+        let original = pdf(&o, "");
+        let first = rotate(&original, &selection(&original, 1).unwrap()).unwrap();
+        let next = rotate(&first, &selection(&first, 1).unwrap()).unwrap();
+        assert_eq!(selection(&next, 1).unwrap().rotation, 180);
+        let fake = original
+            .windows(5)
+            .position(|part| part == b"xref\n")
+            .unwrap();
+        let forged = unverified_revision(&original, 1, 90, |doc| {
+            doc.new_document.trailer.set("Prev", fake as i64);
+        });
+        assert!(selection(&forged, 1).is_err());
+    }
+    #[test]
+    fn cumulative_budgets_do_not_reset_across_revisions_or_indirect_length_scans() {
+        let original = source();
+        let base = audit(&original).unwrap();
+        let first = rotate(&original, &chosen(&base, 1).unwrap()).unwrap();
+        let later = audit(&first).unwrap();
+        assert!(later.budget.bytes > base.budget.bytes);
+        assert!(later.budget.tokens > base.budget.tokens);
+        assert!(later.budget.objects > base.budget.objects);
+        let mut budget = Budget {
+            bytes: MAX_WORK_BYTES - 1,
+            ..Budget::default()
+        };
+        assert!(
+            body(&original, &base.raw, 4, &mut budget)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("byte work")
+        );
+        let mut budget = Budget {
+            tokens: MAX_WORK_TOKENS,
+            ..Budget::default()
+        };
+        assert!(budget.tokens(1).is_err());
+        let mut budget = Budget {
+            objects: MAX_WORK_OBJECTS,
+            ..Budget::default()
+        };
+        assert!(budget.objects(1).is_err());
+        let mut audited = audit(&first).unwrap();
+        let selected = chosen(&audited, 1).unwrap();
+        audited.budget.bytes = MAX_WORK_BYTES;
+        assert!(rotate_audited(&first, &selected, audited).is_err());
+    }
+    #[test]
+    fn saved_chain_file_reopens_without_overwriting_any_earlier_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut input = dir.path().join("original.pdf");
+        let original = source();
+        std::fs::write(&input, &original).unwrap();
+        let mut protected = vec![(input.clone(), original)];
+        for turn in 1..=4 {
+            let output = dir.path().join(format!("rotation-{turn}.pdf"));
+            let selected = rotate_file(&input, &output, 1).unwrap();
+            assert_eq!(selected.rotation, (turn * 90) % 360);
+            for (prior, bytes) in &protected {
+                assert!(rotate_file(&output, prior, 1).is_err());
+                assert_eq!(&std::fs::read(prior).unwrap(), bytes);
+            }
+            protected.push((output.clone(), std::fs::read(&output).unwrap()));
+            input = output;
+        }
+    }
+    #[test]
+    fn shared_indirect_length_padding_cannot_multiply_unbounded_scanning() {
+        let mut o = objects();
+        o[4] = b"<< /Length 6 0 R >>\nstream\n\nendstream".to_vec();
+        o.push([b"0".as_slice(), &vec![b' '; 2 * 1024 * 1024]].concat());
+        for _ in 0..300 {
+            o.push(b"<< /Length 6 0 R >>\nstream\n\nendstream".to_vec());
+        }
+        let bytes = pdf(&o, "");
+        let error = format!("{:#}", selection(&bytes, 1).unwrap_err());
+        assert!(error.contains("cumulative byte work budget"), "{error}");
+    }
+    #[test]
+    fn legacy_base_terminal_grammar_still_requires_strict_loader_agreement() {
+        let original = source();
+        let xref = terminal_xref(&original).unwrap();
+        let start = original
+            .windows(9)
+            .rposition(|part| part == b"startxref")
+            .unwrap();
+        for tail in [
+            format!("startxref\n+{xref}\n%%EOF\n"),
+            format!("startxref\n{xref} % retained comment\n%%EOF\n"),
+            format!("startxref\n% before number\n{xref}\n% after number\n%%EOF\n"),
+        ] {
+            let base = [&original[..start], tail.as_bytes()].concat();
+            raw_source(&base, &mut Budget::default()).unwrap();
+            if load(&base).is_err() {
+                // The old raw grammar allowed this, but the strict loader did
+                // not. It must remain rejected rather than become a repair path.
+                assert!(selection(&base, 1).is_err());
+                continue;
+            }
+            let first = rotate(&base, &selection(&base, 1).unwrap()).unwrap();
+            assert_eq!(selection(&first, 1).unwrap().rotation, 90);
+            let second = rotate(&first, &selection(&first, 1).unwrap()).unwrap();
+            assert_eq!(selection(&second, 1).unwrap().rotation, 180);
+        }
+    }
+    #[test]
+    fn successful_near_work_limit_save_is_cold_reopenable_and_excess_is_rejected() {
+        for mib in [42, 50] {
+            let mut o = objects();
+            let payload = vec![b' '; mib * 1024 * 1024];
+            o[4] = [
+                format!("<< /Length {} >>\nstream\n", payload.len()).as_bytes(),
+                &payload,
+                b"\nendstream",
+            ]
+            .concat();
+            let original = pdf(&o, "");
+            drop(o);
+            drop(payload);
+            let selected = selection(&original, 1).unwrap();
+            match rotate(&original, &selected) {
+                Ok(output) => {
+                    assert_eq!(mib, 42);
+                    assert!(output.starts_with(&original));
+                    assert_eq!(selection(&output, 1).unwrap().rotation, 90);
+                }
+                Err(error) => {
+                    assert_eq!(mib, 50);
+                    assert!(format!("{error:#}").contains("byte work budget"));
+                }
+            }
+        }
     }
 }
