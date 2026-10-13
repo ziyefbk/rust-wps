@@ -1,3 +1,4 @@
+import {createWordBlockTypeTransaction} from './word-block-type';
 import {WordTableCellMarginsControls} from './word-table-cell-margins-controls';
 import {ParagraphIndent, omitDefaultParagraphIndent, validateParagraphIndentDocument} from './word-paragraph-indent';
 import {WordParagraphIndentControls} from './word-paragraph-indent-controls';
@@ -700,9 +701,18 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
     });
   }
   el('edit-style').addEventListener('change', () => {
+    if (!editor || paused || leaving || saving || printing) return;
+    // Read the requested value before selection synchronization refreshes controls.
     const value = Number(el<HTMLSelectElement>('edit-style').value);
-    if (!value) editor?.chain().focus().setParagraph().run();
-    else editor?.chain().focus().setHeading({ level: value as 1 | 2 | 3 }).run();
+    syncDomTextSelection();
+    try {
+      const transaction = createWordBlockTypeTransaction(editor.state, value);
+      if (transaction) {
+        editor.view.dispatch(closeHistory(transaction));
+        editor.view.dispatch(closeHistory(editor.state.tr));
+      }
+    } catch (error) { showNotice(String(error), true); }
+    editor.view.focus();
     updateToolbar();
   });
   el('edit-align').addEventListener('change', () => {

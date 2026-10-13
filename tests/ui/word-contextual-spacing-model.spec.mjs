@@ -11,6 +11,7 @@ const {ParagraphSpacing, createParagraphSpacingTransaction, selectedParagraphSpa
   omitDefaultParagraphSpacing, validateParagraphSpacingDocument, parseParagraphSpacePoints,
   parseLineSpacingLines} = await loadTsModule('./ui/word-paragraph-spacing.ts');
 const {snapshotDocument, documentStyleProfile} = await loadTsModule('./ui/word-style-profile.ts');
+const {createWordBlockTypeTransaction} = await loadTsModule('./ui/word-block-type.ts');
 const ProfileDoc = TiptapNode.create({name: 'doc', topNode: true, content: 'block+',
   addAttributes: () => ({styleProfile: {default: null}})});
 const extensions = [StarterKit.configure({document: false}), ProfileDoc, TableKit, ParagraphSpacing];
@@ -113,10 +114,9 @@ for (const [before, after] of [[0, 0], [0, 120], [240, 0], [31680, 1]]) {
   });
 }
 
-test('existing limitation: a multi-paragraph heading command resets fixed spacing instead of retaining each block', () => {
-  // This records the existing Tiptap conversion limitation, not desirable
-  // contextual-spacing semantics. Remove this expectation when the separate
-  // per-block format-preserving heading-conversion increment is implemented.
+test('upstream characterization only: raw Tiptap multi-paragraph heading command still resets spacing', () => {
+  // The app toolbar uses createWordBlockTypeTransaction instead. Keep this
+  // upstream contrast explicit so it cannot be mistaken for desired behavior.
   const editor = headless(doc([
     paragraph('A', {spaceBefore: 0, spaceAfter: 120, lineSpacing: 241}),
     paragraph('B', {spaceBefore: 240, spaceAfter: 0, lineSpacing: 360}),
@@ -132,6 +132,24 @@ test('existing limitation: a multi-paragraph heading command resets fixed spacin
   expect(editor.state.doc.eq(original)).toBe(true);
   expect(editor.commands.redo()).toBe(true);
   expect(spacings(editor.state.doc)).toEqual([[null, null, null], [null, null, null]]);
+});
+
+test('app heading/body conversion preserves each normalized fixed gap and one-step history', () => {
+  const original = doc([paragraph('A', {spaceBefore: 0, spaceAfter: 120, lineSpacing: 241}),
+    paragraph('B', {spaceBefore: 240, spaceAfter: 0, lineSpacing: 360})]);
+  let state = stateFor(original, TextSelection.create(original, 1, 5));
+  for (const level of [2, 0]) {
+    const transaction = createWordBlockTypeTransaction(state, level);
+    expect(transaction).not.toBeNull();
+    state = state.apply(closeHistory(transaction)); state = state.apply(closeHistory(state.tr));
+    expect(spacings(state.doc)).toEqual([[0, 120, 241], [240, 0, 360]]);
+    expect(state.selection.toJSON()).toEqual({type: 'text', anchor: 1, head: 5});
+  }
+  expect(state.doc.eq(original)).toBe(true);
+  expect(undo(state, tr => {state = state.apply(tr);})).toBe(true);
+  expect(blocks(state.doc).map(({node}) => node.type.name)).toEqual(['heading', 'heading']);
+  expect(undo(state, tr => {state = state.apply(tr);})).toBe(true);
+  expect(state.doc.eq(original)).toBe(true);
 });
 
 for (const offset of [3, 6]) {

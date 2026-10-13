@@ -1,0 +1,43 @@
+{
+  "base_commit": "5c03a97bac1155d5ff2db1ff83049dd13d7ce9a1",
+  "scope": "Fixed independent paragraph/text expectations for bounded heading/body conversion, authored before invoking the application helper",
+  "original": {
+    "sha256": "ea2c517bd7be4628887eb97f630334b93b894f4522d2c0adae263e602d76df92",
+    "git_blob_sha": "a43c77ae236716a4cc5e4b22ea486a00cc81fbd6",
+    "kind": "untouched original upstream Apache POI test fixture, not user production data",
+    "source_url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/SampleDoc.docx"
+  },
+  "sources": {
+    "mixed-formatting": [
+      {"text":"MixedBody Bold italic underline strike\nMixedBodyNext", "attrs":{"spaceBefore":240,"spaceAfter":120,"lineSpacing":241,"indentLeftTwips":720,"indentRightTwips":360,"firstLineIndentTwips":480,"textAlign":"left"}},
+      {"text":"MixedHeadingTwo colored", "attrs":{"spaceBefore":120,"spaceAfter":240,"lineSpacing":360,"indentLeftTwips":480,"indentRightTwips":240,"firstLineIndentTwips":-120,"textAlign":"right"}},
+      {"text":"ExplicitZero", "attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240,"indentLeftTwips":0,"indentRightTwips":0,"firstLineIndentTwips":0,"textAlign":"center"}},
+      {"text":"FractionalHeading", "attrs":{"spaceBefore":241,"spaceAfter":1,"lineSpacing":241,"indentLeftTwips":721,"indentRightTwips":239,"firstLineIndentTwips":241,"textAlign":"justify"}},
+      {"text":"TableBody", "in_table":true, "attrs":{"spaceBefore":0,"spaceAfter":120,"lineSpacing":241,"indentLeftTwips":180,"indentRightTwips":120,"firstLineIndentTwips":120,"textAlign":"left"}},
+      {"text":"TableHeading", "in_table":true, "attrs":{"spaceBefore":120,"spaceAfter":0,"lineSpacing":300,"indentLeftTwips":240,"indentRightTwips":180,"firstLineIndentTwips":-120,"textAlign":"center"}},
+      {"text":"", "attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":241,"indentLeftTwips":0,"indentRightTwips":0,"firstLineIndentTwips":0}},
+      {"text":"AfterTable", "attrs":{"spaceBefore":100,"spaceAfter":200,"lineSpacing":276,"indentLeftTwips":360,"indentRightTwips":120,"firstLineIndentTwips":-180}}
+    ],
+    "stock-defaults": [
+      {"text":"StockBody", "attrs":{"spaceBefore":0,"spaceAfter":200,"lineSpacing":276}},
+      {"text":"StockHeading1", "attrs":{"spaceBefore":480,"spaceAfter":0,"lineSpacing":276}},
+      {"text":"StockHeading2", "attrs":{"spaceBefore":200,"spaceAfter":0,"lineSpacing":276}},
+      {"text":"StockHeading3", "attrs":{"spaceBefore":200,"spaceAfter":0,"lineSpacing":276}}
+    ],
+    "render-body": [
+      {"text":"Render0First\nRender0Second", "attrs":{"spaceBefore":120,"spaceAfter":240,"lineSpacing":241,"indentLeftTwips":720,"indentRightTwips":360,"firstLineIndentTwips":480,"textAlign":"left"}},
+      {"text":"Render1First\nRender1Second", "attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240,"indentLeftTwips":0,"indentRightTwips":0,"firstLineIndentTwips":0,"textAlign":"left"}},
+      {"text":"Render2First\nRender2Second", "attrs":{"spaceBefore":240,"spaceAfter":120,"lineSpacing":360,"indentLeftTwips":720,"indentRightTwips":240,"firstLineIndentTwips":-360,"textAlign":"left"}}
+    ],
+    "render-heading": [
+      {"text":"Render0First\nRender0Second", "attrs":{"spaceBefore":120,"spaceAfter":240,"lineSpacing":241,"indentLeftTwips":720,"indentRightTwips":360,"firstLineIndentTwips":480,"textAlign":"left"}},
+      {"text":"Render1First\nRender1Second", "attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240,"indentLeftTwips":0,"indentRightTwips":0,"firstLineIndentTwips":0,"textAlign":"left"}},
+      {"text":"Render2First\nRender2Second", "attrs":{"spaceBefore":240,"spaceAfter":120,"lineSpacing":360,"indentLeftTwips":720,"indentRightTwips":240,"firstLineIndentTwips":-360,"textAlign":"left"}}
+    ],
+    "list-incompatible": [
+      {"text":"BeforeList", "attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":241}},
+      {"text":"RequiredListFirst", "attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":241}},
+      {"text":"AfterList", "attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":241}}
+    ]
+  }
+}

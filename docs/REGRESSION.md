@@ -1,6 +1,40 @@
 # 当前跨格式回归记录
 
-## 当前：同样式上下文间距的有界固定值转换（2026-10-13）
+## 当前：工具栏逐段保格式的正文 / 标题转换（2026-10-13）
+
+基于 `5c03a97bac1155d5ff2db1ff83049dd13d7ce9a1`，修复工具栏跨段正文 / 标题切换将各段显式格式清空的问题。`ui/word-block-type.ts` 独立构造候选事务，逐段保留兼容属性、内容 / marks、精确选区与待输入格式，只改类型 / 级别；全部校验成功才提交，一次撤销，后续输入另分组。列表首段转标题整次拒绝，不解散列表；无操作不新增历史。范围见 [BLOCK_TYPE_CONVERSION.md](BLOCK_TYPE_CONVERSION.md)。
+
+### 最终源码与检查
+
+- **283 项无浏览器前端检查通过**：先前 242 +32 个转换模型测试 +1 个上下文固定值应用正例 +8 个剩余上游入口特征测试。`tmp/block-type-ui-final2.log`、完整命令 `tmp/block-type-ui-final-command.json`。最后 8 项明确断言尚未修复的依赖行为，不代表所有类型切换入口已修复
+- 正反向 / 下一段文本起点 / 空段 / 整段 / 全选 / 多单元格选区、每段不同的对齐 / 间距 / 缩进、默认 / 显式零、Unicode / 硬换行 / 链接 / 字符格式 / code 与显式字体共存、stored marks、无操作、原子失败和前后独立历史均覆盖。超结构 / 深度 / 2 MiB 正文 / 32 MiB 草稿预算及共享事务不污染检查通过
+- `npm run build`、TypeScript、Python / Node 语法和 `git diff --check` 通过，最终构建日志 `tmp/block-type-build-final.log`；仍有既有大 bundle 提示
+- **3 个新增真实浏览器规格仅发现，未执行**：`tmp/block-type-browser-final-discovery.log`。覆盖工具栏草稿 / 撤销、尚未送达的 DOM 选区和混合列表失败。原 Chromium EPERM、云浏览器访问工作区、Linux glib / WebKit 与 Windows 离线限制未重试或绕过；不把无 DOM 事务或 LibreOffice 渲染当作实际浏览器 / WebView / 原生 PDF 验收
+- **Rust 1.99 / 1.88 各 415 项本轮重新通过**：沿用既有各自 target 缓存，编译阶段分别 0.10 / 0.12 秒，无重建或新 target；`tmp/block-type-core-1.99.log`、`tmp/block-type-core-1.88.log`
+- **219 个 Rust 核心 / 桌面后端 / vendor / 依赖文件与已发布基线逐字节一致**，`tmp/block-type-core-identity.json`。没有更改 Rust 模型、导出器、vendor 或 node_modules；本轮未重跑 vendor、桌面后端及 Clippy，前轮 1,264 个解析库测试和原始严格 Clippy 的既有限定诊断仍是历史记录，不冒充新跑结果
+
+冻结 CLI `tmp/contextual-final2-cli` 与 `target/debug/rust-wps` SHA-256 均为 `a6179a5e683c7c2b0ddbf93d55afad3fac67b6549f442ee093b8ea035f21e80f`。最终 helper 为 `70a3d25449eea1c92b3867d332d88a4905f035f46d5f4395d478520a15e15b5f`；转换验证 driver / harness 和完整源码身份另冻结于 `tmp/block-type-final-identity.json`。非功能文档也一起纳入最终审查树。
+
+### 独立真实文件与新渲染
+
+最终报告 `tmp/word-block-type/run-xmx2wu5y/report.json`，SHA-256 `8acc4da17a13a411d68bcc34b8ab5e244968a5304d9d0e6a76c0f5dbe5e44196`。脚本 `scripts/check-word-block-type.py` 与数值 / 文本预期 `tests/fixtures/word-block-type-expected.json` 分开，**6 份源包：5 份新独立 python-docx 对照 +1 份未改造、固定 revision / SHA / Git blob 的 Apache POI SampleDoc 原件**。没有提交原始二进制，没有将自制探针称为用户生产文件。
+
+- **24 次成功转换 / DOCX 导出 / 完整模型可信重开**，含 0–3 全类型、标题→正文链、多段 / 表格 / 空段、默认样式和显式零 / 241 行距单位。真实 Node driver 调用与工具栏相同的事务，核对修改段落数量、全选保持、一次撤销及完整 undo / redo
+- **3 次列表首段标题请求原子拒绝**：输出文件不存在、输入 JSON 未变、精确列表诊断匹配；不将任意错误计为通过
+- python-docx / OOXML 独立核对源期望、实际输出每段数值 / 标题样式、全部文字和字符 marks。源模型比较仅允许已声明的 Tiptap 缺省元数据与 marks 顺序；可信模型重开直接核对完整 JSON，不做这种归一化
+- **48 次 Rust 原件 / 输出不覆盖检查 +9 次 Node driver 输出不覆盖检查**；所有源 / 输出散列不变。报告登记 129 条 CLI / Node 命令，9 次 Node 不覆盖重试另由对应记录标记
+- **16 份本轮新 LibreOffice PDF，8 组独立目标参考→转换输出比较**：共 48 条文字行的页码、文字、x / 行末 x / y 坐标一致，最大差 **0.0 pt**。首行 / 悬挂缩进的固定物理锚点另有数值断言；各对照显式匹配字体 / 字号 / 粗斜体以隔离段落数值，不声称转换标题时原默认外观不变
+- 16 份已生成 PDF 的 8 对截图裁切像素完全相同，联系图实际查看；`tmp/word-block-type/run-xmx2wu5y/visual-evidence/heading-body-contact-sheet.png` 与同目录 `visual-report.json`。这是当前参考对子集的证据，不是完整 Word/WPS、字体替代、复杂表格或自动分页保真
+
+独立检查同时保留既有源导入差异：SampleDoc 含主题 / tint 颜色，XML fallback `548DD4` 在导入阶段解析为 `558ED5`；本轮 Rust 导入器未变，类型转换与导出精确保留的是导入后的 RGB，不把 fallback 值误当作固定色参考。先前中间脚本 / harness 运行目录保留，以上只使用最终源码身份匹配的 `run-xmx2wu5y`。
+
+### 剩余可达入口与下一步
+
+本轮是**工具栏**修复。实际注册的上游快捷键回调 / 输入规则处理器另有 8 项无 DOM 复现：Windows Ctrl+Alt+1 / 2 / 3 对两段选区仍清空七个显式段落字段；Ctrl+Alt+0 或对两段 H2 再按 Ctrl+Alt+2 切回正文也清空；段首键入 `# ` / `## ` / `### ` 的输入规则连单段格式也清空。准确选区、参数和说明见 `tests/ui/word-block-type-upstream.spec.mjs` 与功能文档。这里没有实际浏览器按键执行声明。
+
+下一独立增量应将这些可达入口统一到同一保格式 / 原子拒绝 / 历史规则，再补真实浏览器与原生验收。完整 DOC/DOCX/PDF 阶段、源命名样式动态语义、Excel / PPT 原缺口仍未完成。
+
+## 上一轮：同样式上下文间距的有界固定值转换（2026-10-13）
 
 基于 `8b11d7472b3f087598db22a19e7d6c7bace2e655`，新增源样式身份、有效继承和完整原始段落顺序证明，将可证明的 `contextualSpacing` 初始间距转换为现有固定 `spaceBefore` / `spaceAfter`。审计/编辑前提示明确说明命名样式与重排的动态关系不保留；沿用普通间距修改/默认/重置、撤销、草稿和可信重开，不增加虚假的上下文开关或模型字段。范围及整文档内容限制见 [CONTEXTUAL_SPACING.md](CONTEXTUAL_SPACING.md)。
 

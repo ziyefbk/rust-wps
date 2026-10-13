@@ -12,6 +12,8 @@
 
 本轮扩展段前/段后间距与倍数行距的编辑、草稿和 DOCX 往返，修复部分样式覆盖及列表/空段间距丢失；独立消费者验证与未执行的浏览器/原生边界见 [PARAGRAPH_SPACING.md](PARAGRAPH_SPACING.md)。随后扩展简单矩形表格的有限固定列宽及整体对齐/左缩进，范围见 [TABLE_WIDTHS.md](TABLE_WIDTHS.md) 和 [TABLE_POSITION.md](TABLE_POSITION.md)；仍先完成文字/PDF 阶段。
 
+工具栏多段正文 / 标题转换已改为逐段保留对齐、间距、缩进和字符格式，候选原子校验、选区与一次撤销保持；列表首段标题请求整次拒绝。该修复不替代全部上游快捷键 / 输入规则或浏览器 / 原生交互验收，见 [BLOCK_TYPE_CONVERSION.md](BLOCK_TYPE_CONVERSION.md)。
+
 ## 当前能力审计
 
 当前已经证明“Rust 文档核心 + 本地桌面界面”可以形成可运行的轻量办公原型，尚未证明完整 WPS/Office 兼容。下面区分读取与可编辑副本，不以提取成功代替布局或编辑兼容。各阶段原有未完成项继续有效。
