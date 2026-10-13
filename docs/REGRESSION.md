@@ -1,6 +1,47 @@
 # 当前跨格式回归记录
 
-## 当前：快捷键与 Markdown 标题输入保格式（2026-10-13）
+## 当前：简单表格最小行高与垂直对齐（2026-10-13）
+
+基于 `fcab97018e20c3ea1412e49988655cda19cf5ac8`，新增可选逐行 `rowMinHeightTwips` 与逐格 `cellVerticalAlign`，包含默认 / 显式零 / top、混合状态、当前行格 / 选区、分别重置、撤销、草稿、可信重开和不可变打印快照。最小高度受当前页面正文高度约束，内容仍可自然增高；精确高度与源重复表头 / cantSplit 不进入本轮源子集。范围、真实源身份及编辑器历史 8px 上下内边距与 DOCX 零边距的差别见 [TABLE_VERTICAL_LAYOUT.md](TABLE_VERTICAL_LAYOUT.md)。
+
+### 审计与应用边界
+
+没有全局忽略 vAlign：页面审计仅将严格直接的正文表格单元格路径交给新表格审计，节级、错位和包装声明仍保护。源 hRule 只能省略 / atLeast；原始命名空间 / 属性 / 值 / 单一声明、活动表格样式与 basedOn 链、逐格段落文字 / 空段 / 顺序，以及转换 IR 的数值 / 规则 / 分页标志全部核对后附加属性。未知枚举不会由 vendor 的静默缺省变成支持。
+
+样式索引、默认引用与链缓存，64 层继承上限与累计工作预算有检查；未使用模板中的声明不触发新的全局拒绝。新路径只接受省略或完整物理 dxa 零值的上下单元格边距，包括活动基本 / 条件 / 逐格层；非零、缺单位 / 数值、重复容器、包装和模糊声明保守拒绝。没有新属性的旧路径继续其既有规范化提示，旧 V1/V2 编码不变。
+
+### 最终检查
+
+- **Rust 1.99 / 1.88 各435项通过**：原415 +16项新集成 +4项新身份 / 缓存 / 继承边界单元检查，两个版本不重复累计。最终门禁日志 `tmp/table-vertical-core-gate-{1.99,1.88}.log`
+- **346项无浏览器前端检查通过**：原320 +26；精确命令 `tmp/vertical-ui-final-command.json`，最终门禁日志 `tmp/table-vertical-ui-gate.log`。覆盖行格 / 正反向 / 多选 / 整表、默认 / 混合、显式0/top、独立重置、原子历史、过期选区、锁定、结构增删与表头切换、页面缩小、预算和非法粘贴；新行格使用默认，保留存活节点的原属性
+- `npm run build` / TypeScript、Python语法及 `git diff --check` 通过，最终门禁构建日志 `tmp/table-vertical-build-gate.log`。**3个实际浏览器规格仅发现，未执行**，`tmp/vertical-browser-discovery.log`
+- 原始严格 all-targets Clippy 仍各只有已知跨格式单项：1.99 XLS `chunks_exact_to_as_chunks` 与1.88 PPT `uninlined_format_args`；各只排除本工具链对应旧单项后通过。`tmp/table-vertical-clippy-1.99-raw-final.log`、`tmp/table-vertical-clippy-1.88-raw.log` 与各自 `-scoped.log`。本轮新增 collapsible-if 已修复，早期失败日志保留；没有扩大豁免
+- `vendor/`、锁文件与桌面后端没有修改，本轮未重新运行解析库1264项或真实桌面；这些计数仍是历史证据。未重试已确认的 Chromium socket EPERM、云浏览器 localhost、Linux glib / WebKit 或 Windows 离线受阻路径
+
+冻结最终 CLI `tmp/table-vertical-final2-cli` SHA-256 `0c67ef3110ae794d371123313fe01ccfa53bef452f2316dac8a5e11c999da67e`；功能 / 依赖271文件身份在 `tmp/table-vertical-final-code-identity.json`。旧冻结 CLI `tmp/contextual-final2-cli` 保持 `a6179a5e683c7c2b0ddbf93d55afad3fac67b6549f442ee093b8ea035f21e80f`。原始 POI 文件与这两个 CLI 在验证前后均未改变。
+
+### 独立源、实际编辑与60份新PDF
+
+最终报告 `tmp/table-vertical-independent/run-mit7pa7a/report.json`，SHA-256 `d2812fccc54a4f6b8a634c8debf92eed7e27e486b488a1c8d45d9971c2c5ac29`；脚本 `scripts/check-table-vertical-layout.py` SHA-256 `30a7493522301ad5b9c97fe5d1ed5c52f9b6ca33ee12b0c87456e7a13e67b9f3`。
+
+- **15个支持源**：1份固定 revision / SHA / Git blob 的未改造 Apache POI `TestTableCellAlign.docx` 与14份独立 python-docx 定向样本。省略 / atLeast、显式零、单项默认、不同对齐、长内容、显式 / 逐格 / 活动样式 / 条件零边距和未用样式对照分开登记
+- **53个精确源拒绝、17个非法模型、5个包篡改拒绝**。包括修复 document.xml 哈希后仍与模型重编码不符的高度 / 对齐篡改，以及额外ZIP部件；不把任意进程失败当作预期拒绝
+- **45次DOCX导出 / 完整可信模型重开、90次源 / 输出不覆盖检查**，独立 python-docx + 原始 XML 检查实际属性、段落与全部文字。另15次全部垂直属性重置后输出与旧CLI的**整文件字节金样**相同
+- **60份新LibreOfficeDev PDF**：15源、15导出、15实际编辑输出、15另行创作的编辑参考；每个文件使用独立新profile转换。**30组源→输出 / 编辑参考→编辑输出比较**的边框相对基线最大差 **0.0pt**，绝对纵向边框与文字基线最大差也为 **0.0pt**；严格容差小于0.3pt，没有扩大阈值或修正输出坐标
+- 原件的两行边框中心距实测67.5 /58.5pt；长内容9条文字行完整可见且超过设置的最小行高自然增高。原件导出、实际编辑原件、长内容和条件零边距输出预览均实际查看；这不是字体替代、自动分页或所有源表格的完整保真承诺
+- 原件自动网格9350twip仍按旧规则规范化；三条竖边框x位移 `[-0.5, -9.20001, -18.0]pt` 明确单列，**不能声称整页 / 横向相等**。Calibri 在该消费者替代为Carlito11，边框外观等仍有既有规范化限制
+
+前一次共享profile批量转换在 `tmp/table-vertical-independent/run-lc8e6eq6/` 保留为失败证据：一份输出PDF横向边框异常为0，但相同批次两份**DOCX字节完全相同**的输入正常；原失败DOCX用新的单文件profile即恢复正常（同目录 `rerender-one/`）。最终脚本改为每文件独立profile并从冻结产品重跑全60份，没有挑选旧PDF拼成通过，也没有更改产品去迎合消费者异常。中间结构通过和旧36PDF结果不混入最终计数。
+
+### 旧路径与源安全重放
+
+历史重放报告 `tmp/contextual-legacy/run-leg3cwb3/report.json`（SHA-256 `5317d7c8f628ff3ad2a8bf7d1e5c3e69d0c76b5dedccf0e43cacd883c8a11f63`）完成 **1520条旧响应、302份旧模型整包字节金样、604次可信重开和604次禁止覆盖**。源包、之前报告、冻结CLI和保留PDF散列全部不变。相对于更早的上下文间距前基线，1509条响应完全相同 /11条需复核，其中10条就是前轮已审查的间距支持扩展或诊断变化；严格重放报告原样保留为 REVIEW_REQUIRED，没有覆盖成全相同。
+
+与最近已发布的 `tmp/contextual-legacy/run-h1sni1hf/report.json` 完整结果逐条比较，**1519/1520精确相等、没有旧支持源被新增拒绝**。唯一变化是原 `table-alignment.docx` 的6张表共18行现在保留原先丢弃的 `rowMinHeightTwips:341`；除此之外完整返回JSON相同。这项有意支持扩展已由独立XML / python-docx核对：18行确实为341twip、hRule省略，移除仅这18个新属性后完整响应精确相同；接受记录在 `tmp/table-vertical-legacy-acceptance.json`，原严格报告保留，不会把它误归为全部旧响应逐字相同。
+
+302份旧模型导出全部保持整文件字节，保留的325份旧PDF这里只复核身份，**没有本轮重新渲染它们**。补充原件 `table-alignment.docx` 的独立报告 `tmp/table-vertical-independent/table-alignment-supplement/report.json`（SHA-256 `49b23720cb12eb98829b9fe26651c6835773d7a2068a4f1afc653d3fc52c7cc5`）另有3次导出 / 可信重开、6次不覆盖及3份新单文件profile PDF；旧模型用新CLI仍与旧CLI整包字节相同。每张表的源 / 新输出边框间距均为 `[17.6,17.5,17.6]pt`，旧输出为 `[16.9,16.8,16.9]pt`，这次修复每行0.7pt。原有空段字体 / 行框、文字颜色及自动宽度规范化仍在：表间空段距离源27.4pt、输出23.1pt，六表起点差累计为 `[0,-4.3,-8.6,-12.9,-17.2,-21.5]pt`；不能宣称这个组合文件整体纵向保真。本轮主套件60份新PDF与这3份补充、新旧消费者证据分别统计。原件、已有输出、此前报告与冻结CLI均保留。
+
+## 上一轮：快捷键与 Markdown 标题输入保格式（2026-10-13）
 
 基于 `890cc3ec9ccd66c020263207f52af1e922cba8e0`，把应用注册的 Ctrl+Alt+0–3 和段首 `# ` / `## ` / `### ` 输入规则接入已验证的逐段候选事务。保留对齐、段前 / 段后 / 行距、左右 / 首行缩进七字段、内容 / marks、选区和显式待输入格式；同级标题快捷键切回正文，混合级别设为请求级别。列表首段标题请求原子拒绝且不解除列表，标记不提前删除。范围见 [BLOCK_TYPE_CONVERSION.md](BLOCK_TYPE_CONVERSION.md)。
 

@@ -272,19 +272,44 @@ fn check_direction(node: &Xml) -> Result<()> {
     }
 }
 fn scan_main(node: &Xml, section: Option<&Xml>) -> Result<()> {
-    for child in &node.children {
-        if section.is_some_and(|section| std::ptr::eq(section, child)) {
-            continue;
+    fn scan(node: &Xml, section: Option<&Xml>, path: &mut Vec<String>) -> Result<()> {
+        if !node.tag.is_empty() {
+            path.push(node.tag.clone());
         }
-        ensure!(
-            !section_property(&child.tag) && !page_toggle(&child.tag),
-            "Page declaration is outside the terminal body section: {}",
-            child.tag
-        );
-        check_direction(child)?;
-        scan_main(child, section)?;
+        for child in &node.children {
+            if section.is_some_and(|section| std::ptr::eq(section, child)) {
+                continue;
+            }
+            // vAlign is shared by section and cell schemas. Only a strictly
+            // direct cell declaration may leave the page audit; the separate
+            // table audit proves its structure, styles, value and IR identity.
+            let cell_alignment = child.tag == "vAlign"
+                && path
+                    .iter()
+                    .map(String::as_str)
+                    .eq(["document", "body", "tbl", "tr", "tc", "tcPr"]);
+            if cell_alignment {
+                child.schema(&["val"], true)?;
+                ensure!(
+                    matches!(child.attr("val")?, Some("top" | "center" | "bottom"))
+                        && node.one("vAlign")?.is_some(),
+                    "Unsupported cell alignment"
+                );
+            }
+            ensure!(
+                (!section_property(&child.tag) || cell_alignment) && !page_toggle(&child.tag),
+                "Page declaration is outside the terminal body section: {}",
+                child.tag
+            );
+            check_direction(child)?;
+            scan(child, section, path)?;
+        }
+        if !node.tag.is_empty() {
+            path.pop();
+        }
+        Ok(())
     }
-    Ok(())
+    scan(node, section, &mut Vec::new())
 }
 fn check_settings(data: Option<&[u8]>) -> Result<()> {
     let Some(data) = data else {

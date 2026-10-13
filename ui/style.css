@@ -161,3 +161,13 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
 .tiptap table[data-table-cell-margins-twips] > tr > th {
   padding-left:var(--word-cell-margin-left); padding-right:var(--word-cell-margin-right); min-width:0;
 }
+
+#table-vertical-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#table-vertical-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+#table-vertical-controls input { width:6.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
+#edit-table-vertical-state { color:#61738a; font-size:11px; }
+/* Owned inline height is a minimum in the native CSS table-row formatting
+   model, shared by the editor and immutable print snapshot. Never convert
+   these rows/cells to fixed-size blocks or apply clipping/max-height. */
+.tiptap tr[data-row-min-height-twips] { display:table-row; }
+.tiptap td[data-cell-vertical-align],.tiptap th[data-cell-vertical-align] { display:table-cell; }

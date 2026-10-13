@@ -1,3 +1,4 @@
+import {omitDefaultTableVertical, validateTableVerticalDocument} from './word-table-vertical-layout';
 import {omitDefaultTableCellMargins, validateTableCellMarginsDocument} from './word-table-cell-margins';
 import {omitDefaultParagraphIndent, validateParagraphIndentDocument} from './word-paragraph-indent-model';
 import {Extension, type JSONContent} from '@tiptap/core';
@@ -135,6 +136,7 @@ function validateProspectivePage(document: Node) {
   const snapshot = omitDefaultPageGeometry(document.toJSON());
   validatePageGeometryDocument(snapshot);
   validateTableCellMarginsDocument(omitDefaultTableCellMargins(snapshot));
+  validateTableVerticalDocument(omitDefaultTableVertical(snapshot));
   validateParagraphIndentDocument(omitDefaultParagraphIndent(snapshot));
   if (encoder.encode(JSON.stringify({version: 1, document: snapshot})).length > 32 * 1024 * 1024) throw new Error('页面修改后草稿超过 32 MiB 保存上限。');
 }

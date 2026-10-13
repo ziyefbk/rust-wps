@@ -599,6 +599,60 @@ impl Default for TableCellMargins {
     }
 }
 
+pub const MAX_ROW_HEIGHT_TWIPS: u64 = 31680;
+
+/// Omission remains distinct from explicit zero/top. Null is not an encoded
+/// default: the UI strips its internal default attributes before validation.
+pub fn row_min_height(node: &Node) -> Result<Option<u64>> {
+    node.attrs
+        .get("rowMinHeightTwips")
+        .map(|value| {
+            let height = value
+                .as_u64()
+                .context("Row minimum height must be integer twips")?;
+            ensure!(
+                height <= MAX_ROW_HEIGHT_TWIPS,
+                "Row minimum height exceeds limits"
+            );
+            Ok(height)
+        })
+        .transpose()
+}
+pub fn cell_vertical_align(node: &Node) -> Result<Option<&str>> {
+    node.attrs
+        .get("cellVerticalAlign")
+        .map(|value| {
+            let alignment = value
+                .as_str()
+                .context("Cell vertical alignment must be a string")?;
+            ensure!(
+                matches!(alignment, "top" | "center" | "bottom"),
+                "Unsupported cell vertical alignment"
+            );
+            Ok(alignment)
+        })
+        .transpose()
+}
+fn has_table_vertical(node: &Node) -> bool {
+    node.attrs.contains_key("rowMinHeightTwips")
+        || node.attrs.contains_key("cellVerticalAlign")
+        || node.content.iter().any(has_table_vertical)
+}
+fn validate_table_vertical(doc: &Node, page: Option<&PageGeometry>) -> Result<()> {
+    let maximum = page.map_or(13958, |page| {
+        page.height_twips - page.margin_top_twips - page.margin_bottom_twips
+    });
+    for table in doc.content.iter().filter(|node| node.kind == "table") {
+        for row in &table.content {
+            ensure!(
+                row_min_height(row)?.is_none_or(|height| height <= maximum),
+                "Row minimum height exceeds page body height"
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn table_cell_margins(node: &Node) -> Result<Option<TableCellMargins>> {
     let Some(value) = node.attrs.get("tableCellMarginsTwips") else {
         return Ok(None);
@@ -859,7 +913,14 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "tableIndentTwips",
                 "tableCellMarginsTwips",
             ],
-            "tableCell" | "tableHeader" => &["colspan", "rowspan", "colwidth", "align"],
+            "tableCell" | "tableHeader" => &[
+                "colspan",
+                "rowspan",
+                "colwidth",
+                "align",
+                "cellVerticalAlign",
+            ],
+            "tableRow" => &["rowMinHeightTwips"],
             "image" => &[
                 "src",
                 "alt",
@@ -870,9 +931,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "displayHeightEmu",
                 "imageParagraph",
             ],
-            "doc" | "text" | "hardBreak" | "pageBreak" | "bulletList" | "listItem" | "tableRow" => {
-                &[]
-            }
+            "doc" | "text" | "hardBreak" | "pageBreak" | "bulletList" | "listItem" => &[],
             other => bail!("Unsupported document node: {other}"),
         };
         for key in node.attrs.keys() {
@@ -1114,7 +1173,11 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "Custom list numbering is not supported"
             );
         }
+        if node.kind == "tableRow" {
+            row_min_height(node)?;
+        }
         if matches!(node.kind.as_str(), "tableCell" | "tableHeader") {
+            cell_vertical_align(node)?;
             ensure!(
                 integer(node, "colspan", 1)? == 1 && integer(node, "rowspan", 1)? == 1,
                 "Merged table cells are not supported yet"
@@ -1137,8 +1200,13 @@ pub fn validate(doc: &Node) -> Result<()> {
             !explicit_margins || depth == 1,
             "Explicit cell margins require a top-level table"
         );
+        let vertical = node.kind == "table" && has_table_vertical(node);
+        ensure!(
+            !vertical || depth == 1,
+            "Vertical table geometry requires a top-level table"
+        );
         let fixed = node.kind == "table"
-            && (table_column_widths(node)?.is_some() || positioned || explicit_margins);
+            && (table_column_widths(node)?.is_some() || positioned || explicit_margins || vertical);
         if node.kind == "table" {
             ensure!(
                 !(fixed_ancestor || fixed && table_depth > 0),
@@ -1168,6 +1236,7 @@ pub fn validate(doc: &Node) -> Result<()> {
     }
     visit(doc, 0, 0, false, &mut nodes, &mut text_bytes)?;
     validate_table_cell_content(doc, page.as_ref())?;
+    validate_table_vertical(doc, page.as_ref())?;
     validate_paragraph_indents(doc)?;
     // A size edit must not create a valid-looking draft which later fails the
     // existing writer's media-count/aggregate limits. Preserve the historical
@@ -1443,8 +1512,19 @@ impl Writer {
                 );
                 for row in &node.content {
                     table.push_str("<w:tr>");
-                    if row.content.iter().all(|c| c.kind == "tableHeader") {
-                        table.push_str("<w:trPr><w:tblHeader/></w:trPr>");
+                    let header = row.content.iter().all(|c| c.kind == "tableHeader");
+                    let minimum = row_min_height(row)?;
+                    if header || minimum.is_some() {
+                        table.push_str("<w:trPr>");
+                        if let Some(height) = minimum {
+                            table.push_str(&format!(
+                                "<w:trHeight w:val=\"{height}\" w:hRule=\"atLeast\"/>"
+                            ));
+                        }
+                        if header {
+                            table.push_str("<w:tblHeader/>");
+                        }
+                        table.push_str("</w:trPr>");
                     }
                     for (cell, width) in row.content.iter().zip(&widths) {
                         table.push_str(&format!(
@@ -1455,6 +1535,10 @@ impl Writer {
                                 ""
                             }
                         ));
+                        if let Some(alignment) = cell_vertical_align(cell)? {
+                            let end = table.len() - "</w:tcPr>".len();
+                            table.insert_str(end, &format!("<w:vAlign w:val=\"{alignment}\"/>"));
+                        }
                         for block in &cell.content {
                             table.push_str(&self.block(block, level)?);
                         }

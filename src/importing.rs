@@ -182,7 +182,9 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
                 .ok_or_else(|| anyhow::anyhow!("Expected DOCX parser"))?,
         )?;
     }
-    let mut report = convert_ir(parsed.to_ir(), compatibility, true)?;
+    let ir = parsed.to_ir();
+    crate::table_vertical::verify_ir(&audit.vertical_tables, &ir)?;
+    let mut report = convert_ir(ir, compatibility, true)?;
     if let Some(page) = audit.page {
         report
             .document
@@ -235,6 +237,46 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     ensure!(
         widths.next().is_none(),
         "Source table was discarded during import"
+    );
+    fn attach_vertical(
+        node: &mut Node,
+        proofs: &mut std::slice::Iter<'_, Option<crate::table_vertical::VerticalTable>>,
+    ) -> Result<()> {
+        if node.kind == "table"
+            && let Some(proof) = proofs
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Vertical table identity mismatch"))?
+        {
+            ensure!(
+                node.content.len() == proof.rows.len(),
+                "Vertical row identity mismatch"
+            );
+            for (row, proof) in node.content.iter_mut().zip(&proof.rows) {
+                ensure!(
+                    row.content.len() == proof.cells.len(),
+                    "Vertical cell identity mismatch"
+                );
+                if let Some(height) = proof.height {
+                    row.attrs.insert("rowMinHeightTwips".into(), height.into());
+                }
+                for (cell, proof) in row.content.iter_mut().zip(&proof.cells) {
+                    if let Some(alignment) = &proof.alignment {
+                        cell.attrs
+                            .insert("cellVerticalAlign".into(), alignment.clone().into());
+                    }
+                }
+            }
+        }
+        for child in &mut node.content {
+            attach_vertical(child, proofs)?;
+        }
+        Ok(())
+    }
+    let mut proofs = audit.vertical_tables.tables.iter();
+    attach_vertical(&mut report.document, &mut proofs)?;
+    ensure!(
+        proofs.next().is_none(),
+        "Vertical source table was discarded during import"
     );
     if let Some(page) = crate::document::page_geometry(&report.document)? {
         for table in report

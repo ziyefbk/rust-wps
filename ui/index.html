@@ -78,6 +78,14 @@
         <button id="edit-table-position-reset" title="移除表格对齐和缩进，保留固定列宽">默认位置</button>
         <span id="edit-table-position-state" aria-live="polite"></span>
       </span>
+      <span id="table-vertical-controls" role="group" aria-label="表格行高与垂直对齐">
+        <label>行最小高度（pt）<input id="edit-row-min-height" type="number" min="0" max="1584" step="0.05" placeholder="默认" title="当前选中行；不超过页面正文高度，内容过多时自然增高" /></label>
+        <button id="edit-row-min-height-apply" title="应用当前选中行的最小高度，可一次撤销">应用最小行高</button>
+        <button id="edit-row-min-height-reset" title="仅移除选中行的显式最小高度">默认行高</button>
+        <label>单元格垂直对齐<select id="edit-cell-vertical-align"><option value="">默认</option><option value="top">顶部</option><option value="center">居中</option><option value="bottom">底部</option><option value="mixed" disabled>混合</option></select></label>
+        <button id="edit-cell-vertical-align-reset" title="仅移除选中单元格的显式垂直对齐">默认垂直对齐</button>
+        <span id="edit-table-vertical-state" aria-live="polite"></span>
+      </span>
       <span id="table-cell-margins-controls" role="group" aria-label="表格单元格左右边距">
         <label>当前表格左内边距 <input id="edit-table-cell-margin-left" type="number" min="0" max="1584" step="0.05" aria-label="单元格左边距（pt）" placeholder="先选表格" title="0–1584 pt，0.05 pt 递增；须同时填写左右边距；显式 0 与默认不同"> pt</label>
         <label>右边距 <input id="edit-table-cell-margin-right" type="number" min="0" max="1584" step="0.05" aria-label="单元格右边距（pt）" placeholder="先选表格" title="作用于当前整张表格；左右边距之和须小于每列宽度"> pt</label>

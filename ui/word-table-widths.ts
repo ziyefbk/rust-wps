@@ -1,3 +1,4 @@
+import {cellVerticalAlignAttribute, isCellVerticalAlignment, isRowMinHeight, rowMinHeightAttribute, simpleVerticalTable, tableVerticalAttributes, tableVerticalError, validateTableVerticalDocument, validTableVerticalHTML, type TableVerticalPatch} from './word-table-vertical-layout';
 import {isTableCellMargins, parseTableCellMarginsMetadata, simpleCellMarginsTable, tableCellMarginsAttribute, tableCellMarginsDataAttribute, tableCellMarginsDOM, tableCellMarginsError, validateTableCellMarginsDocument, validTableCellMarginsHTML, type TableCellMargins} from './word-table-cell-margins';
 import {omitDefaultParagraphIndent, validateParagraphIndentDocument} from './word-paragraph-indent-model';
 import {isPageGeometry, omitDefaultPageGeometry, pageTableWidthTwips, validatePageGeometryDocument} from './word-page-geometry';
@@ -66,6 +67,7 @@ export function validateTableWidthsDocument(document: JSONContent): void {
   };
   visit(document, 0, null);
   validateTableCellMarginsDocument(document);
+  validateTableVerticalDocument(document);
 }
 
 // Default null is an editor-only attribute. Fixed cells carry no second width
@@ -75,6 +77,8 @@ export function omitDefaultTableWidths(document: JSONContent, inFixedTable = fal
   const fixed = result.type === 'table' ? result.attrs?.[widthAttribute] != null : inFixedTable;
   if (result.attrs) {
     result.attrs = {...result.attrs};
+    if (result.type === 'tableRow' && result.attrs[rowMinHeightAttribute] === null) delete result.attrs[rowMinHeightAttribute];
+    if (cellTypes.has(result.type ?? '') && result.attrs[cellVerticalAlignAttribute] === null) delete result.attrs[cellVerticalAlignAttribute];
     if (result.type === 'table' && result.attrs[widthAttribute] === null) delete result.attrs[widthAttribute];
     if (result.type === 'table' && result.attrs[tableCellMarginsAttribute] === null) delete result.attrs[tableCellMarginsAttribute];
     if (result.type === 'table') for (const field of tablePositionFields) if (result.attrs[field] === null) delete result.attrs[field];
@@ -169,6 +173,7 @@ export function selectedTableColumn(state: EditorState): SelectedTableColumn | n
     if (table.type.name !== 'table') continue;
     const pos = $head.before(depth), start = $head.start(depth);
     if (selection.from < start || selection.to > pos + table.nodeSize - 1) return null;
+    if (!(selection instanceof CellSelection) && !selectedCellNode && $head.depth < depth + 2) return null;
     const cellPos = selection instanceof CellSelection || selectedCellNode ? $head.pos : $head.before(depth + 2);
     const rect = TableMap.get(table).findCell(cellPos - start);
     return {table, pos, column: rect.left, row: rect.top, widths: table.attrs[widthAttribute] ?? null};
@@ -276,6 +281,62 @@ export function createTableCellMarginsTransaction(state: EditorState, margins: T
   return transaction;
 }
 
+
+export interface SelectedVerticalNode {node: Node; pos: number}
+export function selectedTableVerticalLayout(state: EditorState) {
+  const selection = state.selection;
+  const selected = selection instanceof NodeSelection && selection.node.type.name === 'table'
+    ? {table: selection.node, pos: selection.from}
+    : selection instanceof NodeSelection && selection.node.type.name === 'tableRow' && selection.$from.parent.type.name === 'table'
+      ? {table: selection.$from.parent, pos: selection.$from.before()} : selectedTableColumn(state);
+  if (!selected) return null;
+  const {table, pos} = selected, rows: SelectedVerticalNode[] = [], cells: SelectedVerticalNode[] = [];
+  const selectedCells = new Set<number>();
+  if (selection instanceof CellSelection) selection.forEachCell((_cell, at) => selectedCells.add(at));
+  table.forEach((row, rowOffset) => {
+    const rowPos = pos + 1 + rowOffset;
+    row.forEach((cell, cellOffset) => {
+      const cellPos = rowPos + 1 + cellOffset;
+      let active = selection instanceof CellSelection ? selectedCells.has(cellPos)
+        : selection instanceof NodeSelection ? selection.from <= cellPos && selection.to >= cellPos + cell.nodeSize
+        : selection.empty ? selection.from > cellPos && selection.from < cellPos + cell.nodeSize : false;
+      if (!(selection instanceof CellSelection) && !(selection instanceof NodeSelection) && !selection.empty) {
+        cell.descendants((child, offset) => {
+          if (child.isTextblock && selection.ranges.some(({$from, $to}) => {
+            const start = cellPos + 1 + offset;
+            return start + 1 < $to.pos && start + child.nodeSize > $from.pos;
+          })) active = true;
+        });
+      }
+      if (active) {cells.push({node: cell, pos: cellPos}); if (!rows.some(item => item.pos === rowPos)) rows.push({node: row, pos: rowPos});}
+    });
+  });
+  const fieldState = (nodes: SelectedVerticalNode[], field: string) => {
+    const values = nodes.map(({node}) => node.attrs[field] ?? null), mixed = values.some(value => value !== values[0]);
+    return {value: mixed ? null : values[0] ?? null, mixed, hasExplicit: values.some(value => value !== null)};
+  };
+  return {table, pos, rows, cells, supported: cells.length > 0 && state.doc.resolve(pos).depth === 0 && simpleVerticalTable(table.toJSON()),
+    rowMinHeightTwips: fieldState(rows, rowMinHeightAttribute), cellVerticalAlign: fieldState(cells, cellVerticalAlignAttribute)};
+}
+export function createTableVerticalTransaction(state: EditorState, patch: TableVerticalPatch, token?: TableCellMarginsToken): Transaction | null {
+  const fields = Object.keys(patch) as (keyof TableVerticalPatch)[];
+  for (const field of fields) if (![rowMinHeightAttribute, cellVerticalAlignAttribute].includes(field)
+    || patch[field] !== null && !(field === rowMinHeightAttribute ? isRowMinHeight(patch[field]) : isCellVerticalAlignment(patch[field]))) throw new Error(tableVerticalError);
+  if (token && !matchesTableCellMargins(state, token)) return null;
+  const selected = selectedTableVerticalLayout(state);
+  if (!selected || !fields.length) return null;
+  if (!selected.supported) throw new Error(tableVerticalError);
+  const transaction = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks}).tr;
+  for (const field of fields) for (const {node, pos} of field === rowMinHeightAttribute ? selected.rows : selected.cells) {
+    if ((node.attrs[field] ?? null) !== patch[field]) transaction.setNodeMarkup(pos, undefined, {...node.attrs, [field]: patch[field]}, node.marks);
+  }
+  if (!transaction.docChanged) return null;
+  validateProspectiveDocument(transaction.doc);
+  transaction.setSelection(Selection.fromJSON(transaction.doc, state.selection.toJSON()));
+  if (state.storedMarks) transaction.setStoredMarks(state.storedMarks);
+  return transaction;
+}
+
 const structuralCommands = {addColumnBefore, addColumnAfter, deleteColumn, addRowBefore, addRowAfter, deleteRow, deleteTable};
 export type TableStructureAction = keyof typeof structuralCommands;
 
@@ -329,9 +390,11 @@ export function createTableStructureTransaction(state: EditorState, action: Tabl
 export function tableWidthGuard(onRejected: (message: string) => void = () => {}): Plugin {
   return new Plugin({props: {handlePaste: (_view, event) => {
     const html = event.clipboardData?.getData('text/html');
-    if (!html || !html.toLowerCase().includes(tableCellMarginsDataAttribute)) return false;
-    if (validTableCellMarginsHTML(new DOMParser().parseFromString(html, 'text/html'))) return false;
-    onRejected(tableCellMarginsError); return true;
+    if (!html || !/data-(?:table-cell-margins-twips|row-min-height-twips|cell-vertical-align)/i.test(html)) return false;
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    if (!validTableCellMarginsHTML(parsed)) {onRejected(tableCellMarginsError); return true;}
+    if (!validTableVerticalHTML(parsed)) {onRejected(tableVerticalError); return true;}
+    return false;
   }}, filterTransaction: transaction => {
     if (!transaction.docChanged) return true;
     try { validateProspectiveDocument(transaction.doc); return true; }
@@ -341,6 +404,7 @@ export function tableWidthGuard(onRejected: (message: string) => void = () => {}
 
 export const WordTable = Table.extend<TableOptions & {onWidthError: (message: string) => void}>({
   addOptions() { return {...this.parent!(), onWidthError: () => {}}; },
+  addGlobalAttributes() {return [...(this.parent?.() ?? []), ...tableVerticalAttributes()];},
   addAttributes() {
     return {...this.parent?.(), [widthAttribute]: {
       default: null, rendered: false,
@@ -358,6 +422,18 @@ export const WordTable = Table.extend<TableOptions & {onWidthError: (message: st
       : this.parent!({node, HTMLAttributes: attributes});
   },
   addCommands() {
+    const verticalCommand = (patch: TableVerticalPatch) => ({state, dispatch, tr}: CommandProps) => {
+      try {
+        const transaction = createTableVerticalTransaction(state, patch);
+        if (!transaction) return false;
+        if (dispatch) {
+          for (const step of transaction.steps) tr.step(step);
+          tr.setSelection(Selection.fromJSON(tr.doc, transaction.selection.toJSON()));
+          if (transaction.storedMarksSet) tr.setStoredMarks(transaction.storedMarks);
+        }
+        return true;
+      } catch (error) {if (dispatch) this.options.onWidthError(String(error)); return false;}
+    };
     const cellMarginsCommand = (margins: TableCellMargins | null) => ({state, dispatch, tr}: CommandProps) => {
       try {
         const transaction = createTableCellMarginsTransaction(state, margins);
@@ -382,7 +458,7 @@ export const WordTable = Table.extend<TableOptions & {onWidthError: (message: st
         return true;
       } catch (error) {if (dispatch) this.options.onWidthError(String(error)); return false;}
     };
-    return {...this.parent?.(), setTableCellMargins: cellMarginsCommand, resetTableCellMargins: () => cellMarginsCommand(null), setTablePosition: positionCommand, resetTablePosition: () => positionCommand({tableAlign: null, tableIndentTwips: null}),
+    return {...this.parent?.(), setTableVerticalLayout: verticalCommand, resetTableVerticalLayout: () => verticalCommand({rowMinHeightTwips: null, cellVerticalAlign: null}), setTableCellMargins: cellMarginsCommand, resetTableCellMargins: () => cellMarginsCommand(null), setTablePosition: positionCommand, resetTablePosition: () => positionCommand({tableAlign: null, tableIndentTwips: null}),
       ...Object.fromEntries(Object.keys(structuralCommands).map(action => [action, () =>
       ({state, dispatch, tr}: CommandProps) => {
         try {

@@ -457,6 +457,7 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
 pub(crate) struct DocxGeometryAudit {
     pub compatibility: CompatibilityReport,
     pub tables: Vec<crate::table_widths::TableGeometry>,
+    pub vertical_tables: crate::table_vertical::VerticalAudit,
     pub images: Vec<crate::image_dimensions::ImageGeometry>,
     pub page: Option<crate::document::PageGeometry>,
     pub paragraph_indents: crate::paragraph_indentation::ParagraphIndentAudit,
@@ -481,6 +482,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
     let mut links = std::collections::BTreeMap::new();
     let mut normalized_main = None;
     let mut table_widths = Vec::new();
+    let mut vertical_tables = crate::table_vertical::VerticalAudit::default();
     let mut page = None;
     let mut paragraph_indents = crate::paragraph_indentation::ParagraphIndentAudit::default();
     let mut contextual_spacing =
@@ -617,6 +619,15 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         )?;
         table_widths = table_audit.tables;
         report.risks.extend(table_audit.risks);
+        match crate::table_vertical::analyze(normalized_main.as_deref().expect("main read"), styles)
+        {
+            Ok(audit) => vertical_tables = audit,
+            Err(_) => {
+                report
+                    .risks
+                    .insert(crate::table_widths::TABLE_GEOMETRY_RISK.into());
+            }
+        }
         let (used, numbers) =
             spacing_usage(normalized_main.as_deref().expect("main read"), styles)?;
         let rels_part = office_oxide::core::opc::PartName::new(&main.rels_path())?;
@@ -674,6 +685,11 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             report.risks.insert(PARAGRAPH_SPACING_RISK.into());
         }
     }
+    if crate::table_vertical::check_height_limit(&vertical_tables, page.as_ref()).is_err() {
+        report
+            .risks
+            .insert(crate::table_widths::TABLE_GEOMETRY_RISK.into());
+    }
     if normalized_main.is_none() {
         let empty_styles = br#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
         let table_audit = crate::table_widths::analyze(
@@ -686,6 +702,24 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         )?;
         table_widths = table_audit.tables;
         report.risks.extend(table_audit.risks);
+        match crate::table_vertical::analyze(
+            &parts["word/document.xml"],
+            parts
+                .get("word/styles.xml")
+                .map(Vec::as_slice)
+                .unwrap_or(empty_styles),
+        )
+        .and_then(|audit| {
+            crate::table_vertical::check_height_limit(&audit, None)?;
+            Ok(audit)
+        }) {
+            Ok(audit) => vertical_tables = audit,
+            Err(_) => {
+                report
+                    .risks
+                    .insert(crate::table_widths::TABLE_GEOMETRY_RISK.into());
+            }
+        }
         // Inventory-only archives cannot prove OPC settings/style identities.
         // They never advertise preserved page geometry.
         report
@@ -929,6 +963,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
     Ok(DocxGeometryAudit {
         compatibility: report,
         tables: table_widths,
+        vertical_tables,
         images,
         page,
         paragraph_indents,
