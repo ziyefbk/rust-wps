@@ -1,5 +1,44 @@
 # 当前跨格式回归记录
 
+## 本轮：PDF 提取器普通 unwind 回退（2026-10-13）
+
+基于 `16eb21e93fd8f81a212f2a684f971f169314bfa8`，只在 `src/pdf_snapshot.rs` 的实际提取调用周围捕获普通 unwind；同一有界源读取 / 签名 / 大小校验仍在捕获区外。严格模式明确错误，预览模式为空正文 / 真实字节数 / panic-specific `text_error`。原有成功、空白与返回错误策略不变；没有把 worker 非零退出、超时或协议故障普遍降级。实现、资源和页面验收边界见 [PDF_PANIC_RECOVERY.md](PDF_PANIC_RECOVERY.md)。
+
+### 最终门禁
+
+- Rust **1.99 / 1.88 各 503 项通过**，即原493 +10新检查；工具链不重复累计。原13项源快照测试完整保留，与10新检查合计23项。日志 `tmp/pdf-panic-core-{stable,msrv}-final.log`
+- 新检查使用与生产相同的私有 `UnwindSafe` callable：借用 / 拥有 / 非字符串 payload 的严格 / 预览 / JSON策略；控制及 bidi 字符转义与512字节明细上限；精确成功 / 空白 / 原返回错误；签名 / 超限 / I/O 不调用提取器；reader panic 不被吞掉；捕获后正常提取无旧状态
+- **460 项无浏览器检查通过**，精确复用 `tmp/pdf-phrase-ui-command.json`，在前端构建完成后运行；日志 `tmp/pdf-panic-ui-aggregate-final.log`。没有新增实际浏览器用例或页面渲染声明
+- `cargo +stable fmt --check`、独立 probe 的 rustfmt、Node checker 语法、`git diff --check`、CLI / 公共库构建、`npm run build` / TypeScript 通过。日志 `tmp/pdf-panic-{fmt,build,ui-build}-final.log`；前端仅既有 bundle 大小提示
+- 原始严格 all-targets Clippy 两工具链仍各仅旧跨格式单项：1.99 XLS `chunks_exact_to_as_chunks`、1.88 PPT `uninlined_format_args`。分别只排除对应既有单项后通过，没有新增豁免。日志 `tmp/pdf-panic-clippy-{stable,msrv}-{raw,scoped}.log`
+- 沿用 `../toolchains/{cargo,rustup}`、`CARGO_INCREMENTAL=0`、stable的 `target` 与1.88的 `tmp/msrv-target`，无RUSTFLAGS / profile改变或重复target。前端使用 `USERPROFILE=$PWD/tmp/linux-home`。没有更改依赖、锁文件、vendor、桌面或前端产品源码
+- 除有意修改的 `src/pdf_snapshot.rs` 外，其他产品源码 / 依赖 / vendor / 历史PDF checker及manifest共 **279个文件**相对基线逐字节不变，记录 `tmp/pdf-panic-protected-identity.json` SHA **`c7c111640a7063005874519e72dd61a7ba6f67176b2ce7396dcc5a70872d17c6`**
+- vendor测试与真实桌面没有重跑，不重复宣称旧计数。已知 Chromium EPERM / 云 localhost / Linux glib-WebKit / 离线 Windows 路线没有重试；没有新页面截图或视觉渲染结果
+
+最终 `src/pdf_snapshot.rs` SHA-256 **`f77cbc907cc2a3a0b8fe3e53206254c913fcfbbfe34a684f948e16972d2be5f3`**。冻结候选 CLI `tmp/pdf-panic-final-cli` **`c92bdffaeeba9fa823d03ed53c141b284645ac70a20ff002c5110e2918274976`**；基线 `tmp/pdf-snapshot-final-cli` 仍为 **`aea080512d18946111e35490c223643225df1a2e423d79360f3bc37bfec54c67`**。
+
+### 未改造原件与恢复证据
+
+最终命令：
+
+```text
+node scripts/check-pdf-panic-recovery.mjs --output tmp/pdf-panic-recovery-final --preview-provenance tmp/pdf-panic-preview-provenance.json
+```
+
+最终报告 `tmp/pdf-panic-recovery-final/report.json` SHA-256 **`1575e9d7c54634cdea40a6cbd1f326b3f9e03d41320ad3d87bc2207ef3c03c99`**；checker **`7589778b5a9b79319a45d37d48a558b57ffa086a7187084b7c3ed9077d575ddd`**。原manifest及此前两份checker不改写；来源仍为固定Mozilla revision的一个已发表论文和五份上游fixture。
+
+- **6份原件大小 / SHA / Git blob前后不变**。4份原本成功文件的严格JSON仅排除 `elapsed_ms` 后精确相同，原始正文逐字节相同；候选公共预览与严格结果也精确相同，不做空白或Unicode规范化
+- 另2份旧编码panic单列：`mixedfonts.pdf` / `noembed-sjis.pdf` 的旧CLI均退出101、空stdout与明确编码诊断；候选严格CLI均退出1、空stdout与明确panic错误；公共预览均退出0、空正文、真实字节数和同一错误。这里的通过是失败隔离 / 预览策略正确，**不是Rust文字支持**
+- 公共预览transport `scripts/pdf-preview-probe.rs` 调用真实 `rust_wps::inspect_for_preview`，没有复制产品实现。候选runner **`7ad0cd45ba1098eb104e1816d9f085f86653a3893bc032c843b3f8f4bd36af18`**，链接候选rlib **`0fa6c8b2d654e3a5cbfdc74e9e5c6ae0653f21448db82e0eb140f7c1c605584b`**。构建 / 链接命令、compiler及匹配serde_json依赖身份记录 `tmp/pdf-panic-preview-provenance.json`，SHA **`404c2812b0df06e24600b737937ef56adf3ae720a3b41996b12fa7022dcb3611`**，最终checker核对该记录及每个引用文件
+- 两份原件使用真实PDF.js 5.6.205 Node legacy adapter、真实helper与 `ui/main.ts` 恢复 / 查找原函数，**4次完整恢复**均清除 `text_error` 并正确建立区分大小写的字面搜索标记。DOM仅为运输替身，不是实际点击 / IPC / 页面 / WebView2验收
+- **12个不完整 / 拒绝控制**涵盖无正文失败保留空候选或先前文字、已完成原页的部分正文替换但保留错误、提前reject以及 **4个真实stopText取消**。在第一页加载中取消不接受该页正文、保留先前文字；在第二个运输页加载中取消保留已完成原页文字。均保留panic错误、隐藏停止控件，不声明完整成功；取消时已取得的页面清理也经过核对
+- Poppler与pypdf6.10.0重新独立读取。`noembed-sjis.pdf` 的PDF.js正文精确为 `あいうえお`，与Poppler除页分隔外一致；`mixedfonts.pdf` 相关Latin / 数字内容可读，但页脚顺序与Poppler不同；pypdf字体警告 / 误解码原样保留，不声称完整日文 / 中文映射或全文顺序相同
+- 另3份固定Apache POI DOC / DOCX原件的旧 / 新 `inspect` JSON仅排除耗时后精确相同，源与CLI散列不变。补充 `tmp/pdf-panic-doc-route-parity/report.json` SHA **`70808d4740b8b1e7b45120830149a1ae81cca8f06fe74e75533ae0ad3b3a33d4`**；只是旧路由无回归，不新增DOC排版 / 独立解码声明
+
+首次preview probe构建误选已有Rust1.88的serde_json缓存，明确E0514失败，日志 `tmp/pdf-panic-preview-build.log` 保留；之后仅匹配stable依赖重新链接，最终构建成功，没有改产品 / 依赖来适配测试。第一轮成功checker报告 `tmp/pdf-panic-recovery-first/` 与缺少取消控制时的证据保留，但不与最终计数叠加。最终脚本对已存在输出目录和用基线冒充候选均在提取前明确拒绝，最终报告散列不变；负向日志 `tmp/pdf-panic-recovery-final-{existing-output,reject-baseline}.log`，拒绝报告 `tmp/pdf-panic-recovery-final-reject-baseline/report.json`。较早的同类负向证据也保留。
+
+捕获仅限普通unwind，默认panic hook仍可写stderr，abort / OOM / 栈溢出 / payload析构二次panic / 挂起 / 资源膨胀不在保证内；后续 `read_current_pdf` 路径重开的会话身份仍未修复。不改变源文件、不加入OCR / 编辑 / 页面操作，也没有完成整个DOC / DOCX / PDF阶段。
+
 ## 本轮：PDF.js 重提取保留字面短语（2026-10-13）
 
 基于 `c4d792784930fb004ee869752b2501bf4957ba63`，移除每个 TextItem 后无条件补空格的拼接规则。显式空白 / `hasEOL` 保留，无空白边界只在有限水平 LTR 连续几何被证明时直连，否则保守分隔；不改文字查找、PDF.js 映射或内容顺序。原页末 `trimEnd()`、取消 / 失败与 1000 页 / 2 Mi UTF-16 代码单元上限保留。精确容差、来源、界限和复现命令见 [PDF_TEXT_ASSEMBLY.md](PDF_TEXT_ASSEMBLY.md)。

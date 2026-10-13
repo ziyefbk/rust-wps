@@ -1,5 +1,7 @@
 # dot 接手说明
 
+PDF 只在有界源校验之后捕获提取器普通 unwind：严格模式明确错误，预览模式为空正文 / 真实字节数 / panic-specific `text_error`。两份未改造 CMap 失败原件经公共预览 API 与实际 PDF.js 正文恢复核对；不要将其称为 Rust 成功提取或真实页面验收。原 13 项快照检查保留，新增 10 项策略 / 边界检查；详见 [PDF_PANIC_RECOVERY.md](PDF_PANIC_RECOVERY.md)。worker 硬故障、abort / 资源问题和后续路径重开的会话身份仍单独处理。
+
 PDF.js 正文拼接保留显式空白 / 空 EOL，仅对证明为同基线水平 LTR 的连续片段直连；其他几何保守分隔。真实论文四条字面短语和连续字体 / 几何反例已核对，原页末裁剪及 UTF-16 代码单元上限不变。详见 [PDF_TEXT_ASSEMBLY.md](PDF_TEXT_ASSEMBLY.md)；实际 main.ts 重提取 / 查找仅经 DOM 运输替身验证，不算浏览器 / 原生验收。
 
 PDF 核心使用已打开 reader 的 64 MiB 有界快照，签名、实际字节数及内存提取器共用同一缓冲区；不再在提取时重开路径。13 项确定性测试覆盖替换 / 删除路径、源增长 / 缩小、读取上限与严格 / 预览错误策略。实际原件及独立提取结果见 [PDF_SOURCE_SNAPSHOT.md](PDF_SOURCE_SNAPSHOT.md)；`read_current_pdf` 的后续路径重开仍是独立未解决的会话身份问题，不要扩大本轮保证。

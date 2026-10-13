@@ -1,8 +1,14 @@
 use crate::Inspection;
 use anyhow::{Context, Result, ensure};
-use std::{io::Read, time::Instant};
+use std::{
+    any::Any,
+    io::Read,
+    panic::{UnwindSafe, catch_unwind},
+    time::Instant,
+};
 
 const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PANIC_DETAIL_BYTES: usize = 512;
 
 // Accept an already-open reader, never a pathname: validation and parsing must
 // observe exactly the same bounded bytes even if the directory entry changes.
@@ -13,18 +19,41 @@ pub(super) fn inspect(
     allow_text_failure: bool,
     started: Instant,
 ) -> Result<Inspection> {
+    inspect_with_extractor(reader, allow_text_failure, started, |source| {
+        pdf_extract::extract_text_from_mem(source).map_err(Into::into)
+    })
+}
+
+fn inspect_with_extractor(
+    reader: impl Read,
+    allow_text_failure: bool,
+    started: Instant,
+    extract: impl FnOnce(&[u8]) -> Result<String> + UnwindSafe,
+) -> Result<Inspection> {
+    // Read/validation failures (including reader panics) are not extraction
+    // failures and must never turn into preview candidates.
     let source = read_source(reader)?;
     let bytes = source.len() as u64;
     let mut text_error = None;
-    let text = match pdf_extract::extract_text_from_mem(&source) {
-        Ok(text) => text,
-        Err(error) if allow_text_failure => {
+    // Only the extractor sees this boundary: immutable validated bytes and
+    // locally owned parser state. No shared mutable state is asserted safe.
+    // The normal panic hook may still report to stderr. This catches unwinds,
+    // not aborts, OOM, stack overflows, hangs, or excessive parser resources.
+    let text = match catch_unwind(|| extract(&source)) {
+        Ok(Ok(text)) => text,
+        Ok(Err(error)) if allow_text_failure => {
             text_error = Some(format!("{error}"));
             String::new()
         }
-        Err(error) => {
+        Ok(Err(error)) => {
             return Err(error)
                 .context("PDF parser failed (encrypted or malformed PDF may be unsupported)");
+        }
+        Err(payload) => {
+            let message = panic_message(payload.as_ref());
+            ensure!(allow_text_failure, "{message}");
+            text_error = Some(message);
+            String::new()
         }
     };
     let mut warnings = vec![
@@ -44,6 +73,28 @@ pub(super) fn inspect(
         warnings,
         text_error,
     })
+}
+
+fn panic_message(payload: &(dyn Any + Send)) -> String {
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+    let Some(message) = message else {
+        return "PDF text extractor panicked: non-string panic payload".into();
+    };
+    // Escape control/formatting characters and bound both work and output.
+    // Never invoke an unknown payload's Debug/Display implementation.
+    let mut detail = String::new();
+    for character in message.chars() {
+        let escaped = character.escape_debug().to_string();
+        if detail.len() + escaped.len() > MAX_PANIC_DETAIL_BYTES {
+            detail.push('…');
+            break;
+        }
+        detail.push_str(&escaped);
+    }
+    format!("PDF text extractor panicked: {detail}")
 }
 
 fn read_source(reader: impl Read) -> Result<Vec<u8>> {
@@ -68,7 +119,211 @@ mod tests {
     use std::{
         fs::{self, File, OpenOptions},
         io::{self, Cursor, Write},
+        sync::atomic::{AtomicBool, Ordering},
     };
+
+    fn check_panic_policy(extract: fn(&[u8]) -> Result<String>, detail: &str) {
+        let source = pdf("No partial text may escape");
+        let expected = format!("PDF text extractor panicked: {detail}");
+        let strict =
+            inspect_with_extractor(source.as_slice(), false, Instant::now(), extract).unwrap_err();
+        assert_eq!(strict.to_string(), expected);
+        let preview =
+            inspect_with_extractor(source.as_slice(), true, Instant::now(), extract).unwrap();
+        assert!(preview.text.is_empty());
+        assert_eq!(preview.bytes, source.len() as u64);
+        assert_eq!(preview.text_error.as_deref(), Some(expected.as_str()));
+        assert!(
+            preview
+                .warnings
+                .iter()
+                .any(|w| w.starts_with("No text extracted"))
+        );
+        let json = serde_json::to_value(preview).unwrap();
+        assert_eq!(json["text"], "");
+        assert_eq!(json["text_error"], expected);
+        assert_eq!(json["bytes"], source.len());
+    }
+
+    #[test]
+    fn borrowed_string_extractor_panic_has_explicit_strict_and_preview_policies() {
+        check_panic_policy(
+            |_| panic!("injected borrowed panic"),
+            "injected borrowed panic",
+        );
+    }
+
+    #[test]
+    fn owned_string_extractor_panic_has_explicit_strict_and_preview_policies() {
+        check_panic_policy(
+            |_| std::panic::panic_any(String::from("injected owned panic")),
+            "injected owned panic",
+        );
+    }
+
+    #[test]
+    fn nonstring_extractor_panic_uses_generic_diagnostic() {
+        check_panic_policy(
+            |_| std::panic::panic_any(123_u32),
+            "non-string panic payload",
+        );
+    }
+
+    #[test]
+    fn panic_diagnostics_escape_controls_and_bound_utf8_detail() {
+        let prefix = "PDF text extractor panicked: ";
+        let raw = "a\n\r\t\0\u{1b}\u{202e}\u{2066}b";
+        let diagnostic = panic_message(&raw);
+        assert_eq!(
+            diagnostic,
+            format!("{prefix}a\\n\\r\\t\\0\\u{{1b}}\\u{{202e}}\\u{{2066}}b")
+        );
+        assert!(!diagnostic.chars().any(char::is_control));
+        for raw in ["x".repeat(10_000), "中".repeat(10_000), "\n".repeat(10_000)] {
+            let diagnostic = panic_message(&raw);
+            assert!(diagnostic.starts_with(prefix));
+            assert!(diagnostic.ends_with('…'));
+            assert!(diagnostic.len() <= prefix.len() + MAX_PANIC_DETAIL_BYTES + '…'.len_utf8());
+        }
+        assert_eq!(panic_message(&""), prefix);
+        assert_eq!(
+            panic_message(&"x".repeat(MAX_PANIC_DETAIL_BYTES)),
+            format!("{prefix}{}", "x".repeat(MAX_PANIC_DETAIL_BYTES))
+        );
+    }
+
+    #[test]
+    fn callable_seam_preserves_success_blank_text_and_returned_errors() {
+        let source = pdf("Validated source");
+        for allow_text_failure in [false, true] {
+            for text in ["exact \n text\u{301}", "", " \n "] {
+                let report = inspect_with_extractor(
+                    source.as_slice(),
+                    allow_text_failure,
+                    Instant::now(),
+                    |validated| {
+                        assert_eq!(validated, source);
+                        Ok(text.into())
+                    },
+                )
+                .unwrap();
+                assert_eq!(report.text, text);
+                assert!(report.text_error.is_none());
+                assert!(
+                    serde_json::to_value(report)
+                        .unwrap()
+                        .get("text_error")
+                        .is_none()
+                );
+            }
+            let result = inspect_with_extractor(
+                source.as_slice(),
+                allow_text_failure,
+                Instant::now(),
+                |_| Err(anyhow::anyhow!("injected returned error")),
+            );
+            if allow_text_failure {
+                let report = result.unwrap();
+                assert!(report.text.is_empty());
+                assert_eq!(
+                    report.text_error.as_deref(),
+                    Some("injected returned error")
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(
+                    error.to_string(),
+                    "PDF parser failed (encrypted or malformed PDF may be unsupported)"
+                );
+                assert_eq!(error.root_cause().to_string(), "injected returned error");
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_signature_never_calls_extractor_in_either_policy() {
+        for allow_text_failure in [false, true] {
+            let called = AtomicBool::new(false);
+            let error = inspect_with_extractor(
+                b"not PDF".as_slice(),
+                allow_text_failure,
+                Instant::now(),
+                |_| {
+                    called.store(true, Ordering::Relaxed);
+                    Ok("must not be called".into())
+                },
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("File signature"));
+            assert!(!called.load(Ordering::Relaxed));
+        }
+    }
+
+    #[test]
+    fn oversized_source_never_calls_extractor_in_either_policy() {
+        for allow_text_failure in [false, true] {
+            let called = AtomicBool::new(false);
+            let error = inspect_with_extractor(
+                CountedInfiniteReader { bytes_read: 0 },
+                allow_text_failure,
+                Instant::now(),
+                |_| {
+                    called.store(true, Ordering::Relaxed);
+                    Ok("must not be called".into())
+                },
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("64 MiB"));
+            assert!(!called.load(Ordering::Relaxed));
+        }
+    }
+
+    #[test]
+    fn read_error_never_calls_extractor_in_either_policy() {
+        for allow_text_failure in [false, true] {
+            let called = AtomicBool::new(false);
+            let reader = Cursor::new(pdf("Valid prefix")).chain(FailingReader);
+            let error = inspect_with_extractor(reader, allow_text_failure, Instant::now(), |_| {
+                called.store(true, Ordering::Relaxed);
+                Ok("must not be called".into())
+            })
+            .unwrap_err();
+            assert_eq!(error.to_string(), "injected PDF read failure");
+            assert!(!called.load(Ordering::Relaxed));
+        }
+    }
+
+    #[test]
+    fn panicking_reader_is_not_mislabeled_as_an_extractor_failure() {
+        struct PanickingReader;
+        impl Read for PanickingReader {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                panic!("injected reader panic");
+            }
+        }
+        for allow_text_failure in [false, true] {
+            let called = AtomicBool::new(false);
+            let panic = catch_unwind(|| {
+                inspect_with_extractor(PanickingReader, allow_text_failure, Instant::now(), |_| {
+                    called.store(true, Ordering::Relaxed);
+                    Ok("must not be called".into())
+                })
+            })
+            .unwrap_err();
+            assert_eq!(panic.downcast_ref::<&str>(), Some(&"injected reader panic"));
+            assert!(!called.load(Ordering::Relaxed));
+        }
+    }
+
+    #[test]
+    fn normal_extraction_after_a_caught_panic_has_no_stale_state() {
+        check_panic_policy(|_| panic!("failed extraction"), "failed extraction");
+        let source = pdf("Fresh successful extraction");
+        let report = inspect(source.as_slice(), true, Instant::now()).unwrap();
+        assert!(report.text.contains("Fresh successful extraction"));
+        assert!(!report.text.contains("No partial text may escape"));
+        assert!(report.text_error.is_none());
+    }
 
     // Independent hand-assembled PDF, with exact xref offsets and no parser API.
     fn pdf(text: &str) -> Vec<u8> {
