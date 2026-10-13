@@ -8,30 +8,12 @@ import {Decoration, DecorationSet} from '@tiptap/pm/view';
 import {parseParagraphSpacePoints} from './word-paragraph-spacing';
 import {inspectWordImageMedia, supportedImagePixelDimensions} from './word-image-media';
 
-export const pageGeometryFields = ['widthTwips', 'heightTwips', 'marginTopTwips', 'marginRightTwips', 'marginBottomTwips', 'marginLeftTwips'] as const;
-export const pageMarginFields = ['marginTopTwips', 'marginRightTwips', 'marginBottomTwips', 'marginLeftTwips'] as const;
-export type PageGeometry = Record<typeof pageGeometryFields[number], number>;
-export type PagePreset = 'A4' | 'Letter' | 'A5';
-export type PageOrientation = 'portrait' | 'landscape';
-export const pagePresets: Record<PagePreset, readonly [number, number]> = {A4: [11906, 16838], Letter: [12240, 15840], A5: [8391, 11906]};
+import {pageGeometryFields, pagePresets, isPageGeometry, type PageGeometry, type PagePreset, type PageOrientation} from './word-page-geometry-model';
+export * from './word-page-geometry-model';
+
 export const pageGeometryError = '页面只支持 A4、Letter、A5 横向或纵向（原始尺寸容差 2 twip）；四边页边距须为 0–216 pt、0.05 pt 递增，正文宽高至少 72 pt。';
 const fitError = '图片、固定列宽或定位表格超出页面正文区域；定位自动表格按 450 pt 计算，可先调整图片、设置合适的固定列宽或清除表格位置。修改未应用。';
 const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
-export function pagePreset(value: Pick<PageGeometry, 'widthTwips' | 'heightTwips'>): PagePreset | null {
-  for (const [name, [width, height]] of Object.entries(pagePresets)) {
-    if (Math.abs(value.widthTwips - width) <= 2 && Math.abs(value.heightTwips - height) <= 2
-      || Math.abs(value.widthTwips - height) <= 2 && Math.abs(value.heightTwips - width) <= 2) return name as PagePreset;
-  }
-  return null;
-}
-export function isPageGeometry(value: unknown): value is PageGeometry {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const page = value as PageGeometry;
-  return Object.keys(page).length === pageGeometryFields.length && pageGeometryFields.every(field => own(page, field) && Number.isInteger(page[field]))
-    && pagePreset(page) !== null && pageMarginFields.every(field => page[field] >= 0 && page[field] <= 4320)
-    && page.widthTwips - page.marginLeftTwips - page.marginRightTwips >= 1440
-    && page.heightTwips - page.marginTopTwips - page.marginBottomTwips >= 1440;
-}
 export function parsePageMarginPoints(value: string): number | null {
   const parsed = parseParagraphSpacePoints(value);
   return parsed !== null && parsed <= 4320 ? parsed : null;

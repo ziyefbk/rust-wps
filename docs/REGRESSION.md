@@ -1,5 +1,57 @@
 # 当前跨格式回归记录
 
+## 本轮：显式页面内的正文缩进外伸（2026-10-13）
+
+基于 `5f812c2612d1d1de1363b61786c3e435d0163616`，新增仅限已证明显式页面的顶层正文/标题段落负左右缩进及页边距内悬挂。两条左边缘、共同右边缘和各自行宽分别校验；不允许伸出纸张，不钳制数值或自动增加页面。缺省页面、单元格、列表与单图的旧路径维持保守范围；源负值的活动继承/覆盖来源继续可见，编号层级不顺带放行。范围和公式见 [段落页边距外伸](PARAGRAPH_OVERHANG.md)。
+
+### 最终门禁与冻结身份
+
+- Rust **1.99 / 1.88 各 575 项通过**，即原 554 + 21 个新模型/源/草稿/导出/反篡改检查；不跨工具链累计。日志 `tmp/paragraph-overhang-core-{stable,msrv}-final.log`
+- **35 项 Tauri-free 实际生产后端检查在两工具链各通过**；原 `scripts/pdf-rotation-probe.rs` 未改，重新链接本轮核心。日志 `tmp/paragraph-overhang-backend-{build,tests}-{stable,msrv}-final.log`
+- **524 项无浏览器前端检查通过**，即原 509 + 15 个新检查。实际本机已安装的 `node_modules/.bin/playwright` 完整 argv、`USERPROFILE` 和退出状态在 `tmp/paragraph-overhang-ui-local-all-final-gates.json`，SHA `0c4eec271744c8e8acd24067c723492cefb3dda50e8e609c909f4fd776b13bbf`；日志 `tmp/paragraph-overhang-ui-aggregate-local-all-final.log`
+- 新前端检查使用实际 ProseMirror 事务、历史、DOM 解析/序列化与应用控件，覆盖两侧负值、首行/后续行边界、混合正文/单元格原子拒绝、缩小/清除页面、字段重置、列表/表格移动、标题转换、拆分合并、草稿与不可变打印参数。七份实际事务快照经冻结后交给独立文件消费者。不是浏览器/原生输入或布局验收
+- TypeScript/Vite build 通过，保留旧 bundle 大小提示；日志 `tmp/paragraph-overhang-ui-build.log`。核心两工具链 build、fmt、严格 Clippy 的限定排除版本通过；原始 Clippy 仍各仅旧 XLS `chunks_exact_to_as_chunks` / 旧 PPT `uninlined_format_args`。完整命令/状态/日志身份在 `tmp/paragraph-overhang-gates.json`，SHA `aceb3328c7497339ab5f4ca52b2cf2af163d66a989d2b240753935058d870ef1`
+- 继续使用 `../toolchains/{cargo,rustup}`、`CARGO_INCREMENTAL=0`；stable `target`，1.88 `tmp/msrv-target`，无 RUSTFLAGS / profile 覆盖、依赖/锁文件/vendor 修改或清理。页面纯校验函数提取以避免 UI 循环引用，原页面公开导出与校验规则不变
+- **524 个未修改的 tracked 源码/vendor/依赖/旧脚本/测试文件逐字节等于基线**，与上述 524 前端检查恰巧同数，不能混为一组。清单 `tmp/paragraph-overhang-product-identity.json` SHA `34b59a1cd914836a975201307e1a0fe3fb7da718647941dbe0559191d5be0932`；八个本轮产品文件的组合指纹 `cc5e5d147985b51f3853160b0998cb7916e6d693b74a3989f1e1b5f2d89193db`
+
+冻结候选 CLI `tmp/paragraph-overhang-second-cli` SHA **`dba98e9ba0514c2c5d33ba05d82b4161dce3729ffc921df9c3d0e76ab94210ac`**，与最后 stable build 的可执行文件一致。当前发布基线 CLI `tmp/pdf-rotation-chain-final-cli` SHA `e4c874a13af3317d794e650525e0ac04d535aa75318ca1c32386ccc124fe7e88`，两者在独立检查前后不变。
+
+### 真实原件与独立消费
+
+最终完整命令：
+
+```sh
+python3 scripts/check-word-paragraph-overhang.py --cli tmp/paragraph-overhang-second-cli --baseline tmp/pdf-rotation-chain-final-cli --editor-models tmp/paragraph-overhang-independent-preflight/editor-models-candidate-second --render
+```
+
+实际 Python 路径、LibreOffice launcher/底层程序、版本、每文件独立 profile、字体/渲染命令和输入身份均在报告中。新 checker SHA **`28bc34d48f48575867bcebc7105261fae14dc3933f0080c6a99bf6325ea15f12`**；报告 `tmp/paragraph-overhang-independent/run-3equcs4b/report.json` SHA **`ceea4a2b6afbc3cf330ea5b373c7e4d2f6e4a71d02283e0c4143e90479ff0b6e`**。
+
+- **23 个支持源 / 39 个拒绝源**，含一个未改造 LibreOffice/core `indents.docx`；其 11,553 字节与 SHA `d62a3e3162a737cbe45e21fe544f5dc845e8cdc621bd8a2e3b7e8dcfed52386d` 保持。旧版本只有缩进阻断，新版保留五段文字与有效缩进；上游来源/revision/许可说明和历史 manifest 的旧拒绝预期均记录，不分发原始二进制
+- **31 个非法模型 / 8 个可信包篡改**拒绝，包括有符号缩进/XML/页面/标题类型与同步伪造哈希。**5 份编辑结果 + 7 份实际前端快照**经独立 python-docx/XML 检查；**55 次完整可信模型重开**通过；**128 次已有目标拒绝**保留原字节（35 个导出、62 个源文件、31 个非法模型目标），另 31 个不存在目标继续不存在。标记为合成的边界件、独立参考和同源另存件不算更多真实原件
+- **62 份全新 PDF / 62 个互不复用的 LibreOffice profile**。**31/31 对横纵坐标差为 0.0 pt，且 31/31 对整页光栅完全相同**；覆盖原件/原件编辑、负左右值、首行与后续行换行、边界、右/居中对齐、继承、标题、实际撤销/重做/粘贴。几何相等与像素相等分开计数；查看过原件、受控多行悬挂等实际图像，不是空白图像通过
+- 原件的五个实际起始 x 为 70.95、14.25、42.60、14.25、99.30 pt；相对 twip 段落起点约有该消费者的 +0.10 pt 字形偏移，源/输出仍严格相等。行框边界与字形端点不混为一谈；不能据此声称任意长词或字体字形都不会溢出
+- 实际 production `worker::run` 子进程另验证原件导入、已保存作者包打开与越界源拒绝；完整模型与冻结 CLI 精确一致，四个保护输入/程序及派生负向源前后不变。报告 `tmp/paragraph-overhang-worker-evidence/report.json` SHA `41be16113bb58b40757b7ea247dc27aed90e8607e694aada3b67bf0d984802a7`，probe SHA `eefdd0ad833cece0e4a12048a6f17ff93aff1c728037f1d3e166493c8b118900`。它证明实际进程运输，不能替代 Tauri 薄适配器、系统对话框或原生 IPC
+
+### 历史契约与独立审查
+
+新 checker 的 10 个非负 V1/V2 整包字节控制和 14 个精确旧响应对照之外，再独立重放完整历史语料：
+
+- **302 个哈希不同的既有完整 DOCX 金样**分别通过当前发布基线与候选 CLI 重新导出，均逐字节等于历史原文件；每个 CLI 各 **604 次完整可信重开与 604 次原件/生成件禁止覆盖**通过
+- **1,520 条既有读操作**：505 audit、771 import、244 read-docx-model。**1,513 条 stdout/stderr/返回码逐字节一致**；其余 **7 条仅为本轮有意支持扩展**：`reject-left-negative`（−1 左）、`reject-right-negative`（−1 右）和真实 `indents.docx` 各 audit+import，`reject-first-outside`（左 100 / hanging 101）仅 import
+- 四份变化源的完整 XML、有效缩进、页面物理边界和完整新模型由独立逻辑验证。**无新增拒绝，此历史语料无仅诊断变化**。所有源、302 份保留模型、786 个额外历史模型输入、旧报告以及 **325 份旧 PDF 身份**保持；这些 PDF 只验证保留，不计为新渲染
+- 原始严格差异报告保留 `REVIEW_REQUIRED`，不回写成完全相同：`tmp/paragraph-overhang-legacy-replay/run-bi5mm14r/report.json` SHA `33b88cf3831f55a9ff911b5cc62b5add80db88261a065e40339817c168048e22`。独立分类验收 `acceptance-report.json` SHA **`3631fac862fa364aaae60d443c4ef87c53757e72e9976b96a2797f6d9ab61d69`**
+- 单独只读 reviewer 通过 **283 项公开 CLI 检查**（37 个源案例与 246 个独立边界/随机模型），另核对全部产品/保护文件身份、历史七项变化、冻结前端快照及消费者报告。最终报告 `tmp/docx-overhang-reviewer/run-final/report.json` SHA `588e93c2987fcfb3d46ab6c8907abf8707369a1a3f2896259d18349254baa29b`；该 harness 不是更多真实文档或浏览器验收
+
+### 失败、修正及未验证范围
+
+首次 `npx` 包装器试图访问 registry，被策略阻断，未执行测试；失败日志 `tmp/paragraph-overhang-ui-aggregate.log` 保留，没有重试被拒绝网络。随后只执行已经安装的本机 Playwright；首轮旧 grep 只选到原 509 项，保留该基线结果，再显式加入新规格完成 524 项。前端测试 DOM 替身最初缺少 CSS `cssText` 写回，补齐替身后才验证真实序列化/解析标记相等，未据此改动产品代码。
+
+独立消费者前两次校准错误把段落起点当作字形起点，过紧的 source-only 端点断言失败；原证据保留。预最终 `run-z0ttyvj4` 的实际前端标题参考还带 python-docx 默认蓝色，而受测模型默认黑色，纵横坐标仍一致、像素不一致；查看图像后给独立参考明确设置模型要求的黑色，并用冻结 checker 全部重新生成上述 62 份最终 PDF。没有放宽源/输出坐标或整页像素比较来隐藏产品漂移。全部旧报告身份与最终计数另汇总在 `tmp/paragraph-overhang-independent-preflight/final-result.json`，SHA `e2f3693c30222eaf298d05202eaf39619eebebe03ca0c02f769bd5fc2fbafce9`。每次 checker 使用新的 `run-*` 目录；允许已有父目录，不重用或覆盖既有证据目录。
+
+已知 Chromium EPERM、云 localhost 隔离、Linux GLib/WebKit 缺失与离线 Windows 路线没有重试。实际 WebView2、鼠标/键盘/输入法、系统对话框、Windows Job 与原生打印均未在本轮验收；没有借用旧 vendor 或原生计数。LibreOffice 单消费者精确比较不是 Word/WPS、一般复杂排版或完整 DOC/DOCX/PDF 阶段完成声明。
+
+
+
 ## 本轮：PDF 纯旋转修订链重开（2026-10-13）
 
 基于 `a1f35cdcd1e54d7b1b97d736d50e57c26348824c`，保存后的旋转副本可显式重开后继续另存。仅接受从严格基础文件开始、逐步证明为单个叶页面有效方向恰好 +90° 的修订链；最多 16 次，且累计工作配额可能更早阻止追加。不支持一般增量修改，不依赖 Producer / 应用标记，不通过删除安全检查扩大兼容。实现 / 冷重开预算和精确字节 framing 见 [PDF_PAGE_ROTATION.md](PDF_PAGE_ROTATION.md)。桌面 API、源快照、会话 / 画布身份、源会话保持与不覆盖发布路径没有改动。

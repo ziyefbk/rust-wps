@@ -287,7 +287,7 @@ fn indent(node: &Xml) -> Result<ParagraphIndent> {
     );
     let number = |name| {
         node.attr(name)?
-            .map(|v| integer(v, false, 31680))
+            .map(|v| integer(v, matches!(name, "left" | "right"), 31680))
             .transpose()
     };
     Ok(ParagraphIndent {
@@ -308,12 +308,16 @@ struct Properties {
     style: Option<String>,
     custom_tabs: bool,
     indent_declared: bool,
+    // Keep negative source declarations visible even when overridden. Their
+    // newly supported parsing must not relax image, table or list contracts.
+    negative_sides_declared: bool,
 }
 impl Properties {
     fn overlay(&mut self, other: &Self) {
         self.indent.overlay(&other.indent);
         self.custom_tabs |= other.custom_tabs;
         self.indent_declared |= other.indent_declared;
+        self.negative_sides_declared |= other.negative_sides_declared;
         if other.numbering.is_some() {
             self.numbering = other.numbering;
         }
@@ -342,6 +346,11 @@ fn properties(node: Option<&Xml>) -> Result<Properties> {
     if let Some(ind) = node.one("ind")? {
         props.indent_declared = true;
         props.indent = indent(ind)?;
+        props.negative_sides_declared = ["left", "right"].into_iter().any(|name| {
+            ind.attrs
+                .get(&format!("w:{name}"))
+                .is_some_and(|(value, _)| value.starts_with('-'))
+        });
     }
     if let Some(style) = node.one("pStyle")? {
         props.style = Some(value(style)?.to_owned());
@@ -825,7 +834,10 @@ fn numbering(data: Option<&Xml>, used: &BTreeSet<(u32, u8)>) -> Result<()> {
             // Physical numbering indents keep the prior list-normalization
             // contract. Logical, character, RTL, and malformed declarations
             // are not ordinary supported numbering geometry.
-            properties(source.one("pPr")?)?;
+            ensure!(
+                !properties(source.one("pPr")?)?.negative_sides_declared,
+                "Negative numbering indentation is unsupported"
+            );
         }
     }
     Ok(())
@@ -870,6 +882,7 @@ pub(crate) fn analyze(
     styles: &[u8],
     numbers: Option<&[u8]>,
     config: Option<&[u8]>,
+    page: Option<&crate::document::PageGeometry>,
 ) -> Result<ParagraphIndentAudit> {
     let margin_proofs = crate::table_widths::paragraph_margin_proofs(main, styles)?;
     let main = xml(main)?;
@@ -891,6 +904,7 @@ pub(crate) fn analyze(
         table_depth: usize,
         used: &mut BTreeSet<(u32, u8)>,
         audit: &mut ParagraphIndentAudit,
+        body_page: Option<&crate::document::PageGeometry>,
     ) -> Result<()> {
         match node.tag.as_str() {
             "p" => {
@@ -909,6 +923,33 @@ pub(crate) fn analyze(
                     effective.overlay(&sheet.style_properties(style)?);
                 }
                 effective.overlay(&own);
+                if effective.negative_sides_declared
+                    || (effective.indent.left.unwrap_or(0)
+                        + effective.indent.first_line.unwrap_or(0)
+                        < 0
+                        && node.all("drawing").is_empty())
+                {
+                    let page = body_page.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Negative paragraph indentation requires a proved top-level body page"
+                        )
+                    })?;
+                    ensure!(
+                        table_depth == 0
+                            && effective.numbering.is_none_or(|(id, _)| id == 0)
+                            && node.all("drawing").is_empty(),
+                        "Negative paragraph indentation is unsupported in lists, tables or images"
+                    );
+                    crate::document::validate_paragraph_indent_frame(
+                        [
+                            effective.indent.left.unwrap_or(0) as i64,
+                            effective.indent.right.unwrap_or(0) as i64,
+                            effective.indent.first_line.unwrap_or(0) as i64,
+                        ],
+                        page.width_twips - page.margin_left_twips - page.margin_right_twips,
+                        Some((page.margin_left_twips, page.margin_right_twips)),
+                    )?;
+                }
                 if let Some(reference) = effective.numbering.filter(|(id, _)| *id != 0) {
                     used.insert(reference);
                     ensure!(
@@ -977,7 +1018,15 @@ pub(crate) fn analyze(
                 }
                 let before = audit.paragraphs.len();
                 for child in &node.children {
-                    walk(child, sheet, Some(&layer), table_depth + 1, used, audit)?;
+                    walk(
+                        child,
+                        sheet,
+                        Some(&layer),
+                        table_depth + 1,
+                        used,
+                        audit,
+                        None,
+                    )?;
                 }
                 if audit.paragraphs.len() > before {
                     ensure!(
@@ -997,11 +1046,19 @@ pub(crate) fn analyze(
             _ => {}
         }
         for child in &node.children {
-            walk(child, sheet, table_layer, table_depth, used, audit)?;
+            walk(
+                child,
+                sheet,
+                table_layer,
+                table_depth,
+                used,
+                audit,
+                if node.tag == "body" { body_page } else { None },
+            )?;
         }
         Ok(())
     }
-    walk(body, &sheet, None, 0, &mut used, &mut audit)?;
+    walk(body, &sheet, None, 0, &mut used, &mut audit, page)?;
     ensure!(
         sheet.margin_proofs.borrow_mut().next().is_none(),
         "Source table margin proof was not consumed"

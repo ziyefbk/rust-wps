@@ -811,6 +811,27 @@ pub fn has_paragraph_indents(node: &Node) -> bool {
         || node.content.iter().any(has_paragraph_indents)
 }
 
+/// Check both line starts and their common right edge. Only an explicitly
+/// proved physical page permits a body paragraph to extend into its margins.
+/// Cells and absent-page legacy models pass no margins and retain the original
+/// nonnegative side-indent and container-bound hanging contract.
+pub(crate) fn validate_paragraph_indent_frame(
+    [left, right, first]: [i64; 3],
+    width: u64,
+    margins: Option<(u64, u64)>,
+) -> Result<()> {
+    let (margin_left, margin_right) = margins.unwrap_or((0, 0));
+    ensure!(
+        left >= -(margin_left as i64)
+            && right >= -(margin_right as i64)
+            && left + first >= -(margin_left as i64)
+            && left + right < width as i64
+            && left + right + first < width as i64,
+        "Paragraph indentation does not fit its body or table-cell content width"
+    );
+    Ok(())
+}
+
 /// New indentation is measured against an actual supported container, never
 /// against the root page for a nested/list paragraph. Existing absent models
 /// bypass this path entirely, preserving their historical contracts.
@@ -822,7 +843,7 @@ pub fn validate_paragraph_indents(doc: &Node) -> Result<()> {
     let body_width = page.as_ref().map_or(9026, |p| {
         p.width_twips - p.margin_left_twips - p.margin_right_twips
     });
-    fn paragraph(node: &Node, width: u64) -> Result<()> {
+    fn paragraph(node: &Node, width: u64, margins: Option<(u64, u64)>) -> Result<()> {
         ensure!(
             node.content
                 .iter()
@@ -835,7 +856,11 @@ pub fn validate_paragraph_indents(doc: &Node) -> Result<()> {
                 let value = value
                     .as_i64()
                     .context("Paragraph indent must be integer twips; omit for default")?;
-                let min = if index == 2 { -31680 } else { 0 };
+                let min = if index == 2 || margins.is_some() {
+                    -31680
+                } else {
+                    0
+                };
                 ensure!(
                     (min..=31680).contains(&value),
                     "Paragraph indent exceeds supported twip range"
@@ -843,19 +868,19 @@ pub fn validate_paragraph_indents(doc: &Node) -> Result<()> {
                 values[index] = value;
             }
         }
-        let [left, right, first] = values;
-        ensure!(
-            left + first >= 0 && left + right < width as i64 && left + right + first < width as i64,
-            "Paragraph indentation does not fit its body or table-cell content width"
-        );
-        Ok(())
+        validate_paragraph_indent_frame(values, width, margins)
     }
     for block in &doc.content {
         if !has_paragraph_indents(block) {
             continue;
         }
         match block.kind.as_str() {
-            "paragraph" | "heading" => paragraph(block, body_width)?,
+            "paragraph" | "heading" => paragraph(
+                block,
+                body_width,
+                page.as_ref()
+                    .map(|p| (p.margin_left_twips, p.margin_right_twips)),
+            )?,
             "table" => {
                 fn contains_table(node: &Node) -> bool {
                     node.kind == "table" || node.content.iter().any(contains_table)
@@ -885,7 +910,7 @@ pub fn validate_paragraph_indents(doc: &Node) -> Result<()> {
                                 *width > horizontal,
                                 "Indented table cell has no content width"
                             );
-                            paragraph(child, width - horizontal)?;
+                            paragraph(child, width - horizontal, None)?;
                         }
                     }
                 }
@@ -1388,7 +1413,7 @@ impl Writer {
         }
         let mut indentation = String::new();
         for (key, attribute) in [("indentLeftTwips", "left"), ("indentRightTwips", "right")] {
-            if let Some(value) = node.attrs.get(key).and_then(Value::as_u64) {
+            if let Some(value) = node.attrs.get(key).and_then(Value::as_i64) {
                 indentation.push_str(&format!(" w:{attribute}=\"{value}\""));
             }
         }

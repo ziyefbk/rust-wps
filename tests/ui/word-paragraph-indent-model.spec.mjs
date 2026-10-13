@@ -34,10 +34,11 @@ const stateFor = (document, selection = TextSelection.atStart(document), errors 
 const all = document => stateFor(document, new AllSelection(document));
 const apply = (state, patch) => state.apply(closeHistory(indent.createParagraphIndentTransaction(state, patch)));
 
-test('exact signed point and CSS parsers reject coercion, rounding, negatives on side fields and invalid units', () => {
+test('exact signed point and CSS parsers reject coercion, rounding and invalid units', () => {
   for (const [input, expected] of [['0', 0], ['-0', 0], ['.05', 1], ['-.05', -1], [' -18.05 ', -361], ['1584', 31680], ['-1584', -31680]]) expect(indent.parseParagraphIndentPoints('firstLineIndentTwips', input)).toBe(expected);
   for (const field of indent.paragraphIndentFields) for (const input of ['', '+1', '1e2', '.001', '1584.05', 'NaN', 'Infinity', '1pt', '0.05000000000000001', '9'.repeat(65)]) expect(indent.parseParagraphIndentPoints(field, input)).toBeNull();
-  for (const field of ['indentLeftTwips', 'indentRightTwips']) for (const input of ['-1', '-0']) expect(indent.parseParagraphIndentPoints(field, input)).toBeNull();
+  // Signed parsing is context-free; the unchanged no-page transaction tests below reject side overhang.
+  for (const field of ['indentLeftTwips', 'indentRightTwips']) for (const [input, value] of [['-1', -20], ['-0', 0]]) expect(indent.parseParagraphIndentPoints(field, input)).toBe(value);
   expect(indent.parseParagraphIndentCss('firstLineIndentTwips', '-12px')).toBe(-180);
   expect(indent.parseParagraphIndentCss('indentLeftTwips', '0.05pt')).toBe(1);
   for (const input of ['1em', 'auto', 'calc(1pt)', '0.01px', '1%']) expect(indent.parseParagraphIndentCss('firstLineIndentTwips', input)).toBeNull();
@@ -118,7 +119,7 @@ test('DOM declarations preserve exact pt margins signed hanging and spacing simu
   const element = (style, data = {}) => ({style, getAttribute: name => data[name] ?? null});
   expect(definitions.firstLineIndentTwips.parseHTML(element({textIndent: '-12px'}))).toBe(-180);
   expect(definitions.firstLineIndentTwips.parseHTML(element({textIndent: '999pt'}, {'data-first-line-indent-twips': '-1'}))).toBe(-1);
-  expect(definitions.indentLeftTwips.parseHTML(element({marginLeft: '-1pt'}))).toBe('invalid-paragraph-indent');
+  expect(definitions.indentLeftTwips.parseHTML(element({marginLeft: '-1pt'}))).toBe(-20);
 });
 
 test('caret and empty-paragraph edits preserve text selection inline attrs marks and stored marks', () => {

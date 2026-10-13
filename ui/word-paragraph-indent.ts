@@ -11,13 +11,13 @@ export * from './word-paragraph-indent-model';
 export function parseParagraphIndentPoints(field: ParagraphIndentField, value: string): number | null {
   const text = value.trim(), negative = text.startsWith('-');
   const absolute = parseParagraphSpacePoints(negative ? text.slice(1) : text);
-  if (absolute === null || negative && field !== 'firstLineIndentTwips') return null;
+  if (absolute === null) return null;
   return negative && absolute ? -absolute : absolute;
 }
 export function parseParagraphIndentCss(field: ParagraphIndentField, value: string): number | null {
   const text = value.trim(), negative = text.startsWith('-');
   const absolute = parseParagraphSpaceCss(negative ? text.slice(1) : text);
-  return absolute === null || negative && field !== 'firstLineIndentTwips' ? null : negative && absolute ? -absolute : absolute;
+  return absolute === null ? null : negative && absolute ? -absolute : absolute;
 }
 const dataNames = {indentLeftTwips: 'data-indent-left-twips', indentRightTwips: 'data-indent-right-twips', firstLineIndentTwips: 'data-first-line-indent-twips'};
 const properties = {indentLeftTwips: 'margin-left', indentRightTwips: 'margin-right', firstLineIndentTwips: 'text-indent'};

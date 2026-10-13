@@ -601,19 +601,6 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         } else {
             spacing_parts.get(rel_types::SETTINGS).map(Vec::as_slice)
         };
-        match crate::paragraph_indentation::analyze(
-            normalized_main.as_deref().expect("main read"),
-            styles,
-            spacing_parts.get(rel_types::NUMBERING).map(Vec::as_slice),
-            table_settings,
-        ) {
-            Ok(audit) => paragraph_indents = audit,
-            Err(_) => {
-                report
-                    .risks
-                    .insert(crate::paragraph_indentation::PARAGRAPH_INDENT_RISK.into());
-            }
-        }
         let table_audit = crate::table_widths::analyze(
             normalized_main.as_deref().expect("main read"),
             styles,
@@ -668,6 +655,20 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
                 report
                     .risks
                     .insert(crate::page_geometry::PAGE_GEOMETRY_RISK.into());
+            }
+        }
+        match crate::paragraph_indentation::analyze(
+            normalized_main.as_deref().expect("main read"),
+            styles,
+            spacing_parts.get(rel_types::NUMBERING).map(Vec::as_slice),
+            table_settings,
+            page.as_ref(),
+        ) {
+            Ok(audit) => paragraph_indents = audit,
+            Err(_) => {
+                report
+                    .risks
+                    .insert(crate::paragraph_indentation::PARAGRAPH_INDENT_RISK.into());
             }
         }
         if has_hidden_text_declaration(styles)? {
