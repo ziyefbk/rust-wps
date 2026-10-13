@@ -29,6 +29,18 @@
 
 `tests/ui/word-block-type-upstream.spec.mjs` 的 8 项保留为未包装依赖的特征对照：原始回调仍会清空七字段，但这些回调已不再作为本应用的标题 / 正文入口注册。未经包装的 `setHeading` / `setParagraph` 等程序命令仍保留上游行为，本轮不宣称全部命令已替换。
 
+## 已存在空标题的 Backspace
+
+在输入规则可撤回窗口已经结束、光标位于真正空标题时，Backspace 的“退回正文”分支现在复用应用候选事务，保留七个对齐 / 间距 / 缩进字段和合法 `emptyParagraphFont`，包括显式零、粗斜体 false。类型转换不插入伪文字、不把空行字体变成待输入 marks；随后首次输入仍原子清除空行覆盖。一次转换可独立撤销 / 重做，前后输入历史不合并。
+
+范围与上游首文字块判断一致：文档的首文字位置，或仅含该段的隔离容器（例如一个单段单元格）。仅处理折叠文字光标和 `content.size === 0` 的标题；软换行、其他行内节点、非首段合并、列表解除、范围 / 节点 / 多格选区仍交给原有插件。保留 Backspace / Mod-Backspace / Shift-Backspace 和上游 macOS / iOS 别名；源代码按相同平台规则注册，当前自动回调验收主要为 Windows / Linux 键位，并非真实 macOS 按键验收。`undoInputRule` 仍优先；可撤回时恢复字面标题标记，窗口已结束才转换空标题。匹配但锁定 / 只读 / 组合输入或校验失败时消费该分支，不能落回清空属性的 `clearNodes`。
+
+另一个上游 `clearDocument` 钩子在整文档文字删除后重置为默认空正文；本轮保留并用完整插件链单独记录该行为，没有全局替换 `clearNodes`。未包装的程序命令与不在上述范围内的结构操作也没有扩大格式保持承诺。
+
+`tests/ui/word-block-backspace-model.spec.mjs` 安装实际全部扩展插件和真实 `dispatchTransaction` 中间件；覆盖标题 1–3、三种常用退格键、默认 / 显式零、空行字体、stored marks、草稿 JSON、输入规则优先级、独立历史、尾段、隔离单元格固定宽度 / 行高 / 垂直对齐，以及九种原分支对照。结构命令中的行边界采用文字偏移 oracle，不冒充浏览器实际行几何。独立驱动 `scripts/convert-word-heading-backspace.mjs` 与 `scripts/check-word-heading-backspace.py --render` 检查真实导入、注册退格回调、DOCX / 可信重开、XML / python-docx 和三组有界目标正文基线。
+
+独立真实源为固定 revision / SHA 的未改造 Apache POI `NoHeadFoot.docx`。为暴露原来的第二个空段，验证只在工作模型中明确删除首段文字，再用已注册 Ctrl+Alt+2 转成空标题；这两项是记录在案的准备编辑，不宣称原文件本来以空标题开头。源文件字节不改，其余正文 / 字符样式 / 分页完整核对。三个空标题源和三个正文参考由独立脚本创作，分别登记，不冒充真实生产文件。
+
 ## 真实插件与证据边界
 
 无浏览器测试注册整个实际扩展管理器插件链，包括默认尾段、历史、输入规则和新的历史边界。快捷键用普通事件对象调用真实 keymap，输入用真实 `handleTextInput`，组合结束用真实钩子 / 计时回调，普通粘贴用带粘贴元数据的事务；这些检查覆盖真实源代码路径，但不是浏览器按键、系统剪贴板、中文 IME 或原生 WebView 验收。

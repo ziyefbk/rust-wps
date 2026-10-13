@@ -47,3 +47,25 @@ test('list-first keyboard and marker attempts preserve the list and normal typed
   await page.locator(`${editor} li p`).click(); await page.keyboard.press('Control+Alt+2'); await expect(page.locator('#notice')).toContainText('列表首段');
   await page.keyboard.type('## '); await expect(page.locator(`${editor} li p`)).toHaveText('## '); await expect(page.locator(`${editor} h2`)).toHaveCount(0);
 });
+
+test('existing empty heading Backspace preserves paragraph attrs and baseline in draft and undo', async ({page}) => {
+  const font = {family: 'Liberation Serif', halfPoints: 49, bold: false, italic: false};
+  const original = {type: 'doc', attrs: {styleProfile: 'standard-v2'}, content: [
+    {type: 'heading', attrs: {...attrs[0], level: 2, emptyParagraphFont: font}}, p('Outside', attrs[1])]};
+  const draft = await open(page, original);
+  await page.locator(`${editor} h2`).click(); await page.keyboard.press('Backspace');
+  await expect(page.locator(`${editor} h2`)).toHaveCount(0);
+  await expect.poll(() => draft()?.content[0].attrs).toEqual({...attrs[0], emptyParagraphFont: font});
+  await expect(page.locator(`${editor} p`).first()).toHaveText('');
+  await page.locator('#edit-undo').click(); await expect(page.locator(`${editor} h2`)).toHaveCount(1);
+  await expect.poll(() => draft()?.content[0].attrs).toEqual(original.content[0].attrs);
+});
+
+test('selection-expired heading input rule Backspace preserves format without restoring hashes', async ({page}) => {
+  const draft = await open(page, {type: 'doc', content: [p('', attrs[0]), p('Outside', attrs[1])]});
+  await page.locator(`${editor} p`).first().click(); await page.keyboard.type('## ');
+  await page.locator(`${editor} p`).last().click(); await page.locator(`${editor} h2`).click();
+  await page.keyboard.press('Backspace'); await expect(page.locator(`${editor} h2`)).toHaveCount(0);
+  await expect(page.locator(`${editor} p`).first()).toHaveText('');
+  await expect.poll(() => draft()?.content[0].attrs).toEqual(attrs[0]);
+});

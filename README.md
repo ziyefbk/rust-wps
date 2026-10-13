@@ -1,5 +1,7 @@
 # Rust WPS exploration
 
+已存在的真正空标题在首文字位置按 Backspace 退回正文时，保留对齐 / 间距 / 缩进与空行基线字体；输入规则撤回仍优先，其他合段 / 列表 / 选区行为保持原路径。完整插件链与独立 DOCX / 有界 PDF 对照见 [正文与标题转换](docs/BLOCK_TYPE_CONVERSION.md)，实际浏览器 / 原生按键仍未验收。
+
 本地、离线、简洁的办公软件探索项目，Rust 负责文档核心。
 
 开发顺序：**DOC / DOCX / PDF → Excel（XLSX / XLS）→ PPT（PPTX / PPT）**。

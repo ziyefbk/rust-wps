@@ -1,8 +1,8 @@
 import {withEmptyParagraphFontRendering} from './word-empty-paragraph-font';
 import {omitDefaultEmptyParagraphFont, validateEmptyParagraphFontDocument} from './word-empty-paragraph-font-model';
-import {InputRule, Node as TiptapNode, type Editor} from '@tiptap/core';
+import {InputRule, isMacOS, isiOS, Node as TiptapNode, type Editor} from '@tiptap/core';
 import {closeHistory} from '@tiptap/pm/history';
-import {EditorState, Plugin, PluginKey, TextSelection, type Transaction} from '@tiptap/pm/state';
+import {EditorState, Plugin, PluginKey, Selection, TextSelection, type Transaction} from '@tiptap/pm/state';
 import {Transform} from '@tiptap/pm/transform';
 import {createWordBlockTypeTransaction, validateWordBlockTypeDocument, wordBlockTypeIsActive} from './word-block-type';
 
@@ -29,6 +29,32 @@ function shortcut(editor: Editor, options: WordBlockTypeInteractionOptions, leve
     }
   } catch (error) {options.onError?.(String(error));}
   // Consume a rejected request too: never fall through to an unsafe conversion.
+  return true;
+}
+
+function emptyHeadingBackspace(editor: Editor, options: WordBlockTypeInteractionOptions): boolean {
+  if (!unavailable(editor, options)) options.syncSelection?.();
+  const {selection, doc} = editor.state;
+  // Match only the core keymap's empty first-textblock normalization branch.
+  // True emptiness excludes hard breaks/inline atoms with empty textContent.
+  // Other selections, joins, list lifting and cell navigation fall through.
+  if (!(selection instanceof TextSelection) || !selection.$cursor
+    || selection.$cursor.parent.type.name !== 'heading' || selection.$cursor.parent.content.size !== 0) return false;
+  const {$cursor} = selection, $parentPos = doc.resolve($cursor.pos - 1);
+  const isAtStart = $parentPos.parent.type.spec.isolating && $parentPos.parent.childCount === 1
+    ? $cursor.pos - $cursor.parentOffset === $cursor.pos
+    : Selection.atStart(doc).from === $cursor.pos;
+  if (!isAtStart) return false;
+  // A matched but blocked/rejected conversion must never reach clearNodes.
+  if (unavailable(editor, options)) return true;
+  try {
+    if (editor.commands.undoInputRule()) return true;
+    const transaction = createWordBlockTypeTransaction(editor.state, 0);
+    if (transaction) {
+      editor.view.dispatch(closeHistory(transaction));
+      editor.view.dispatch(closeHistory(editor.state.tr));
+    }
+  } catch (error) {options.onError?.(String(error));}
   return true;
 }
 
@@ -81,7 +107,10 @@ export function withWordBlockTypeInteractions(node: TiptapNode, options: WordBlo
   if (node.name !== 'heading') return node;
   return node.extend({
     addKeyboardShortcuts() {
-      return Object.fromEntries([1, 2, 3].map(level => [`Mod-Alt-${level}`, () => shortcut(this.editor, options, level)]));
+      const backspace = () => emptyHeadingBackspace(this.editor, options);
+      return {...Object.fromEntries([1, 2, 3].map(level => [`Mod-Alt-${level}`, () => shortcut(this.editor, options, level)])),
+        Backspace: backspace, 'Mod-Backspace': backspace, 'Shift-Backspace': backspace,
+        ...(isiOS() || isMacOS() ? {'Ctrl-h': backspace, 'Alt-Backspace': backspace} : {})};
     },
     addInputRules() {
       return [1, 2, 3].map(level => new InputRule({

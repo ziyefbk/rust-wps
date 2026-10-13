@@ -1,6 +1,24 @@
 # 当前跨格式回归记录
 
-## 当前：真正空段落的有限基线字体（2026-10-13）
+## 当前：空标题 Backspace 保留段落格式（2026-10-13）
+
+基于 `243a95b905529e299dd57c5c44867f89d50f894e`，修复已有真正空标题在首文字位置退回正文时，上游 `clearNodes` 清除七个段落字段及空行字体的问题。应用键位分支保留 `undoInputRule` 优先，复用经过完整校验的逐段类型事务，转换一次撤销；同一隔离单段单元格也原位处理，其他合段 / 列表 / 选区分支保持原行为。明确范围和剩余整文档删除重置见 [BLOCK_TYPE_CONVERSION.md](BLOCK_TYPE_CONVERSION.md)。没有修改 Rust、vendor、依赖或 node_modules。
+
+### 最终检查与独立证据
+
+- **424项无浏览器前端检查通过**：已发布397 +27个新完整插件 / 中间件检查；命令 `tmp/backspace-ui-command.json`，使用既有 `USERPROFILE=$PWD/tmp/linux-home`，日志 `tmp/backspace-ui-recovered-424.log`。九种不匹配场景与仅移除新增键位的原插件链逐项比较，固定表格宽度 / 行高 / 单元格对齐和默认自动尾段另外明确断言
+- `npm run build` / TypeScript、Python / Node语法和 `git diff --check` 通过，`tmp/backspace-build-final.log`。**11个相关浏览器规格仅发现，其中2个为本轮新增，未执行**，`tmp/backspace-browser-discovery.log`；无物理按键、浏览器行几何、原生IME / 剪贴板 / 应用打印验收
+- Rust1.99 /1.88最终各460项通过，日志 `tmp/backspace-core-{stable,msrv}-cached.log`。沿用既有两份 target 和 `CARGO_INCREMENTAL=0`，没有新建 target。221个核心 / 桌面 / vendor / 依赖文件与已发布基线逐字节相同，身份 `tmp/backspace-core-identity.json`；vendor1264项、桌面及Clippy未重跑，上轮结果仅为历史证据
+- 首次聚合检查因漏设既有测试用 `USERPROFILE` 有5项跨格式独立Python调用失败；第二次遭遇磁盘空间不足。首次核心命令漏设缓存所用 `CARGO_INCREMENTAL=0` 触发不同工件重编译并填满磁盘；只删除该次命令时间范围内产生的可重建 target 工件，恢复经散列核对的工作CLI，再用准确缓存配置全部重跑。失败日志 `tmp/backspace-ui-final.log`、`tmp/backspace-ui-final-424.log`、`tmp/backspace-core-{stable,msrv}.log` 保留，不计为通过；原件、旧报告及冻结CLI未清理
+
+独立最终报告 `tmp/heading-backspace-independent/run-_5ig67sk/report.json` SHA-256 `1bf547aca4adf365b9adb947c7437b7067150f8e0110b81aff681522598c459d`。冻结CLI `tmp/empty-font-final-cli` 保持 `ed77eea6ce7d6f26eede7ee33af3655f42e1eeebbc9060ac086bb57c6a6d9430`。
+
+- **3个独立创作空标题源 +1份固定未改造上游原件，另3份独立目标正文参考**。原件 `NoHeadFoot.docx` revision / SHA / Git blob和准备编辑完整登记：仅工作模型删除首段以暴露原有第二空段，再经注册快捷键转标题；不冒充原文件已有该空标题。源字节、其余文字 / marks / 分页不变
+- **8份实际导出DOCX和完整可信重开、16次CLI禁止覆盖 +4次驱动禁止覆盖**。XML / python-docx独立核对七字段、真实零内容、完整段落标记字体、正文样式变化及所有未编辑相邻内容；预期模型只允许记录的首段准备编辑与类型 / level变化，不只比较属性计数
+- **6份新LibreOffice PDF**，每文件新进程 / 独立profile；三个独立正文参考与应用结果的 Latin 后续文字基线最大差均 **0.0pt**（原0.3pt容差）。只证明该受控空段后的纵向基线，不声称原件整页、浏览器 / WebView打印、Word / WPS或字体可用性保真
+- 早期独立驱动因Node严格对象原型比较（ProseMirror空原型 attrs与普通对象）失败，字段内容并未变化；修正验证器后整轮重新执行。失败报告 `tmp/heading-backspace-independent/run-sqggv2k4/report.json` 保留，不计入最终结果
+
+## 上一轮：真正空段落的有限基线字体（2026-10-13）
 
 基于 `d4480270fdfd9fdb38817458b095ff1139b2ed1b`，新增仅用于零内容 paragraph / heading 的可选 `emptyParagraphFont`，保存字面字体、整数半点字号和粗斜体。正文顶层源按实际 OPC 默认 / 活动样式 / 直接段落标记解析，完整块身份核对后才附加。空行状态 / 重置、标题转换、撤销 / 草稿、可信重开与共享打印声明贯通；首次插入内容原子结束空行覆盖，普通文字继续使用当前 marks / profile。源表格 / 列表字体继承、多脚本及复杂度量没有扩大承诺；详细契约见 [EMPTY_PARAGRAPH_FONTS.md](EMPTY_PARAGRAPH_FONTS.md)。
 
