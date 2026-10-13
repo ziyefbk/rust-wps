@@ -264,8 +264,14 @@ pub fn validate(doc: &Node) -> Result<()> {
         );
         let allowed: &[&str] = match node.kind.as_str() {
             "doc" if depth == 0 => &["styleProfile"],
-            "heading" => &["level", "textAlign"],
-            "paragraph" => &["textAlign"],
+            "heading" => &[
+                "level",
+                "textAlign",
+                "spaceBefore",
+                "spaceAfter",
+                "lineSpacing",
+            ],
+            "paragraph" => &["textAlign", "spaceBefore", "spaceAfter", "lineSpacing"],
             "orderedList" => &["start", "type"],
             "tableCell" | "tableHeader" => &["colspan", "rowspan", "colwidth", "align"],
             "image" => &["src", "alt", "title", "width", "height"],
@@ -288,6 +294,20 @@ pub fn validate(doc: &Node) -> Result<()> {
                 ),
                 "Unsupported paragraph alignment"
             );
+        }
+        for (key, minimum, maximum) in [
+            ("spaceBefore", 0, 31680),
+            ("spaceAfter", 0, 31680),
+            ("lineSpacing", 120, 2400),
+        ] {
+            if let Some(value) = node.attrs.get(key) {
+                ensure!(
+                    value
+                        .as_u64()
+                        .is_some_and(|value| (minimum..=maximum).contains(&value)),
+                    "{key} must be an integer in {minimum}..={maximum}; omit it for the default"
+                );
+            }
         }
         ensure!(
             node.kind == "text" || node.text.is_none(),
@@ -517,6 +537,7 @@ struct Writer {
     image_rels: Vec<String>,
     link_rels: Vec<String>,
     nums: Vec<String>,
+    has_spacing: bool,
     image_bytes: usize,
 }
 impl Writer {
@@ -540,6 +561,23 @@ impl Writer {
                 alignment
             };
             props.push_str(&format!("<w:jc w:val=\"{alignment}\"/>"));
+        }
+        let mut spacing = String::new();
+        for (key, attribute) in [
+            ("spaceBefore", "before"),
+            ("spaceAfter", "after"),
+            ("lineSpacing", "line"),
+        ] {
+            if let Some(value) = node.attrs.get(key).and_then(Value::as_u64) {
+                spacing.push_str(&format!(" w:{attribute}=\"{value}\""));
+            }
+        }
+        if node.attrs.contains_key("lineSpacing") {
+            spacing.push_str(" w:lineRule=\"auto\"");
+        }
+        if !spacing.is_empty() {
+            self.has_spacing = true;
+            props.push_str(&format!("<w:spacing{spacing}/>"));
         }
         let mut body = String::new();
         for child in &node.content {
@@ -812,7 +850,7 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
     }
     numbering.push_str(&writer.nums.concat());
     numbering.push_str("</w:numbering>");
-    let rels = format!(
+    let mut rels = format!(
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="numbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>{}</Relationships>"#,
         format_args!(
             "{}{}",
@@ -821,6 +859,15 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
         )
     );
     let types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="json" ContentType="application/json"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>"#;
+    // LibreOffice treats adjacent paragraph gaps differently when the settings
+    // part is absent. Activate only for the new optional spacing model, keeping
+    // historical V1/V2 package bytes unchanged when no spacing is authored.
+    let types = if writer.has_spacing {
+        rels = rels.replace("</Relationships>", r#"<Relationship Id="settings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#);
+        types.replace("</Types>", r#"<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#)
+    } else {
+        types.to_owned()
+    };
     let package_rels = format!(
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="office" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="authoring" Type="urn:rust-wps:authoring-model" Target="{model_part}"/></Relationships>"#
     );
@@ -829,7 +876,7 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
         let mut hashes = std::collections::BTreeMap::new();
         let mut zip = ZipWriter::new(&mut bytes);
         for (name, data) in [
-            ("[Content_Types].xml", types),
+            ("[Content_Types].xml", types.as_str()),
             ("_rels/.rels", package_rels.as_str()),
             ("word/document.xml", &document),
             ("word/styles.xml", &styles),
@@ -840,6 +887,15 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
             zip.write_all(data.as_bytes())?;
             hashes.insert(
                 name.to_string(),
+                format!("{:x}", Sha256::digest(data.as_bytes())),
+            );
+        }
+        if writer.has_spacing {
+            let data = r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+            zip.start_file("word/settings.xml", SimpleFileOptions::default())?;
+            zip.write_all(data.as_bytes())?;
+            hashes.insert(
+                "word/settings.xml".into(),
                 format!("{:x}", Sha256::digest(data.as_bytes())),
             );
         }

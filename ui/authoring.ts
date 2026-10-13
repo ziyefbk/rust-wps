@@ -3,7 +3,8 @@ import {createWordReplacement} from './word-replace';
 import {FontSize, createFontSizeTransaction, parseFontSizePoints, selectedFontSize} from './word-font-size';
 import {TextColor, createTextColorTransaction, parseTextColor, selectedTextColor} from './word-text-color';
 import {FontFamily, createFontFamilyTransaction, isFontFamilyName, selectedFontFamily} from './word-font-family';
-import {STANDARD_WORD_STYLE_PROFILE, documentStyleProfile, editorStyleProfile, snapshotDocument, withStandardWordStyle} from './word-style-profile';
+import {STANDARD_WORD_STYLE_PROFILE, documentStyleProfile, editorStyleProfile, snapshotDocument as snapshotStyledDocument, withStandardWordStyle} from './word-style-profile';
+import {ParagraphSpacing, createParagraphSpacingTransaction, formatLineSpacingLines, omitDefaultParagraphSpacing, paragraphSpacingFields, parseLineSpacingLines, parseParagraphSpacePoints, selectedParagraphSpacing, validateParagraphSpacingDocument, type ParagraphSpacingField, type ParagraphSpacingPatch} from './word-paragraph-spacing';
 import { Editor, Extension, Mark as TiptapMark, Node as TiptapNode, type JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import { TableKit } from '@tiptap/extension-table';
@@ -73,6 +74,14 @@ let textColorInputChanged = false;
 let textColorInputEditing = false;
 let fontFamilyInputChanged = false;
 let fontFamilyInputEditing = false;
+let paragraphSpacingInputEditing = false;
+const paragraphSpacingInputChanged = new Set<ParagraphSpacingField>();
+const paragraphSpacingIds: Record<ParagraphSpacingField, string> = {
+  spaceBefore: 'edit-space-before', spaceAfter: 'edit-space-after', lineSpacing: 'edit-line-spacing',
+};
+function snapshotDocument(owner: Pick<Editor, 'getJSON'>): JSONContent {
+  return omitDefaultParagraphSpacing(snapshotStyledDocument(owner));
+}
 let onChangeMode: (() => Promise<void>) | null = null;
 let canLeaveOther: () => Promise<boolean> = async () => true;
 let showNotice: (text: string, error?: boolean) => void = () => {};
@@ -225,6 +234,34 @@ function applyFontFamily(reset = false) {
   editor.view.focus();
   updateToolbar();
 }
+function applyParagraphSpacing(reset = false) {
+  if (!editor || leaving || paused || printing || saving) return;
+  const patch: ParagraphSpacingPatch = {};
+  // Read the whole group before selection synchronization updates the toolbar.
+  for (const field of paragraphSpacingFields) {
+    const input = el<HTMLInputElement>(paragraphSpacingIds[field]), value = input.value.trim();
+    if (reset) { patch[field] = null; continue; }
+    if (!value && input.dataset.spacingState === 'mixed' && !paragraphSpacingInputChanged.has(field)) continue;
+    const parsed = !value ? null : field === 'lineSpacing' ? parseLineSpacingLines(value) : parseParagraphSpacePoints(value);
+    if (input.validity.badInput || value !== '' && parsed === null) {
+      showNotice('段前/段后须为 0–1584 pt（0.05 pt 递增），行距须为 0.5–10 行；非整小数可输入 241/240 这样的精确行数。', true);
+      return;
+    }
+    patch[field] = parsed;
+  }
+  syncDomTextSelection();
+  try {
+    const transaction = createParagraphSpacingTransaction(editor.state, patch);
+    if (transaction) {
+      editor.view.dispatch(closeHistory(transaction));
+      editor.view.dispatch(closeHistory(editor.state.tr));
+    }
+  } catch (error) { showNotice(String(error), true); return; }
+  paragraphSpacingInputEditing = false;
+  paragraphSpacingInputChanged.clear();
+  editor.view.focus();
+  updateToolbar();
+}
 function updateToolbar() {
   el('authoring-sheet').dataset.styleProfile = editor ? editorStyleProfile(editor) ?? 'legacy-v1' : 'legacy-v1';
   const locked = leaving || paused || printing;
@@ -251,6 +288,20 @@ function updateToolbar() {
   el<HTMLSelectElement>('edit-align').disabled = locked;
   el<HTMLSelectElement>('edit-align').value = String(editor?.getAttributes(editor?.isActive('heading') ? 'heading' : 'paragraph').textAlign ?? 'left');
   el<HTMLSelectElement>('edit-style').value = editor?.isActive('heading') ? String(editor.getAttributes('heading').level) : '0';
+  const selectedSpacing = editor ? selectedParagraphSpacing(editor.state) : null;
+  for (const field of paragraphSpacingFields) {
+    const input = el<HTMLInputElement>(paragraphSpacingIds[field]);
+    input.disabled = locked || saving;
+    if (!paragraphSpacingInputEditing && document.activeElement !== input) {
+      const selected = selectedSpacing?.[field] ?? {value: null, mixed: false};
+      input.value = selected.value === null ? '' : field === 'lineSpacing' ? formatLineSpacingLines(selected.value) : String(selected.value / 20);
+      input.placeholder = selected.mixed ? '混合' : '默认';
+      input.dataset.spacingState = selected.mixed ? 'mixed' : selected.value === null ? 'default' : 'explicit';
+      paragraphSpacingInputChanged.delete(field);
+    }
+  }
+  el<HTMLButtonElement>('edit-paragraph-spacing-apply').disabled = locked || saving;
+  el<HTMLButtonElement>('edit-paragraph-spacing-reset').disabled = locked || saving;
   const fontFamily = el<HTMLInputElement>('edit-font-family');
   fontFamily.disabled = locked || saving;
   el<HTMLButtonElement>('edit-font-family-apply').disabled = locked || saving;
@@ -316,6 +367,8 @@ function queueDraft(doc: JSONContent) {
   });
 }
 export function closeAuthoring() {
+  paragraphSpacingInputEditing = false;
+  paragraphSpacingInputChanged.clear();
   fontFamilyInputEditing = false;
   fontSizeInputEditing = false;
   textColorInputEditing = false;
@@ -330,6 +383,7 @@ export function closeAuthoring() {
 async function create(content?: JSONContent, ask = true) {
   const initial = content ?? {type: 'doc', attrs: {styleProfile: STANDARD_WORD_STYLE_PROFILE}, content: [{type: 'paragraph'}]};
   documentStyleProfile(initial);
+  validateParagraphSpacingDocument(initial);
   if (ask && !(await canLeaveAuthoring())) return;
   // Flush the previous document before a new draft enters the same slot.
   closeAuthoring();
@@ -341,7 +395,7 @@ async function create(content?: JSONContent, ask = true) {
     editable: !paused,
     element: el('editor-content'),
     extensions: [FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
-      ParagraphAlignment, PageBreak, TableKit.configure({ table: { resizable: false } }), Image.configure({ allowBase64: true, resize: false })],
+      ParagraphAlignment, ParagraphSpacing, PageBreak, TableKit.configure({ table: { resizable: false } }), Image.configure({ allowBase64: true, resize: false })],
     content: initial,
     editorProps: {
       attributes: state => ({ 'aria-label': '文档编辑区', spellcheck: 'false', 'data-style-profile': state.doc.attrs.styleProfile ?? 'legacy-v1' }),
@@ -368,7 +422,7 @@ async function create(content?: JSONContent, ask = true) {
       draftTimer = setTimeout(() => { draftTimer = null; if (owner === editor) queueDraft(snapshotDocument(owner)); }, 700);
       updateToolbar();
     },
-    onFocus: () => { fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
+    onFocus: () => { paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
     onSelectionUpdate: updateToolbar,
   });
   dirty = !!content; version++;
@@ -399,6 +453,26 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
     editor.chain().focus().extendMarkRange('link').setLink({ href }).run();
   });
   el('edit-find').addEventListener('input',()=>{refreshWordSearch();updateToolbar();});
+  el('paragraph-spacing-controls').addEventListener('focusout', event => {
+    if (event.relatedTarget instanceof HTMLElement && el('paragraph-spacing-controls').contains(event.relatedTarget)) return;
+    paragraphSpacingInputEditing = false;
+    updateToolbar();
+  });
+  for (const field of paragraphSpacingFields) {
+    const input = el<HTMLInputElement>(paragraphSpacingIds[field]);
+    input.addEventListener('pointerdown', syncDomTextSelection);
+    input.addEventListener('focus', () => { paragraphSpacingInputEditing = true; });
+    input.addEventListener('input', () => { paragraphSpacingInputChanged.add(field); });
+    input.addEventListener('keydown', event => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Enter') { event.preventDefault(); applyParagraphSpacing(); }
+      if (event.key === 'Escape') {
+        event.preventDefault(); paragraphSpacingInputEditing = false; paragraphSpacingInputChanged.clear(); editor?.view.focus(); updateToolbar();
+      }
+    });
+  }
+  el('edit-paragraph-spacing-apply').addEventListener('click', () => applyParagraphSpacing());
+  el('edit-paragraph-spacing-reset').addEventListener('click', () => applyParagraphSpacing(true));
   el('edit-font-family').addEventListener('pointerdown', syncDomTextSelection);
   el('edit-font-family').addEventListener('focus', () => { fontFamilyInputEditing = true; });
   el('edit-font-family').addEventListener('blur', event => {

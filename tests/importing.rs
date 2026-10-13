@@ -229,6 +229,12 @@ fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
     document::export_docx(&report.document, &output).unwrap();
     let reopened = importing::import_docx(&output).unwrap();
     let mut exported_expected = expected;
+    // External re-import now retains the effective V2 paragraph defaults.
+    for index in [0, 1, 3] {
+        exported_expected["content"][index]["attrs"] = serde_json::json!({
+            "spaceBefore":0,"spaceAfter":120,"lineSpacing":360
+        });
+    }
     for index in [0, 3] {
         exported_expected["content"][index]["content"][0]["marks"] = serde_json::json!([
             {"type":"fontSize","attrs":{"halfPoints":22}},

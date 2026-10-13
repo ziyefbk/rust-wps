@@ -1,0 +1,26 @@
+{
+  "baseline_commit": "b2fbcae593c49ca6a2fc87aa1a09c65ce68a5dc6",
+  "unchanged_exporter_through": "c435d02d2ce4ba8fbaa3d2590b4d0dcbb2d8a4fa",
+  "baseline_cli_sha256": "b5619ef6354652deae10049fa69a32a577ac6f896fb6e8f73b8f0c5428d6139c",
+  "input_fixture": "tests/fixtures/authoring.json",
+  "profiles": {
+    "legacy-v1": {
+      "[Content_Types].xml": "2aff16a2a64c5edf2b160f83628843b24033c78e62a634181a6e38fd1ce5c00f",
+      "_rels/.rels": "a5fccacd8d31d827860f143df0e03e2eef8668de711575e026c26db6b8474915",
+      "word/document.xml": "73322798e2a6f6e2392bc45c02f3a1de802625fcf8ececa367fad63d9ff877c1",
+      "word/styles.xml": "4772c8b1fcbd537d5f57da2c4aeabfa731eb773d94ed1e4e359e842ca4fde2be",
+      "word/numbering.xml": "e4a15ec15694113d38d89730b86904b397fc98a102cf549eb2d0ce576a2c0aba",
+      "word/_rels/document.xml.rels": "3be698b16c95e2553190848bafd3c083b1754ede1ed4ea8aa784d56aa952a783",
+      "rust-wps/model-v1.json": "fae865fa01f3a38fab9c67f9c453ade5e30d1eb3071964da1448f6d0d82f2ab6"
+    },
+    "standard-v2": {
+      "[Content_Types].xml": "2aff16a2a64c5edf2b160f83628843b24033c78e62a634181a6e38fd1ce5c00f",
+      "_rels/.rels": "b501469ad7b4d918d24c98f4f75a64009513112cc176a0617d065b8ddb3eeb41",
+      "word/document.xml": "53069f3bfec2c10fe3495554042f5972f42d77749cfea7f2b1b59cb5e860bc50",
+      "word/styles.xml": "2af4c5d632cee6f8ea02eebf3d96310a55b882df494fef2ea32d59ebc05ee67a",
+      "word/numbering.xml": "e4a15ec15694113d38d89730b86904b397fc98a102cf549eb2d0ce576a2c0aba",
+      "word/_rels/document.xml.rels": "3be698b16c95e2553190848bafd3c083b1754ede1ed4ea8aa784d56aa952a783",
+      "rust-wps/model-v2.json": "044a836870a97a5c5662ed2ac75191d8e53e566b676b9b1d34ff1b9df66b2a7c"
+    }
+  }
+}

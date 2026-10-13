@@ -620,6 +620,9 @@ fn parse_body_elements(xml_data: &[u8]) -> CoreResult<Vec<BlockElement>> {
                 },
                 _ => {},
             },
+            Event::Empty(ref e) if e.local_name().as_ref() == "p" => {
+                elements.push(BlockElement::Paragraph(Paragraph::default()));
+            },
             Event::Eof => break,
             _ => {},
         }
@@ -842,6 +845,9 @@ fn parse_block_elements_until(
                 // Block-level custom XML (§17.5.1) is the same shape.
                 "sdt" | "sdtContent" | "customXml" => {},
                 _ => xml::skip_element_fast(reader)?,
+            },
+            Event::Empty(ref e) if e.local_name().as_ref() == "p" => {
+                elements.push(BlockElement::Paragraph(Paragraph::default()));
             },
             Event::End(ref e) if e.local_name().as_ref() == end_local => break,
             Event::Eof => break,
@@ -1144,6 +1150,11 @@ fn parse_document(
                         }
                     },
                     _ => {},
+                }
+            },
+            Event::Empty(ref e) if in_body && e.local_name().as_ref() == "p" => {
+                if guard.accepts(e) {
+                    elements.push(BlockElement::Paragraph(Paragraph::default()));
                 }
             },
             Event::Empty(ref e) if in_body && e.local_name().as_ref() == "altChunk" => {
@@ -3237,6 +3248,9 @@ fn parse_table_cell(reader: &mut quick_xml::Reader<&[u8]>) -> CoreResult<TableCe
                     xml::skip_element_fast(reader)?;
                 },
             },
+            Event::Empty(ref e) if e.local_name().as_ref() == "p" => {
+                content.push(BlockElement::Paragraph(Paragraph::default()));
+            },
             Event::End(ref e) if e.local_name().as_ref() == "tc" => {
                 break;
             },
@@ -3674,6 +3688,31 @@ impl crate::core::OfficeDocument for DocxDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn self_closing_paragraphs_survive_shared_block_parsers() {
+        let xml = br#"<w:txbxContent xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p/><w:p></w:p><w:sdt><w:sdtContent><w:p/></w:sdtContent></w:sdt></w:txbxContent>"#;
+        let mut reader = make_content_reader(xml);
+        assert!(matches!(reader.read_event().unwrap(), Event::Start(_)));
+        let blocks = parse_block_elements_until(&mut reader, "txbxContent").unwrap();
+        for elements in [blocks, parse_body_elements(xml).unwrap()] {
+            assert_eq!(elements.len(), 3);
+            for element in elements {
+                let BlockElement::Paragraph(p) = element else { panic!("expected empty paragraph") };
+                assert!(p.content.is_empty());
+                assert!(p.properties.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn self_closing_body_paragraphs_keep_namespace_and_body_guards() {
+        let xml = br#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:evil="urn:not-word"><w:p/><w:body><w:p/><evil:p/><w:p/></w:body><w:p/></w:document>"#;
+        let rels = crate::core::relationships::Relationships::empty();
+        let parsed = parse_document(xml, &rels).unwrap();
+        assert_eq!(parsed.0.elements.len(), 2);
+        assert!(parsed.0.elements.iter().all(|e| matches!(e, BlockElement::Paragraph(p) if p.content.is_empty())));
+    }
 
     /// A plain one-run paragraph in a one-paragraph cell cost ~4 KB even
     /// after the property structs were boxed: `BlockElement` was 536

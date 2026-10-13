@@ -31,3 +31,21 @@ pub fn without_font_segmentation(node: &Node) -> Value {
     }
     value
 }
+
+// External re-import resolves the exported standard-v2 style defaults. This
+// helper materializes them in expected models without deleting any evidence.
+pub fn materialize_standard_spacing(node: &mut Node) {
+    if matches!(node.kind.as_str(), "paragraph" | "heading") {
+        let before = if node.kind == "heading" { 240 } else { 0 };
+        for (key, value) in [
+            ("spaceBefore", before),
+            ("spaceAfter", 120),
+            ("lineSpacing", 360),
+        ] {
+            node.attrs.entry(key).or_insert(json!(value));
+        }
+    }
+    for child in &mut node.content {
+        materialize_standard_spacing(child);
+    }
+}

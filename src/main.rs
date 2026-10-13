@@ -265,6 +265,19 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+    if command.as_deref() == Some(std::ffi::OsStr::new("read-docx-model")) {
+        let path = PathBuf::from(
+            args.next()
+                .ok_or_else(|| anyhow::anyhow!("Missing DOCX path"))?,
+        );
+        if args.next().is_some() {
+            bail!("Unexpected extra arguments");
+        }
+        let model = rust_wps::document::load_authored_docx(&path)?
+            .ok_or_else(|| anyhow::anyhow!("No verified editable document model"))?;
+        println!("{}", serde_json::to_string_pretty(&model)?);
+        return Ok(());
+    }
     if command.as_deref() == Some(std::ffi::OsStr::new("create-docx")) {
         let model = PathBuf::from(
             args.next()
@@ -305,6 +318,7 @@ fn main() -> Result<()> {
         println!(
             "rust-wps calculate-workbook <model.json> (bounded numeric prototype; JSON results only)"
         );
+        println!("rust-wps read-docx-model <authored.docx> (verified editable model only)");
         println!("rust-wps read-xlsx-model <authored.xlsx> (verified editable model only)");
         println!(
             "rust-wps create-xlsx <model.json> <new.xlsx> (typed sparse model; no formula recalculation)"

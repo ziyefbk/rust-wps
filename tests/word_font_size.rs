@@ -247,6 +247,7 @@ fn explicit_styles_and_script_sizes_reach_the_editable_model() {
         serde_json::to_value(&imported.document).unwrap()
     );
     let mut expected = imported.document.clone();
+    common::materialize_standard_spacing(&mut expected);
     for block in &mut expected.content {
         for run in &mut block.content {
             // External re-conversion resolves V2's declared black default.

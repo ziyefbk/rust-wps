@@ -1681,6 +1681,7 @@ fn convert_list_group(
 ) -> Element {
     let mut first_properties = Some(first_properties);
     let mut items = Vec::new();
+    let mut paragraph_properties = Vec::new();
     let mut is_ordered = false;
     // How many items at the group's own (shallowest) level this group
     // contributes — used to advance `numbering_counts` for
@@ -1751,6 +1752,7 @@ fn convert_list_group(
                     top_level_item_count += 1;
                 }
                 items.push((nr.ilvl, convert_paragraph_inline(p, doc)));
+                paragraph_properties.push(eff);
                 *i += 1;
                 continue;
             }
@@ -1779,11 +1781,38 @@ fn convert_list_group(
 
     // Build nested list structure from flat (ilvl, content) pairs
     let mut list = crate::ir::build_nested_list(is_ordered, &items, 0);
+    apply_list_paragraph_properties(&mut list, &mut paragraph_properties.iter());
     let mut next_item = 0;
     apply_level_markers(&mut list, &items, &mut next_item, &markers, top_ilvl);
     list.start_number = start_number;
     list.style = style;
     Element::List(list)
+}
+
+/// The shared list builder retains one item per source paragraph in
+/// preorder, even for empty text or skipped numbering levels; it does
+/// not insert synthetic parent items. Restore the paragraph formatting
+/// that its inline-only input cannot carry, consuming empty items too.
+fn apply_list_paragraph_properties(
+    list: &mut List,
+    properties: &mut std::slice::Iter<'_, Option<ParagraphProperties>>,
+) {
+    for item in &mut list.items {
+        if let Some(Some(pp)) = properties.next() {
+            if item.content.is_empty() {
+                item.content.push(Element::Paragraph(Paragraph::default()));
+            }
+            for element in &mut item.content {
+                if let Element::Paragraph(paragraph) = element {
+                    paragraph.alignment = paragraph_alignment(pp);
+                    apply_paragraph_properties(pp, paragraph);
+                }
+            }
+        }
+        if let Some(nested) = item.nested.as_mut() {
+            apply_list_paragraph_properties(nested, properties);
+        }
+    }
 }
 
 /// One numbering level's marker, as the IR's `List` describes it.
@@ -2172,6 +2201,10 @@ mod heading_typography_tests {
     }
 
     fn document_ir_with_settings(body: &str, styles: &str, theme: Option<&str>, settings: Option<&str>) -> DocumentIR {
+        document_ir_with_parts(body, styles, theme, settings, None)
+    }
+
+    fn document_ir_with_parts(body: &str, styles: &str, theme: Option<&str>, settings: Option<&str>, numbering: Option<&str>) -> DocumentIR {
         let mut writer = OpcWriter::new(Cursor::new(Vec::new())).unwrap();
         let document = PartName::new("/word/document.xml").unwrap();
         let main = format!(r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#);
@@ -2193,6 +2226,11 @@ mod heading_typography_tests {
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml", settings.as_bytes()).unwrap();
             writer.add_part_rel(&document, rel_types::SETTINGS, "settings.xml");
         }
+        if let Some(numbering) = numbering {
+            writer.add_part(&PartName::new("/word/numbering.xml").unwrap(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml", numbering.as_bytes()).unwrap();
+            writer.add_part_rel(&document, rel_types::NUMBERING, "numbering.xml");
+        }
         let parsed = DocxDocument::from_reader(Cursor::new(writer.finish().unwrap().into_inner())).unwrap();
         docx_to_ir(&parsed)
     }
@@ -2207,6 +2245,149 @@ mod heading_typography_tests {
             InlineContent::Text(span) => span,
             _ => panic!("expected text span"),
         }).collect()
+    }
+
+    #[test]
+    fn paragraph_spacing_cascades_each_component_through_styles_and_direct_formatting() {
+        let ir = document_ir(r#"
+          <w:p><w:r><w:t>default Normal</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="Base"/></w:pPr><w:r><w:t>base zero before</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="Child"/></w:pPr><w:r><w:t>child zero after</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="Child"/><w:spacing w:before="160"/></w:pPr><w:r><w:t>direct before</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="Child"/><w:spacing w:line="480"/></w:pPr><w:r><w:t>direct line</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="Child"/><w:spacing/></w:pPr><w:r><w:t>empty spacing</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="Chapter"/><w:spacing w:before="0"/></w:pPr><w:r><w:t>heading spacing</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="Missing"/><w:spacing w:after="0"/></w:pPr><w:r><w:t>doc defaults only</w:t></w:r></w:p>
+          <w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r><w:t>direct zero after</w:t></w:r></w:p>
+          <w:p><w:r><w:t>default Normal again</w:t></w:r></w:p>
+        "#, r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:before="80" w:after="120" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+          <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:pPr><w:spacing w:after="240"/></w:pPr></w:style>
+          <w:style w:type="paragraph" w:styleId="Base"><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0"/></w:pPr></w:style>
+          <w:style w:type="paragraph" w:styleId="Child"><w:basedOn w:val="Base"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+          <w:style w:type="paragraph" w:styleId="Chapter"><w:basedOn w:val="Normal"/><w:pPr><w:outlineLvl w:val="1"/><w:spacing w:line="600" w:lineRule="auto"/></w:pPr></w:style>
+        </w:styles>"#);
+        let expected = [
+            (80, 240, 360), (0, 240, 360), (0, 0, 360), (160, 0, 360),
+            (0, 0, 480), (0, 0, 360), (0, 240, 600), (80, 0, 360),
+            (80, 0, 360), (80, 240, 360),
+        ];
+        let elements = &ir.sections[0].elements;
+        assert_eq!(elements.len(), expected.len());
+        for (index, &(before, after, line)) in expected.iter().enumerate() {
+            let actual = match &elements[index] {
+                Element::Paragraph(p) => (p.space_before_twips, p.space_after_twips, p.line_spacing.clone()),
+                Element::Heading(h) => {
+                    assert_eq!(index, 6);
+                    assert_eq!(h.level, 2);
+                    (h.space_before_twips, h.space_after_twips, h.line_spacing.clone())
+                },
+                _ => panic!("expected text block"),
+            };
+            assert_eq!(actual, (Some(before), Some(after), Some(LineSpacing::Auto(line))), "block {index}");
+        }
+        assert!(matches!(elements[6], Element::Heading(_)));
+    }
+
+    #[test]
+    fn paragraph_spacing_line_without_rule_resets_inherited_exact_to_auto() {
+        let ir = document_ir(r#"
+          <w:p><w:r><w:t>exact from default style</w:t></w:r></w:p>
+          <w:p><w:pPr><w:spacing w:line="360"/></w:pPr><w:r><w:t>auto from direct line</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="AutoChild"/></w:pPr><w:r><w:t>auto from child style</w:t></w:r></w:p>
+        "#, r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:pPr><w:spacing w:before="120" w:after="240" w:line="480" w:lineRule="exact"/></w:pPr></w:style>
+          <w:style w:type="paragraph" w:styleId="AutoChild"><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:line="600"/></w:pPr></w:style>
+        </w:styles>"#);
+        let expected = [LineSpacing::Exact(480), LineSpacing::Auto(360), LineSpacing::Auto(600)];
+        for (element, line) in ir.sections[0].elements.iter().zip(expected) {
+            let Element::Paragraph(p) = element else { panic!("expected paragraph") };
+            assert_eq!(p.space_before_twips, Some(120));
+            assert_eq!(p.space_after_twips, Some(240));
+            assert_eq!(p.line_spacing, Some(line));
+        }
+    }
+
+    #[test]
+    fn paragraph_spacing_applies_to_self_closing_body_and_table_cell_paragraphs() {
+        let ir = document_ir(r#"
+          <w:p/><w:p></w:p><w:p><w:r><w:t>between empty paragraphs</w:t></w:r></w:p><w:p/>
+          <w:tbl><w:tblPr><w:tblStyle w:val="TableSpace"/></w:tblPr><w:tr><w:tc><w:p/><w:p></w:p><w:p/></w:tc></w:tr></w:tbl>
+          <w:p/>
+        "#, r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:before="80" w:after="120" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+          <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:pPr><w:spacing w:after="240"/></w:pPr></w:style>
+          <w:style w:type="table" w:styleId="TableSpace"><w:pPr><w:spacing w:before="120" w:after="320" w:line="480"/></w:pPr></w:style>
+        </w:styles>"#);
+        let elements = &ir.sections[0].elements;
+        assert_eq!(elements.len(), 6, "every real empty paragraph keeps its position");
+        for index in [0, 1, 2, 3, 5] {
+            let Element::Paragraph(p) = &elements[index] else { panic!("expected paragraph") };
+            assert_eq!(p.content.is_empty(), index != 2);
+            assert_eq!(p.space_before_twips, Some(80));
+            assert_eq!(p.space_after_twips, Some(240));
+            assert_eq!(p.line_spacing, Some(LineSpacing::Auto(360)));
+        }
+        let Element::Table(table) = &elements[4] else { panic!("expected table") };
+        let content = &table.rows[0].cells[0].content;
+        assert_eq!(content.len(), 3, "self-closing and paired empty paragraphs are equivalent");
+        for element in content {
+            let Element::Paragraph(p) = element else { panic!("expected cell paragraph") };
+            assert!(p.content.is_empty());
+            assert_eq!(p.space_before_twips, Some(120));
+            assert_eq!(p.space_after_twips, Some(240));
+            assert_eq!(p.line_spacing, Some(LineSpacing::Auto(480)));
+        }
+    }
+
+    #[test]
+    fn paragraph_spacing_survives_numbered_empty_and_skipped_level_list_items() {
+        let ir = document_ir_with_parts(r#"
+          <w:p><w:pPr><w:pStyle w:val="ListBody"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr><w:spacing w:after="0"/></w:pPr><w:r><w:t>A</w:t><w:br/><w:t>continued</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="ListBody"/><w:numPr><w:ilvl w:val="2"/><w:numId w:val="1"/></w:numPr><w:spacing w:before="160" w:line="480"/></w:pPr><w:r><w:t>B</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="ListBody"/><w:numPr><w:ilvl w:val="2"/><w:numId w:val="1"/></w:numPr><w:spacing w:after="320"/></w:pPr></w:p>
+          <w:p><w:pPr><w:numPr><w:ilvl w:val="3"/><w:numId w:val="1"/></w:numPr><w:spacing w:before="200" w:after="0"/></w:pPr><w:r><w:t>C</w:t></w:r></w:p>
+          <w:p><w:pPr><w:pStyle w:val="ListBody"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr><w:spacing w:line="600"/></w:pPr><w:r><w:t>D</w:t></w:r></w:p>
+        "#, r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:before="80" w:after="120" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+          <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:pPr><w:spacing w:after="240"/></w:pPr></w:style>
+          <w:style w:type="paragraph" w:styleId="ListBody"><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0"/></w:pPr></w:style>
+        </w:styles>"#, None, None, Some(r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:abstractNum w:abstractNumId="0">
+            <w:lvl w:ilvl="0"><w:start w:val="5"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>
+            <w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="○"/></w:lvl>
+            <w:lvl w:ilvl="3"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%4)"/></w:lvl>
+          </w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+        </w:numbering>"#));
+        assert_eq!(ir.sections[0].elements.len(), 1);
+        let Element::List(list) = &ir.sections[0].elements[0] else { panic!("expected list") };
+        assert!(list.ordered);
+        assert_eq!(list.start_number, Some(5));
+        assert_eq!(list.style, Some(ListStyle::Decimal));
+        assert_eq!(list.items.len(), 2);
+        let nested = list.items[0].nested.as_ref().unwrap();
+        assert!(!nested.ordered);
+        assert_eq!(nested.style, Some(ListStyle::Circle));
+        assert_eq!(nested.items.len(), 2, "skipped levels must not add dummy items");
+        let deepest = nested.items[1].nested.as_ref().unwrap();
+        assert!(deepest.ordered);
+        assert_eq!(deepest.style, Some(ListStyle::LowerAlpha));
+        assert_eq!(deepest.marker_pattern.as_deref(), Some("%4)"));
+        assert_eq!(deepest.items.len(), 1);
+        let items = [&list.items[0], &nested.items[0], &nested.items[1], &deepest.items[0], &list.items[1]];
+        let expected = [(0, 0, 360), (160, 240, 480), (0, 320, 360), (200, 0, 360), (0, 240, 600)];
+        for (index, (item, (before, after, line))) in items.into_iter().zip(expected).enumerate() {
+            assert_eq!(item.content.len(), 1, "real empty numbered paragraphs retain their spacing");
+            let Element::Paragraph(p) = &item.content[0] else { panic!("expected paragraph") };
+            assert_eq!(p.space_before_twips, Some(before), "item {index}");
+            assert_eq!(p.space_after_twips, Some(after), "item {index}");
+            assert_eq!(p.line_spacing, Some(LineSpacing::Auto(line)), "item {index}");
+            if index == 0 {
+                assert!(p.content.iter().any(|c| matches!(c, InlineContent::LineBreak)));
+            } else if index == 2 {
+                assert!(p.content.is_empty());
+            }
+        }
     }
 
     #[test]

@@ -58,7 +58,9 @@ async function operation(label: string, action: () => Promise<void>) {
   catch (error) {
     const message = String(error).includes('Hidden text cannot be preserved in an editable copy')
       ? '文档含隐藏文字声明，暂不能创建编辑副本，以免丢失内容。原文件保持不变；只读正文可能不显示隐藏文字。未使用或已覆盖的隐藏样式也会保守拦截。'
-      : String(error);
+      : String(error).includes('Unsupported paragraph spacing cannot be preserved in an editable copy')
+        ? '文档包含暂不支持的段落间距、行距或网格声明，无法创建编辑副本。已使用样式链中的不支持声明也会保守拦截；原文件保持不变。'
+        : String(error);
     notice(`操作未完成：${message}`, true);
   }
   finally { busy = false; pauseAuthoring(false); pauseWorkbook(false); pausePresentation(false); el('status').textContent = '就绪'; controls(); }
@@ -257,13 +259,13 @@ el('import-document').addEventListener('click', () => operation('正在准备编
     'Legacy whitespace and paragraph boundaries may be normalized': '旧版文档的空白和段落边界可能改变',
     'Page layout, fonts and pagination require visual verification': '页面布局、字体和分页需要人工核对',
     'Section and page geometry': '分节、纸张尺寸和页边距不保留',
-    'Typography, spacing or alignment outside the basic editor model': '可解析的字体名称、字号与 RGB 颜色会保留；自动色、间距和复杂样式可能改变',
+    'Typography, spacing or alignment outside the basic editor model': '可解析的字体名称、字号与 RGB 颜色会保留；DOCX 中受支持的段前/段后间距和倍数行距会保留；自动色和复杂样式可能改变',
     'Font names are preserved; unavailable fonts may be substituted locally': '保留可解析的字体名称；未安装的字体由本机替代，请核对显示效果',
     'Parser warning: DOCX_FONT_THEME_UNRESOLVED': '部分主题字体无法确定，相关文字使用编辑器默认字体，请核对原文',
   'Theme and automatic text colors normalized to fixed RGB or editor defaults': '主题色近似转为固定 RGB；自动色或无法解析的主题色使用编辑器默认颜色，不保留主题联动',
   'Custom theme color mapping is unsupported': '文档使用了自定义主题颜色映射，暂时只能只读查看',
   'Unsupported theme color scheme content': '文字引用的主题包含尚不支持的颜色来源或变换，暂时只能只读查看',
-  'Default document style normalized in editable copy': '编辑副本使用统一的正文和标题默认样式；保留可解析的字体名称、字号与颜色，请核对字体和换页',
+  'Default document style normalized in editable copy': '编辑副本使用统一的正文和标题默认样式；保留可解析的字体名称、字号与颜色；DOCX 有效段落间距单独保留，请核对字体和换页',
     'List marker appearance normalized to editor defaults': '列表编号外观改为编辑器默认样式',
     'Table widths, borders and cell formatting normalized': '表格宽度、边框和单元格格式改为默认样式',
     'Image position and display dimensions normalized': '图片位置和显示尺寸会改变',

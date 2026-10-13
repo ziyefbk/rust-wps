@@ -4,6 +4,10 @@
 .editor-toolbar select { background:white; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; }
 .editor-toolbar button.active { background:#e6effb; color:var(--blue); }
 .font-size-control { display:flex; align-items:center; gap:5px; white-space:nowrap; }
+#paragraph-spacing-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#paragraph-spacing-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+#paragraph-spacing-controls input { width:5.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
+#paragraph-spacing-controls #edit-line-spacing { width:6.5em; }
 .font-family-control { display:flex; align-items:center; gap:5px; white-space:nowrap; }
 #edit-font-family { width:12em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
 #edit-font-size { width:5.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }

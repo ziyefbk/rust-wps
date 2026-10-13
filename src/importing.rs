@@ -73,7 +73,7 @@ pub fn import_doc(path: &Path) -> Result<ImportReport> {
         "DOC structural conversion reported uncertainty: {:?}",
         ir.metadata.warnings
     );
-    let mut report = convert_ir(ir, compatibility)?;
+    let mut report = convert_ir(ir, compatibility, false)?;
     // Only the unstructured fallback needs blank-line recovery. Structured
     // paragraphs now preserve real blank paragraphs and manual page breaks;
     // never reconstruct their boundaries from flattened plain text.
@@ -144,6 +144,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
                 risk.as_str(),
                 "Tracked changes"
                     | crate::compatibility::HIDDEN_TEXT_RISK
+                    | crate::compatibility::PARAGRAPH_SPACING_RISK
                     | "Custom theme color mapping is unsupported"
                     | "Unsupported theme color scheme content"
                     | "Unsupported or unresolved hyperlink target"
@@ -161,12 +162,29 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         std::io::Cursor::new(bytes),
         office_oxide::DocumentFormat::Docx,
     )?;
-    convert_ir(parsed.to_ir(), compatibility)
+    let mut report = convert_ir(parsed.to_ir(), compatibility, true)?;
+    // Missing effective DOCX spacing means OOXML's zero paragraph gaps and
+    // single line spacing, not the editable profile's 6 pt / 1.5 defaults.
+    // Trusted authored models bypass external conversion and retain omission.
+    fn materialize(node: &mut Node) {
+        if matches!(node.kind.as_str(), "paragraph" | "heading") {
+            for (key, value) in [("spaceBefore", 0), ("spaceAfter", 0), ("lineSpacing", 240)] {
+                node.attrs.entry(key).or_insert(value.into());
+            }
+        }
+        for child in &mut node.content {
+            materialize(child);
+        }
+    }
+    materialize(&mut report.document);
+    crate::document::validate(&report.document)?;
+    Ok(report)
 }
 
 fn convert_ir(
     ir: office_oxide::ir::DocumentIR,
     mut compatibility: CompatibilityReport,
+    spacing: bool,
 ) -> Result<ImportReport> {
     for warning in &ir.metadata.warnings {
         compatibility
@@ -186,7 +204,7 @@ fn convert_ir(
                 && section.even_page_footer.is_none(),
             "Import cannot preserve headers or footers; source remains read-only"
         );
-        content.extend(blocks(&section.elements, 0, &mut compatibility)?);
+        content.extend(blocks(&section.elements, 0, &mut compatibility, spacing)?);
     }
     if content.is_empty() {
         content.push(node("paragraph", vec![]));
@@ -331,16 +349,21 @@ fn inline(items: &[InlineContent], report: &mut CompatibilityReport) -> Result<V
     Ok(out)
 }
 
-fn list(value: &List, depth: usize, report: &mut CompatibilityReport) -> Result<Node> {
+fn list(
+    value: &List,
+    depth: usize,
+    report: &mut CompatibilityReport,
+    spacing: bool,
+) -> Result<Node> {
     ensure!(depth <= 24, "Import nesting exceeds limits");
     let mut items = Vec::new();
     for item in &value.items {
-        let mut children = blocks(&item.content, depth + 1, report)?;
+        let mut children = blocks(&item.content, depth + 1, report, spacing)?;
         if children.is_empty() {
             children.push(node("paragraph", vec![]));
         }
         if let Some(nested) = &item.nested {
-            children.push(list(nested, depth + 1, report)?);
+            children.push(list(nested, depth + 1, report, spacing)?);
         }
         items.push(node("listItem", children));
     }
@@ -367,6 +390,7 @@ fn blocks(
     elements: &[Element],
     depth: usize,
     report: &mut CompatibilityReport,
+    spacing: bool,
 ) -> Result<Vec<Node>> {
     ensure!(
         depth <= 24 && elements.len() <= 10000,
@@ -378,6 +402,14 @@ fn blocks(
             Element::Paragraph(p) => {
                 let mut value = node("paragraph", inline(&p.content, report)?);
                 preserve_alignment(&mut value, p.alignment.as_ref())?;
+                if spacing {
+                    preserve_spacing(
+                        &mut value,
+                        p.space_before_twips,
+                        p.space_after_twips,
+                        p.line_spacing.as_ref(),
+                    )?;
+                }
                 value
             }
             Element::Heading(h) => {
@@ -388,9 +420,17 @@ fn blocks(
                 );
                 value.attrs.insert("level".into(), h.level.into());
                 preserve_alignment(&mut value, h.alignment.as_ref())?;
+                if spacing {
+                    preserve_spacing(
+                        &mut value,
+                        h.space_before_twips,
+                        h.space_after_twips,
+                        h.line_spacing.as_ref(),
+                    )?;
+                }
                 value
             }
-            Element::List(l) => list(l, depth + 1, report)?,
+            Element::List(l) => list(l, depth + 1, report, spacing)?,
             Element::Table(t) => {
                 let mut rows = Vec::new();
                 for row in &t.rows {
@@ -400,7 +440,7 @@ fn blocks(
                             cell.col_span <= 1 && cell.row_span <= 1,
                             "Merged table cells require a richer editor model"
                         );
-                        let mut content = blocks(&cell.content, depth + 1, report)?;
+                        let mut content = blocks(&cell.content, depth + 1, report, spacing)?;
                         if content.is_empty() {
                             content.push(node("paragraph", vec![]));
                         }
@@ -471,6 +511,38 @@ fn blocks(
     Ok(result)
 }
 
+fn preserve_spacing(
+    node: &mut Node,
+    before: Option<u32>,
+    after: Option<u32>,
+    line: Option<&office_oxide::ir::LineSpacing>,
+) -> Result<()> {
+    for (key, value) in [("spaceBefore", before), ("spaceAfter", after)] {
+        if let Some(value) = value {
+            ensure!(
+                value <= 31680,
+                "Import cannot preserve {key} outside 0–31680 twips; source remains read-only"
+            );
+            node.attrs.insert(key.into(), value.into());
+        }
+    }
+    if let Some(line) = line {
+        use office_oxide::ir::LineSpacing;
+        let (LineSpacing::Auto(value) | LineSpacing::Multiple(value)) = line else {
+            bail!(
+                "{}; source remains read-only",
+                crate::compatibility::PARAGRAPH_SPACING_RISK
+            );
+        };
+        ensure!(
+            (120..=2400).contains(value),
+            "Import cannot preserve lineSpacing outside 120–2400 units; source remains read-only"
+        );
+        node.attrs.insert("lineSpacing".into(), (*value).into());
+    }
+    Ok(())
+}
+
 fn preserve_alignment(
     node: &mut Node,
     alignment: Option<&office_oxide::ir::ParagraphAlignment>,
@@ -522,7 +594,7 @@ mod side_story_tests {
                 fidelity_verified: false,
             };
             assert!(
-                convert_ir(ir, report)
+                convert_ir(ir, report, true)
                     .unwrap_err()
                     .to_string()
                     .contains("headers or footers")

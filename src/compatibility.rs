@@ -7,6 +7,392 @@ use std::{collections::BTreeSet, io::Read, path::Path};
 
 pub(crate) const HIDDEN_TEXT_RISK: &str = "Hidden text cannot be preserved in an editable copy";
 
+pub(crate) const PARAGRAPH_SPACING_RISK: &str =
+    "Unsupported paragraph spacing cannot be preserved in an editable copy";
+
+// Audit declarations before conversion can clamp negative values, default an
+// unknown line rule, or discard automatic/contextual/grid behavior. Only used
+// style chains are inspected, so unrelated template styles do not block editing.
+fn has_unsupported_paragraph_spacing(data: &[u8], used: &BTreeSet<String>) -> Result<bool> {
+    let mut reader = Reader::from_reader(data);
+    let mut stack: Vec<String> = Vec::new();
+    let mut unsupported = false;
+    let mut unused_style_depth = None;
+    loop {
+        let event = reader.read_event()?;
+        let start = matches!(&event, Event::Start(_));
+        match event {
+            Event::Start(e) | Event::Empty(e) => {
+                let local = e.local_name();
+                let tag = local.as_ref();
+                if tag == "style" && start {
+                    let mut id = None;
+                    for attribute in e.attributes() {
+                        let attribute = attribute?;
+                        if attribute.key.as_ref() == "w:styleId" {
+                            id = Some(
+                                attribute
+                                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)?
+                                    .into_owned(),
+                            );
+                        }
+                    }
+                    if id.as_ref().is_some_and(|id| !used.contains(id)) {
+                        unused_style_depth = Some(stack.len());
+                    }
+                }
+                if unused_style_depth.is_some() {
+                    if start {
+                        stack.push(tag.to_owned());
+                    }
+                    continue;
+                }
+                if tag == "spacing" && stack.last().is_some_and(|tag| tag == "pPr") {
+                    let mut has_line = false;
+                    let mut has_rule = false;
+                    for attribute in e.attributes() {
+                        let attribute = attribute?;
+                        let local = attribute.key.local_name();
+                        let key = local.as_ref();
+                        let value =
+                            attribute.normalized_value(quick_xml::XmlVersion::Implicit1_0)?;
+                        // The vendor reader uses literal w: attributes. Do not
+                        // claim preservation of an equivalent unconsumed prefix.
+                        if matches!(
+                            key,
+                            "before"
+                                | "after"
+                                | "line"
+                                | "lineRule"
+                                | "beforeAutospacing"
+                                | "afterAutospacing"
+                                | "beforeLines"
+                                | "afterLines"
+                        ) && attribute.key.as_ref() != format!("w:{key}")
+                        {
+                            unsupported = true;
+                        }
+                        match key {
+                            "before" | "after" | "line" => {
+                                has_line |= key == "line";
+                                let (min, max) = if key == "line" {
+                                    (120, 2400)
+                                } else {
+                                    (0, 31680)
+                                };
+                                let valid = !value.is_empty()
+                                    && value.bytes().all(|byte| byte.is_ascii_digit())
+                                    && value
+                                        .parse::<u32>()
+                                        .is_ok_and(|value| (min..=max).contains(&value));
+                                unsupported |= !valid;
+                            }
+                            "lineRule" => {
+                                has_rule = true;
+                                unsupported |= value != "auto";
+                            }
+                            "beforeAutospacing" | "afterAutospacing" => {
+                                unsupported |= !matches!(value.as_ref(), "0" | "false" | "off")
+                            }
+                            "beforeLines" | "afterLines" => unsupported = true,
+                            _ => {}
+                        }
+                    }
+                    unsupported |= has_rule && !has_line;
+                } else if tag == "contextualSpacing" {
+                    unsupported |= may_hide_text(&e)?;
+                } else if tag == "docGrid" {
+                    let mut explicit_default = true;
+                    for attribute in e.attributes() {
+                        let attribute = attribute?;
+                        if attribute.key.local_name().as_ref() == "type" {
+                            explicit_default = attribute.key.as_ref() == "w:type"
+                                && attribute
+                                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)?
+                                    == "default";
+                        }
+                    }
+                    unsupported |= !explicit_default;
+                }
+                if start {
+                    stack.push(tag.to_owned());
+                }
+            }
+            Event::End(_) => {
+                stack.pop();
+                if unused_style_depth == Some(stack.len()) {
+                    unused_style_depth = None;
+                }
+            }
+            Event::DocType(_) => anyhow::bail!("DTD is not supported in DOCX XML"),
+            Event::Eof => return Ok(unsupported),
+            _ => {}
+        }
+    }
+}
+
+// Use the same parsed style identities and references as the converter. Raw
+// spacing is still audited below, before lossy conversion; foreign attributes
+// cannot shadow the literal w: keys used by the parser.
+fn w_attribute(e: &quick_xml::events::BytesStart<'_>, name: &str) -> Result<Option<String>> {
+    for attribute in e.attributes() {
+        let attribute = attribute?;
+        if attribute.key.as_ref() == format!("w:{name}") {
+            return Ok(Some(
+                attribute
+                    .normalized_value(quick_xml::XmlVersion::Implicit1_0)?
+                    .into_owned(),
+            ));
+        }
+    }
+    Ok(None)
+}
+
+type NumberingUsage = BTreeSet<(u32, u8)>;
+fn spacing_usage(main: &[u8], styles: &[u8]) -> Result<(BTreeSet<String>, NumberingUsage)> {
+    use office_oxide::docx::{ParagraphProperties, formatting::NumberingRef};
+    let sheet = office_oxide::docx::styles::StyleSheet::parse(styles)?;
+    let mut used = BTreeSet::new();
+    let mut numbers = BTreeSet::new();
+    let mut paragraph: Option<ParagraphProperties> = None;
+    let mut stack: Vec<String> = Vec::new();
+    let mut tables = Vec::new();
+    let mut default_tables = BTreeSet::new();
+    let mut reader = quick_xml::NsReader::from_reader(main);
+    loop {
+        let (namespace, event) = reader.read_resolved_event()?;
+        let wml = matches!(namespace, quick_xml::name::ResolveResult::Bound(ns)
+            if matches!(ns.as_ref(), "http://schemas.openxmlformats.org/wordprocessingml/2006/main" | "http://purl.oclc.org/ooxml/wordprocessingml/main"));
+        let empty = matches!(&event, Event::Empty(_));
+        match event {
+            Event::Start(e) | Event::Empty(e) => {
+                let local = e.local_name();
+                ensure!(
+                    wml || !matches!(
+                        local.as_ref(),
+                        "p" | "pPr"
+                            | "pStyle"
+                            | "tbl"
+                            | "tblPr"
+                            | "tblStyle"
+                            | "numPr"
+                            | "numId"
+                            | "ilvl"
+                    ),
+                    "{PARAGRAPH_SPACING_RISK}"
+                );
+                let tag = if wml { local.as_ref() } else { "" };
+                let direct = stack.ends_with(&["p".into(), "pPr".into()]);
+                let numbering = stack.ends_with(&["p".into(), "pPr".into(), "numPr".into()]);
+                match tag {
+                    "p" => {
+                        paragraph = Some(ParagraphProperties::default());
+                        if empty {
+                            if let Some(id) = &sheet.default_paragraph_style_id {
+                                used.insert(id.clone());
+                            }
+                            if let Some(nr) =
+                                sheet.effective_paragraph_properties(None).numbering_ref
+                            {
+                                numbers.insert((nr.num_id, nr.ilvl));
+                            }
+                            paragraph = None;
+                        }
+                    }
+                    "pStyle" if direct => {
+                        if let Some(p) = &mut paragraph {
+                            p.style_id = w_attribute(&e, "val")?;
+                        }
+                    }
+                    "tbl" => tables.push(false),
+                    "tblStyle" if stack.ends_with(&["tbl".into(), "tblPr".into()]) => {
+                        if let Some(id) = w_attribute(&e, "val")? {
+                            used.insert(id);
+                            if let Some(explicit) = tables.last_mut() {
+                                *explicit = true;
+                            }
+                        }
+                    }
+                    "numPr" if direct => {
+                        if let Some(p) = &mut paragraph {
+                            p.numbering_ref = Some(NumberingRef { num_id: 0, ilvl: 0 });
+                        }
+                    }
+                    "numId" if numbering => {
+                        if let Some(nr) = paragraph.as_mut().and_then(|p| p.numbering_ref.as_mut())
+                        {
+                            nr.num_id = w_attribute(&e, "val")?
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0);
+                        }
+                    }
+                    "ilvl" if numbering => {
+                        if let Some(nr) = paragraph.as_mut().and_then(|p| p.numbering_ref.as_mut())
+                        {
+                            nr.ilvl = w_attribute(&e, "val")?
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(0);
+                        }
+                    }
+                    _ => {}
+                }
+                if !empty {
+                    stack.push(tag.to_owned());
+                }
+            }
+            Event::End(e) => {
+                stack.pop();
+                if wml && e.local_name().as_ref() == "tbl" && tables.pop() == Some(false) {
+                    for style in sheet.styles.values().filter(|s| {
+                        s.is_default && s.style_type == office_oxide::docx::styles::StyleType::Table
+                    }) {
+                        default_tables.insert(style.style_id.clone());
+                        used.insert(style.style_id.clone());
+                    }
+                }
+                if !wml || e.local_name().as_ref() != "p" {
+                    continue;
+                }
+                if let Some(p) = paragraph.take() {
+                    if let Some(id) = p
+                        .style_id
+                        .as_ref()
+                        .or(sheet.default_paragraph_style_id.as_ref())
+                    {
+                        used.insert(id.clone());
+                    }
+                    if let Some(nr) = sheet.effective_paragraph_properties(Some(&p)).numbering_ref {
+                        numbers.insert((nr.num_id, nr.ilvl));
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    // The converter does not select an implicit default table style. Refuse
+    // its spacing rather than treating those cell paragraphs as unformatted.
+    let mut default_pending: Vec<_> = default_tables.iter().cloned().collect();
+    while let Some(id) = default_pending.pop() {
+        if let Some(style) = sheet.styles.get(&id) {
+            ensure!(
+                style
+                    .paragraph_properties
+                    .iter()
+                    .chain(
+                        style
+                            .table_conditionals
+                            .iter()
+                            .filter_map(|c| c.paragraph_properties.as_ref())
+                    )
+                    .all(|p| p.spacing.is_none()),
+                "{PARAGRAPH_SPACING_RISK}"
+            );
+            if let Some(base) = &style.based_on
+                && default_tables.insert(base.clone())
+            {
+                default_pending.push(base.clone());
+            }
+        }
+    }
+    let mut pending: Vec<_> = used.iter().cloned().collect();
+    while let Some(id) = pending.pop() {
+        if let Some(style) = sheet.styles.get(&id) {
+            if let Some(base) = &style.based_on
+                && used.insert(base.clone())
+            {
+                pending.push(base.clone());
+            }
+            // A table layer may supply numbering. Including its declared
+            // references is conservative when a paragraph overrides them.
+            if style.style_type == office_oxide::docx::styles::StyleType::Table {
+                for props in style.paragraph_properties.iter().chain(
+                    style
+                        .table_conditionals
+                        .iter()
+                        .filter_map(|c| c.paragraph_properties.as_ref()),
+                ) {
+                    if let Some(nr) = &props.numbering_ref {
+                        numbers.insert((nr.num_id, nr.ilvl));
+                    }
+                }
+            }
+        }
+    }
+    numbers.retain(|(id, _)| *id != 0);
+    Ok((used, numbers))
+}
+
+fn unsupported_numbering_spacing(data: &[u8], used: &NumberingUsage) -> Result<bool> {
+    let definitions = office_oxide::docx::numbering::NumberingDefinitions::parse(data)?;
+    let abstracts: BTreeSet<_> = used
+        .iter()
+        .filter_map(|(id, level)| {
+            definitions
+                .instances
+                .get(id)
+                .map(|instance| (instance.abstract_num_id, *level))
+        })
+        .collect();
+    let mut reader = Reader::from_reader(data);
+    let mut scope = None;
+    let mut level = None;
+    let mut in_paragraph_properties = false;
+    loop {
+        match reader.read_event()? {
+            Event::Start(e) | Event::Empty(e) => {
+                let local = e.local_name();
+                let tag = local.as_ref();
+                match tag {
+                    "abstractNum" | "num" => {
+                        scope = w_attribute(
+                            &e,
+                            if tag == "num" {
+                                "numId"
+                            } else {
+                                "abstractNumId"
+                            },
+                        )?
+                        .map(|v| v.parse::<u32>().unwrap_or(0))
+                        .map(|id| (tag == "num", id))
+                    }
+                    "lvl" => {
+                        level = Some(
+                            w_attribute(&e, "ilvl")?
+                                .and_then(|v| v.parse::<u8>().ok())
+                                .unwrap_or(0),
+                        )
+                    }
+                    "pPr" => in_paragraph_properties = true,
+                    "spacing" | "contextualSpacing" if in_paragraph_properties => {
+                        let active = scope.zip(level).is_some_and(|((instance, id), level)| {
+                            if instance {
+                                used.contains(&(id, level))
+                            } else {
+                                abstracts.contains(&(id, level))
+                            }
+                        });
+                        // Numbering-level paragraph spacing is not retained by
+                        // the vendor IR. Never claim those declarations survive.
+                        if active && (tag == "spacing" || may_hide_text(&e)?) {
+                            return Ok(true);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Event::End(e) => match e.local_name().as_ref() {
+                "num" | "abstractNum" => scope = None,
+                "lvl" => level = None,
+                "pPr" => in_paragraph_properties = false,
+                _ => {}
+            },
+            Event::Eof => return Ok(false),
+            _ => {}
+        }
+    }
+}
+
 // The current parser recognizes toggle attributes by the literal `w:val`
 // spelling. A different prefix (even bound to the same namespace) would be
 // treated as missing/true downstream, so it must not bypass this guard.
@@ -96,6 +482,9 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
         if has_hidden_text_declaration(&main_xml)? {
             report.risks.insert(HIDDEN_TEXT_RISK.into());
         }
+        if has_unsupported_paragraph_spacing(&main_xml, &BTreeSet::new())? {
+            report.risks.insert(PARAGRAPH_SPACING_RISK.into());
+        }
         normalized_main = Some(main_xml);
         let relationships = package.read_rels_for(&main)?;
         // Side stories are identified by OPC relationship type, never by
@@ -117,12 +506,41 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
                 ));
             }
         }
-        if let Some(styles) = relationships.first_by_type(rel_types::STYLES) {
-            let target = main.resolve_relative(&styles.target)?;
-            if has_hidden_text_declaration(&package.read_part(&target)?)? {
-                report.risks.insert(HIDDEN_TEXT_RISK.into());
+        let mut spacing_parts = std::collections::BTreeMap::new();
+        for kind in [rel_types::STYLES, rel_types::NUMBERING, rel_types::SETTINGS] {
+            if let Some(relationship) = relationships.first_by_type(kind) {
+                let target = main.resolve_relative(&relationship.target)?;
+                spacing_parts.insert(kind, package.read_part(&target)?);
             }
         }
+        let empty_styles = br#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+        let styles = spacing_parts
+            .get(rel_types::STYLES)
+            .map(Vec::as_slice)
+            .unwrap_or(empty_styles);
+        let (used, numbers) =
+            spacing_usage(normalized_main.as_deref().expect("main read"), styles)?;
+        if has_hidden_text_declaration(styles)? {
+            report.risks.insert(HIDDEN_TEXT_RISK.into());
+        }
+        if has_unsupported_paragraph_spacing(styles, &used)? {
+            report.risks.insert(PARAGRAPH_SPACING_RISK.into());
+        }
+        if let Some(data) = spacing_parts.get(rel_types::NUMBERING)
+            && unsupported_numbering_spacing(data, &numbers)?
+        {
+            report.risks.insert(PARAGRAPH_SPACING_RISK.into());
+        }
+        if let Some(data) = spacing_parts.get(rel_types::SETTINGS)
+            && has_unsupported_paragraph_spacing(data, &BTreeSet::new())?
+        {
+            report.risks.insert(PARAGRAPH_SPACING_RISK.into());
+        }
+    }
+    if normalized_main.is_none()
+        && has_unsupported_paragraph_spacing(&parts["word/document.xml"], &BTreeSet::new())?
+    {
+        report.risks.insert(PARAGRAPH_SPACING_RISK.into());
     }
     if let Some(data) = parts.get("word/_rels/document.xml.rels") {
         let mut reader = Reader::from_reader(data.as_slice());
@@ -310,7 +728,9 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
                         }
                     }
                     let risk = match tag {
-                        "ins" | "del" | "moveFrom" | "moveTo" => Some("Tracked changes"),
+                        "ins" | "del" | "moveFrom" | "moveTo" | "pPrChange" | "rPrChange" => {
+                            Some("Tracked changes")
+                        }
                         "fldChar" | "fldSimple" | "instrText" => Some("Fields and generated text"),
                         "gridSpan" | "vMerge" | "hMerge" => Some("Merged table cells"),
                         "hyperlink" => Some("Hyperlinks"),

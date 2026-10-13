@@ -720,9 +720,9 @@ impl RunProperties {
 impl ParagraphProperties {
     /// Overlay `src` on top of `self`. See [`RunProperties::overlay`].
     ///
-    /// `run_properties` is merged recursively rather than replaced, so a
-    /// paragraph style that sets only the font does not wipe out the bold
-    /// flag its parent style set.
+    /// `run_properties` and `spacing` are merged recursively rather than
+    /// replaced, so a paragraph style that sets only one component does
+    /// not wipe out the other values inherited from its parent.
     pub fn overlay(&mut self, src: &ParagraphProperties) {
         macro_rules! take {
             ($($f:ident),* $(,)?) => {$(
@@ -733,7 +733,6 @@ impl ParagraphProperties {
             style_id,
             justification,
             indent,
-            spacing,
             numbering_ref,
             outline_level,
             frame_position,
@@ -744,6 +743,9 @@ impl ParagraphProperties {
             page_break_before,
             shading,
         );
+        if let Some(src) = src.spacing.as_ref() {
+            self.spacing.get_or_insert_with(Default::default).overlay(src);
+        }
         if !src.tabs.is_empty() {
             self.tabs = src.tabs.clone();
         }
@@ -846,6 +848,24 @@ pub struct ParagraphSpacing {
     pub after: Option<Twip>,
     /// Line spacing value and rule.
     pub line: Option<SpacingLine>,
+}
+
+impl ParagraphSpacing {
+    /// Each spacing component inherits independently. In particular,
+    /// an explicit zero overrides an inherited value, while omission
+    /// leaves it alone. Keep the line value and its rule paired: a new
+    /// `w:line` without `w:lineRule` means auto, not the parent's rule.
+    fn overlay(&mut self, src: &Self) {
+        if src.before.is_some() {
+            self.before = src.before;
+        }
+        if src.after.is_some() {
+            self.after = src.after;
+        }
+        if src.line.is_some() {
+            self.line = src.line.clone();
+        }
+    }
 }
 
 /// Line spacing rule and value.
@@ -1852,6 +1872,58 @@ fn parse_num_pr(reader: &mut quick_xml::NsReader<&[u8]>) -> crate::core::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paragraph_spacing_overlay_preserves_omission_and_explicit_zero() {
+        let properties = |attrs: &str| ParagraphProperties {
+            spacing: Some(parse_spacing(&BytesStart::from_content(
+                format!("w:spacing {attrs}"), "w:spacing".len(),
+            )).unwrap()),
+            ..Default::default()
+        };
+        let mut effective = properties(r#"w:before="120" w:after="240" w:line="360" w:lineRule="auto""#);
+        for (attrs, before, after, line) in [
+            (r#"w:before="0""#, 0, 240, 360),
+            (r#"w:after="0""#, 0, 0, 360),
+            (r#"w:line="0" w:lineRule="auto""#, 0, 0, 0),
+            ("", 0, 0, 0),
+            (r#"w:after="160""#, 0, 160, 0),
+        ] {
+            effective.overlay(&properties(attrs));
+            let spacing = effective.spacing.as_ref().unwrap();
+            assert_eq!(spacing.before, Some(Twip(before)), "{attrs}");
+            assert_eq!(spacing.after, Some(Twip(after)), "{attrs}");
+            assert_eq!(spacing.line.as_ref().unwrap().value, line, "{attrs}");
+            assert_eq!(spacing.line.as_ref().unwrap().rule, Some(LineSpacingRule::Auto));
+        }
+        effective.overlay(&ParagraphProperties::default());
+        assert_eq!(effective.spacing.unwrap().after, Some(Twip(160)));
+    }
+
+    #[test]
+    fn paragraph_spacing_overlay_keeps_line_value_and_rule_paired() {
+        let mut inherited = ParagraphProperties {
+            spacing: Some(ParagraphSpacing {
+                before: Some(Twip(120)),
+                after: Some(Twip(240)),
+                line: Some(SpacingLine { value: 480, rule: Some(LineSpacingRule::Exact) }),
+            }),
+            ..Default::default()
+        };
+        inherited.overlay(&ParagraphProperties {
+            spacing: Some(ParagraphSpacing {
+                line: Some(SpacingLine { value: 360, rule: None }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let spacing = inherited.spacing.unwrap();
+        assert_eq!(spacing.before, Some(Twip(120)));
+        assert_eq!(spacing.after, Some(Twip(240)));
+        let line = spacing.line.unwrap();
+        assert_eq!(line.value, 360);
+        assert_eq!(line.rule, None, "an omitted rule on a new line value resets to auto");
+    }
 
     #[test]
     fn word_color_parser_accepts_word_slots_and_validates_transforms() {

@@ -137,6 +137,7 @@ fn assert_color_copy_roundtrip(document: &Node, path: &Path) {
         "direct authored reopening preserves default versus explicit marks"
     );
     let mut expected = document.clone();
+    common::materialize_standard_spacing(&mut expected);
     // External conversion resolves the new profile's declared default color.
     // A direct authored reopen above must still preserve the original model.
     fn materialize_default(node: &mut Node) {
