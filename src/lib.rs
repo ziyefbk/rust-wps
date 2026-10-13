@@ -3,6 +3,7 @@ mod image_dimensions;
 mod page_geometry;
 mod paragraph_contextual_spacing;
 mod paragraph_indentation;
+mod pdf_snapshot;
 mod presentation_vertical;
 mod table_cell_colors;
 mod table_vertical;
@@ -58,22 +59,24 @@ pub fn inspect_for_preview(path: &Path) -> Result<Inspection> {
 fn inspect_with_policy(path: &Path, allow_pdf_text_failure: bool) -> Result<Inspection> {
     let started = Instant::now();
     let mut file = File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
-    let bytes = file.metadata()?.len();
-    // A coarse input guard, not a decompression or parser resource sandbox.
-    if bytes > 64 * 1024 * 1024 {
-        bail!("Exploration limit: input must be at most 64 MiB");
-    }
     let format = path
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+    if format == "pdf" {
+        return pdf_snapshot::inspect(file, allow_pdf_text_failure, started);
+    }
+    let bytes = file.metadata()?.len();
+    // A coarse input guard, not a decompression or parser resource sandbox.
+    if bytes > 64 * 1024 * 1024 {
+        bail!("Exploration limit: input must be at most 64 MiB");
+    }
     let mut signature = [0u8; 8];
     let n = file.read(&mut signature)?;
     let valid = match format.as_str() {
         "doc" => n == 8 && signature == [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1],
         "docx" => signature[..n].starts_with(b"PK\x03\x04"),
-        "pdf" => signature[..n].starts_with(b"%PDF-"),
         _ => bail!("Unsupported format: {format}. Phase 1 accepts DOC, DOCX and PDF"),
     };
     if !valid {
@@ -81,7 +84,6 @@ fn inspect_with_policy(path: &Path, allow_pdf_text_failure: bool) -> Result<Insp
             "File signature does not match .{format}; RTF/HTML disguised as DOC are not supported yet"
         );
     }
-    let mut text_error = None;
     let (backend, text, mut warnings) = match format.as_str() {
         "doc" | "docx" => {
             file.rewind()?;
@@ -100,24 +102,6 @@ fn inspect_with_policy(path: &Path, allow_pdf_text_failure: bool) -> Result<Insp
                 "Text extraction only; formatting, pagination and lossless editing are not verified".into(),
             ])
         }
-        "pdf" => {
-            let text = match pdf_extract::extract_text(path) {
-                Ok(text) => text,
-                Err(error) if allow_pdf_text_failure => {
-                    text_error = Some(format!("{error}"));
-                    String::new()
-                }
-                Err(error) => {
-                    return Err(error).context(
-                        "PDF parser failed (encrypted or malformed PDF may be unsupported)",
-                    );
-                }
-            };
-            ("pdf-extract 0.12.1", text, vec![
-            "Text order and Chinese font mappings require verification; this is not a page renderer".into(),
-            "Scanned PDF requires OCR, which is not implemented".into(),
-        ])
-        }
         _ => unreachable!(),
     };
     if text.trim().is_empty() {
@@ -130,6 +114,6 @@ fn inspect_with_policy(path: &Path, allow_pdf_text_failure: bool) -> Result<Insp
         elapsed_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
         text,
         warnings,
-        text_error,
+        text_error: None,
     })
 }

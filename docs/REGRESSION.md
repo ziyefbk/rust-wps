@@ -1,5 +1,40 @@
 # 当前跨格式回归记录
 
+## 本轮：PDF 同源有界提取快照（2026-10-13）
+
+基于 `2215210b0a4948c4037aac81352b3ee5e991293a`，PDF 提取不再在检查后重开路径。已打开 reader 最多消费 64 MiB + 1 字节；同一实际缓冲区负责大小 / 签名检查、`Inspection.bytes` 与固定 `pdf-extract 0.12.1` 内存提取。DOC / DOCX 原分支、依赖、vendor、UI 和桌面后端没有改动。策略、调查来源和未解决的后续 PDF.js 会话身份见 [PDF_SOURCE_SNAPSHOT.md](PDF_SOURCE_SNAPSHOT.md)。
+
+### 核心与回归门禁
+
+- Rust **1.99 / 1.88 各 493 项通过**：原 480 +13 个 PDF 内部检查，不重复累计工具链。日志 `tmp/pdf-snapshot-core-stable-final.log` / `tmp/pdf-snapshot-core-msrv-final.log`
+- 新检查覆盖打开 A 后替换 / 删除路径仍读取 A、增长 / 缩小后的实际字节数、增长超限、实际缓冲区签名、精确读取上限 +1 与恰好上限、有效前缀后 I/O 错误、逐字节短读、空 / 非法签名、损坏 / 两份加密 fixture 的严格与预览策略、有效空白 PDF。大合成缓冲区只检查读取上限，不提交解析器
+- **446 项无浏览器检查通过**，完整复用 `tmp/cell-colors-ui-command.json` 的命令与 `USERPROFILE=$PWD/tmp/linux-home`，日志 `tmp/pdf-snapshot-ui-aggregate-final.log`。这是既有跨格式模块 / 事务回归，无新增浏览器用例，不作物理 UI 验收
+- `cargo +stable fmt --check`、Python checker 编译、`git diff --check`、`npm run build` / TypeScript 与 CLI 构建通过。构建保留既有 bundle 大小提示，日志 `tmp/pdf-snapshot-{fmt,ui-build-final,build-final}.log`
+- 原始严格 all-targets Clippy 仍各仅既有跨格式单项：1.99 XLS `chunks_exact_to_as_chunks`、1.88 PPT `uninlined_format_args`；各仅排除对应单项后通过。日志 `tmp/pdf-snapshot-clippy-{stable,msrv}-raw.log`、`tmp/pdf-snapshot-clippy-stable-scoped.log`、`tmp/pdf-snapshot-clippy-msrv-scoped-resumed.log`。MSRV 首次 scoped 命令被执行环境中断，原未完成日志保留为 `...-msrv-scoped.log`；恢复后只重跑该未完成门禁，没有将它计为通过或重跑已完成的全量测试
+- 沿用 `../toolchains/{cargo,rustup}`、`CARGO_INCREMENTAL=0`、stable 的 `target` 与 1.88 的 `tmp/msrv-target`，没有新建 target 或改变编译优化 / debug 参数。vendor 和实际桌面未重跑，不重复宣称旧 1,264 项或原生结果。已知 Chromium EPERM / 云 localhost / Linux glib-WebKit / 离线 Windows 路径没有重试
+
+冻结候选 CLI `tmp/pdf-snapshot-final-cli` SHA-256 **`aea080512d18946111e35490c223643225df1a2e423d79360f3bc37bfec54c67`**；旧 `tmp/cell-colors-final-cli` 保持 **`ae22f9aaf5ee6f7015d521ef1d6960452969da2ee459071aab4df0bb81c3e516`**。恢复后的源码身份与独立报告记录的最终 `src/lib.rs` / `src/pdf_snapshot.rs` / Cargo 文件散列一致；后续只有文档与证据整理，没有功能修改。
+
+### 未改造原件与独立对照
+
+`scripts/pdf-snapshot-corpus.json` 固定 Mozilla `pdf.js` revision `288892aadaa27f03ed0cd4724edf678c6bda8e61` 的六份语料原件，每份记录大小、SHA-256、Git blob 与来源。包含一篇已发表论文 `tracemonkey.pdf` 和五份上游测试 fixture，不称为六份用户生产文档，不重新生成 / 重存 / 改造来源，也不分发其二进制。
+
+实际复现命令：
+
+```text
+python3 scripts/check-pdf-snapshot.py --candidate tmp/pdf-snapshot-final-cli --output tmp/pdf-snapshot-validation/final-independent
+```
+
+脚本要求新输出目录；复跑须换目录，已有证据不会覆盖。结果 `tmp/pdf-snapshot-validation/final-independent/report.json` SHA-256 **`0b1fbb4df2307cf0e0488e88ef241010a3d1eec4f133e6f2a1c7ab75ca1879a0`**；脚本 **`4c8924ba3e97515161cc795613f9d490b995153cdb196101af3e3862c53d2dfa`**，manifest **`add9588f8d40deb4e1eeb09dd95aa2a3f6cd133cf2d4277c92ddb2fb9f273302`**。
+
+- **6 份原件及两个 CLI 散列保持不变**；4 份成功原件的旧 / 新完整 JSON 仅排除 `elapsed_ms` 后精确相等，原始正文逐字节相等，未作空白 / Unicode 规范化
+- pypdf **6.10.0** 与 Poppler 独立读取并验证固定页数 / 文字锚点；连字样本按原字形序列核对。论文、旋转页面及普通文本包含明确独立锚点，但不把锚点相同写成全文顺序或页面保真
+- **2 份已存在的编码 panic 单列**：`mixedfonts.pdf` 的 `UniJIS-UTF16-H` 与 `noembed-sjis.pdf` 的 `90ms-RKSJ-H`，旧 / 新均退出 101、空 stdout 且相同明确编码诊断。不计为成功提取，不捕获 / 隐藏为新支持。Poppler 在这两份原件中读取对应文字，pypdf 对相关字体仍有告警 / 误解码，证据完整保留
+- checker 对已存在输出目录和旧 / 新相同二进制的拒绝已另行检查；基线独立报告保留为 `tmp/pdf-snapshot-validation/baseline-independent/report.json`，不算候选验收
+- 额外 **3 份固定 Apache POI DOC / DOCX** 原件的 `inspect` 路由对照：大小 / 源 SHA 与 `scripts/corpus.json` 一致，旧 / 新完整 JSON 仅排除耗时后精确相等，原件和两个 CLI 不变。补充报告 `tmp/pdf-snapshot-validation/doc-route-parity/report.json` SHA-256 **`a9db8db9db892bba61b98933e240f24ada45cacb1d65ef2e7dc7a73da14653d7`**；仅证明旧格式读取路由未回归，不新增排版或 DOC 独立解码声明
+
+历史 scratch 符号链接调查的第三次结果把 105,779 字节 A 的大小与 32,408 字节 B 的正文配对；两原件未变。它证明检查 / 解析对象不同，**没有演示输入上限绕过**。本轮以确定性打开句柄测试验收修复；不声称原地并发写入的原子快照、解压 / CPU 安全、提取器 panic 修复、后续 PDF.js 同会话身份、字体映射、OCR 或整个阶段完成。
+
 ## 本轮：直接单元格底色与局部自动文字色（2026-10-13）
 
 基于 `ca151b28eaaf285fae2e5d1f395c614320d9623d`，新增独立可选的逐格 `cellFillRgb` 与 `cellTextColorMode: "auto"`。底色 / 模式分别重置、严格混合状态、精确选区、原子候选 / 撤销、草稿、表格结构维护和可信 DOCX 重开贯通。局部自动色只作用于普通无显式 RGB 的文字；链接保留原颜色。未改变全局样式，不写死白字。范围和消费者 / CSS 差异见 [TABLE_CELL_COLORS.md](TABLE_CELL_COLORS.md)。

@@ -1,0 +1,266 @@
+{
+  "fixture_kind": "Six unchanged pinned mozilla/pdf.js corpus originals; tracemonkey.pdf is a published paper; the other five are upstream fixtures, not claimed as user production documents",
+  "retrieval": "Reuse original evidence from tmp/pdf-gap-investigation/report.json. Validate byte size, SHA-256 and Git blob SHA before and after extraction. Never regenerate or rewrite sources.",
+  "license_note": "Sources used for local testing only; individual fixture redistribution rights not reviewed. No PDF binaries committed.",
+  "baseline_cli_sha256": "ae22f9aaf5ee6f7015d521ef1d6960452969da2ee459071aab4df0bb81c3e516",
+  "limits": [
+    "Four successful CLI outputs are compared as exact JSON except elapsed_ms and exact literal text; two existing unsupported-encoding panics are tracked separately.",
+    "pypdf and Poppler are independent consumers with different ordering/spacing/mapping behavior; only explicit anchors are asserted, not full-text or visual equivalence.",
+    "Literal ligatures remain unnormalized; whitespace folding for evidence anchors does not change the product search contract.",
+    "The historical symlink race proves checked-versus-parsed source identity mismatch; no input-size bypass exploit was demonstrated.",
+    "This corpus checker does not prove race absence, bounded-read safety, OCR, layout fidelity, browser/native UI, or whole DOC/DOCX/PDF phase completion.",
+    "No source PDFs are generated, modified, re-saved, or rendered by this checker."
+  ],
+  "fixtures": [
+    {
+      "name": "tracemonkey.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "288892aadaa27f03ed0cd4724edf678c6bda8e61",
+      "source_url": "https://github.com/mozilla/pdf.js/blob/288892aadaa27f03ed0cd4724edf678c6bda8e61/test/pdfs/tracemonkey.pdf",
+      "bytes": 1016315,
+      "sha256": "3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113",
+      "git_blob_sha": "65570184ac82fbc478a403cb8dd64a59c0065eae",
+      "classification": "published paper unchanged from upstream test corpus",
+      "redistribution": "downloaded for local testing only; individual fixture redistribution rights not reviewed; do not commit binary",
+      "local_default": "tmp/pdf-gap-investigation/tracemonkey.pdf",
+      "pages": 14,
+      "expected_cli": {
+        "status": "success"
+      },
+      "anchors": [
+        {
+          "text": "Keywords JavaScript",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": true
+        },
+        {
+          "text": "compiling a trace speculates",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": true
+        },
+        {
+          "text": "records a trace tree",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": true
+        },
+        {
+          "text": "contains all the guards",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": true
+        }
+      ]
+    },
+    {
+      "name": "basicapi.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "288892aadaa27f03ed0cd4724edf678c6bda8e61",
+      "source_url": "https://github.com/mozilla/pdf.js/blob/288892aadaa27f03ed0cd4724edf678c6bda8e61/test/pdfs/basicapi.pdf",
+      "bytes": 105779,
+      "sha256": "925853d98d67d5dae7473c635f932958e1695ce1029d23b2ecd2531cb65f1f14",
+      "git_blob_sha": "2f16483d5624f8ac385ddc22892dbff480e6aee1",
+      "classification": "unchanged upstream test fixture, not claimed as a production document",
+      "redistribution": "downloaded for local testing only; individual fixture redistribution rights not reviewed; do not commit binary",
+      "local_default": "tmp/pdf-gap-investigation/basicapi.pdf",
+      "pages": 3,
+      "expected_cli": {
+        "status": "success"
+      },
+      "anchors": [
+        {
+          "text": "Table Of Content",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": true
+        },
+        {
+          "text": "Chapter 1",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": true
+        },
+        {
+          "text": "Paragraph 1.1",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": true
+        },
+        {
+          "text": "Powered by TCPDF (www.tcpdf.org)",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": true
+        }
+      ]
+    },
+    {
+      "name": "copy_paste_ligatures.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "288892aadaa27f03ed0cd4724edf678c6bda8e61",
+      "source_url": "https://github.com/mozilla/pdf.js/blob/288892aadaa27f03ed0cd4724edf678c6bda8e61/test/pdfs/copy_paste_ligatures.pdf",
+      "bytes": 32408,
+      "sha256": "3a6948ca33558a0f1c9dabf70902e14e263e814b6a12da44ba8ec9439c0bafdd",
+      "git_blob_sha": "97359312935b962e2e5ca6f9f1e6fb553ba8f1b9",
+      "classification": "unchanged upstream test fixture, not claimed as a production document",
+      "redistribution": "downloaded for local testing only; individual fixture redistribution rights not reviewed; do not commit binary",
+      "local_default": "tmp/pdf-gap-investigation/copy_paste_ligatures.pdf",
+      "pages": 1,
+      "expected_cli": {
+        "status": "success"
+      },
+      "anchors": [
+        {
+          "text": "abcdef\ufb00\ufb01\ufb02\ufb03\ufb04\ufb05\ufb06ghijklmno",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": false
+        }
+      ]
+    },
+    {
+      "name": "mixedfonts.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "288892aadaa27f03ed0cd4724edf678c6bda8e61",
+      "source_url": "https://github.com/mozilla/pdf.js/blob/288892aadaa27f03ed0cd4724edf678c6bda8e61/test/pdfs/mixedfonts.pdf",
+      "bytes": 405432,
+      "sha256": "04f17b84112d8130d75601f8f9c2027481a19df595aacb753ca3f9f3b08b2350",
+      "git_blob_sha": "82bdbec34a2d2ce183ead5f30b5291a526ed780f",
+      "classification": "unchanged upstream test fixture, not claimed as a production document",
+      "redistribution": "downloaded for local testing only; individual fixture redistribution rights not reviewed; do not commit binary",
+      "local_default": "tmp/pdf-gap-investigation/mixedfonts.pdf",
+      "pages": 1,
+      "expected_cli": {
+        "status": "known-unsupported-encoding-panic",
+        "returncode": 101,
+        "stderr_contains": "unsupported encoding UniJIS-UTF16-H"
+      },
+      "known_limits": [
+        "Frozen baseline pdf-extract panics for UniJIS-UTF16-H; an unchanged candidate failure is not successful text support.",
+        "pypdf also warns about unsupported UniJIS-UTF16-H and does not decode the affected glyphs correctly; Poppler text is independently reported."
+      ],
+      "anchors": [
+        {
+          "text": "Font Types",
+          "consumers": [
+            "pypdf",
+            "poppler"
+          ]
+        },
+        {
+          "text": "[CID-0 font] : abcdefghijklmnopqrstuvwxyzABCDEFGHI",
+          "consumers": [
+            "poppler"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "noembed-sjis.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "288892aadaa27f03ed0cd4724edf678c6bda8e61",
+      "source_url": "https://github.com/mozilla/pdf.js/blob/288892aadaa27f03ed0cd4724edf678c6bda8e61/test/pdfs/noembed-sjis.pdf",
+      "bytes": 1472,
+      "sha256": "13fd4811beaf0390d313847e23839db237d1fb65efc839f6d9f534ea52311c95",
+      "git_blob_sha": "f7dd3860af8c27cb9cb255df78a751ccd3a5a7d0",
+      "classification": "unchanged upstream test fixture, not claimed as a production document",
+      "redistribution": "downloaded for local testing only; individual fixture redistribution rights not reviewed; do not commit binary",
+      "local_default": "tmp/pdf-gap-investigation/noembed-sjis.pdf",
+      "pages": 1,
+      "expected_cli": {
+        "status": "known-unsupported-encoding-panic",
+        "returncode": 101,
+        "stderr_contains": "unsupported encoding 90ms-RKSJ-H"
+      },
+      "known_limits": [
+        "Frozen baseline pdf-extract panics for 90ms-RKSJ-H; an unchanged candidate failure is not successful text support.",
+        "pypdf also warns about unsupported 90ms-RKSJ-H and does not decode the affected glyphs correctly; Poppler text is independently reported."
+      ],
+      "anchors": [
+        {
+          "text": "\u3042\u3044\u3046\u3048\u304a",
+          "consumers": [
+            "poppler"
+          ],
+          "whitespace_fold": false
+        }
+      ]
+    },
+    {
+      "name": "rotation.pdf",
+      "repository": "mozilla/pdf.js",
+      "revision": "288892aadaa27f03ed0cd4724edf678c6bda8e61",
+      "source_url": "https://github.com/mozilla/pdf.js/blob/288892aadaa27f03ed0cd4724edf678c6bda8e61/test/pdfs/rotation.pdf",
+      "bytes": 6605,
+      "sha256": "5087c2afe763d145537d652bb3bc6c321ace3a267b2679ae2c178add3ba7f1d9",
+      "git_blob_sha": "807dafe5f8b5b1e9b932104d84e1cc13276c6dbf",
+      "classification": "unchanged upstream test fixture, not claimed as a production document",
+      "redistribution": "downloaded for local testing only; individual fixture redistribution rights not reviewed; do not commit binary",
+      "local_default": "tmp/pdf-gap-investigation/rotation.pdf",
+      "pages": 2,
+      "expected_cli": {
+        "status": "success"
+      },
+      "anchors": [
+        {
+          "text": "This is my first page with normal layout.",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": true
+        },
+        {
+          "text": "This is my second page. It will have a landscape layout.",
+          "consumers": [
+            "baseline",
+            "candidate",
+            "pypdf",
+            "poppler"
+          ],
+          "whitespace_fold": true
+        }
+      ]
+    }
+  ]
+}
