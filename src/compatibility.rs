@@ -447,12 +447,16 @@ pub fn audit_docx(path: &Path) -> Result<CompatibilityReport> {
 }
 
 pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
-    Ok(audit_docx_bytes_with_tables(bytes)?.0)
+    Ok(audit_docx_bytes_with_geometry(bytes)?.compatibility)
 }
 
-pub(crate) fn audit_docx_bytes_with_tables(
-    bytes: &[u8],
-) -> Result<(CompatibilityReport, Vec<crate::table_widths::TableGeometry>)> {
+pub(crate) struct DocxGeometryAudit {
+    pub compatibility: CompatibilityReport,
+    pub tables: Vec<crate::table_widths::TableGeometry>,
+    pub images: Vec<crate::image_dimensions::ImageGeometry>,
+}
+
+pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometryAudit> {
     let parts = crate::editing::parts(bytes)?;
     ensure!(
         parts.contains_key("word/document.xml"),
@@ -807,5 +811,18 @@ pub(crate) fn audit_docx_bytes_with_tables(
             .risks
             .insert("Unsupported theme color scheme content".into());
     }
-    Ok((report, table_widths))
+    let images = match crate::image_dimensions::analyze(bytes) {
+        Ok(images) => images,
+        Err(_) => {
+            report
+                .risks
+                .insert(crate::image_dimensions::IMAGE_GEOMETRY_RISK.into());
+            Vec::new()
+        }
+    };
+    Ok(DocxGeometryAudit {
+        compatibility: report,
+        tables: table_widths,
+        images,
+    })
 }

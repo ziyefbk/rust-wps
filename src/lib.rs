@@ -1,3 +1,4 @@
+mod image_dimensions;
 mod presentation_vertical;
 mod table_widths;
 use anyhow::{Context, Result, bail};

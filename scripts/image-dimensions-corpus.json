@@ -1,0 +1,38 @@
+{
+  "repository": "mwilliamson/mammoth.js",
+  "revision": "791a189230977143cde64dbf9f1d24dce96ac8a1",
+  "directory": "test/test-data",
+  "license": {
+    "repository_license": "BSD-2-Clause",
+    "url": "https://github.com/mwilliamson/mammoth.js/blob/791a189230977143cde64dbf9f1d24dce96ac8a1/LICENSE",
+    "caveat": "Public upstream test fixture for local validation only. Individual image authorship and redistribution rights have not been separately reviewed. No binary is committed."
+  },
+  "fixtures": [
+    {
+      "name": "tiny-picture.docx",
+      "bytes": 13699,
+      "sha256": "791b57c038328560d710c33c5b53bc3ea67a6c08bd9fa0fce0770883e39228d8",
+      "git_blob_sha": "d45bb9e1bf21081332384acbc891ffdaddee05fe",
+      "source_url": "https://github.com/mwilliamson/mammoth.js/blob/791a189230977143cde64dbf9f1d24dce96ac8a1/test/test-data/tiny-picture.docx",
+      "raw_url": "https://raw.githubusercontent.com/mwilliamson/mammoth.js/791a189230977143cde64dbf9f1d24dce96ac8a1/test/test-data/tiny-picture.docx",
+      "retrieval": "Unchanged GitHub connector base64 download; size and computed Git blob SHA independently checked against the pinned recursive upstream tree",
+      "fixture_kind": "Original unmodified upstream DOCX, not a derived or generated test document",
+      "expected_action": "inline-image-dimensions-roundtrip",
+      "scope": "One PNG in a dedicated body paragraph; display dimensions and embedded bytes positive. Source paragraph styling, absolute position and full document layout are not claimed preserved.",
+      "inline_count": 1,
+      "images": [
+        {
+          "width_emu": 95250,
+          "height_emu": 95250,
+          "media_part": "word/media/image1.png",
+          "mime": "image/png",
+          "bytes": 110,
+          "sha256": "833ba5e2058b591297634fb684bcf3dd061925e82927a02381b902db67dd20b2",
+          "pixel_width": 10,
+          "pixel_height": 10
+        }
+      ],
+      "source_details": "Matching wp:extent and a:xfrm/a:ext; zero a:off and wp:effectExtent; empty a:srcRect, rect geometry, noFill and noFill outline, a14:useLocalDpi=0, nonvisual bookmark pair; no anchor, text sibling, table, list, side story or external image"
+    }
+  ]
+}

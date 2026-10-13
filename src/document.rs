@@ -254,6 +254,139 @@ fn is_block(kind: &str) -> bool {
 /// Product limit shared by the editor and import audit, not the OOXML maximum.
 pub const MAX_TABLE_WIDTH_TWIPS: u64 = 31680;
 
+/// Canonical image display geometry, in English Metric Units (914400/inch).
+/// These fit the standard A4 content box and keep the historical 600x800px
+/// authoring ceiling. Pixel dimensions and original media bytes are separate.
+pub const MAX_IMAGE_WIDTH_EMU: u64 = 5_715_000;
+pub const MAX_IMAGE_HEIGHT_EMU: u64 = 7_620_000;
+
+pub fn image_display_dimensions(node: &Node) -> Result<Option<(u64, u64)>> {
+    match (
+        node.attrs.get("displayWidthEmu"),
+        node.attrs.get("displayHeightEmu"),
+    ) {
+        (None, None) => Ok(None),
+        (Some(width), Some(height)) => {
+            let width = width
+                .as_u64()
+                .context("Image display width must be integer EMU")?;
+            let height = height
+                .as_u64()
+                .context("Image display height must be integer EMU")?;
+            ensure!(
+                (1..=MAX_IMAGE_WIDTH_EMU).contains(&width)
+                    && (1..=MAX_IMAGE_HEIGHT_EMU).contains(&height),
+                "Image display dimensions exceed supported bounds"
+            );
+            Ok(Some((width, height)))
+        }
+        _ => bail!("Image display width and height must be supplied together"),
+    }
+}
+
+/// The new display-size subset excludes orientation/animation metadata whose
+/// interpretation differs between browser and Office consumers. We keep bytes
+/// intact, so stripping such metadata is not an acceptable silent fallback.
+pub(crate) fn validate_image_display_media(mime: &str, data: &[u8]) -> Result<()> {
+    ensure!(
+        !data.is_empty() && data.len() <= 8 * 1024 * 1024,
+        "Image blob exceeds 8 MiB"
+    );
+    let format = match mime {
+        "image/png" => image::ImageFormat::Png,
+        "image/jpeg" => image::ImageFormat::Jpeg,
+        _ => bail!("Only displayed PNG/JPEG images are supported"),
+    };
+    let (width, height) = image::ImageReader::with_format(Cursor::new(data), format)
+        .into_dimensions()
+        .context("Invalid displayed image header")?;
+    ensure!(
+        width > 0
+            && height > 0
+            && width <= 20000
+            && height <= 20000
+            && u64::from(width) * u64::from(height) <= 40_000_000,
+        "Image pixel dimensions exceed limits"
+    );
+    match mime {
+        "image/png" => {
+            ensure!(
+                data.starts_with(b"\x89PNG\r\n\x1a\n"),
+                "Invalid displayed PNG signature"
+            );
+            let mut offset = 8;
+            while offset < data.len() {
+                ensure!(data.len() - offset >= 12, "Truncated PNG chunk");
+                let size = u32::from_be_bytes(data[offset..offset + 4].try_into()?) as usize;
+                ensure!(size <= data.len() - offset - 12, "Truncated PNG chunk data");
+                let tag = &data[offset + 4..offset + 8];
+                ensure!(
+                    !matches!(tag, b"eXIf" | b"acTL" | b"fcTL" | b"fdAT"),
+                    "Displayed PNG orientation metadata and animation are unsupported"
+                );
+                offset += size + 12;
+                if tag == b"IEND" {
+                    ensure!(
+                        size == 0 && offset == data.len(),
+                        "Unexpected data after PNG IEND"
+                    );
+                    return Ok(());
+                }
+            }
+            bail!("PNG has no complete IEND")
+        }
+        "image/jpeg" => {
+            ensure!(
+                data.starts_with(&[0xff, 0xd8]),
+                "Invalid displayed JPEG signature"
+            );
+            let mut offset = 2;
+            let mut entropy = false;
+            while offset < data.len() {
+                if entropy {
+                    while offset < data.len() && data[offset] != 0xff {
+                        offset += 1;
+                    }
+                }
+                ensure!(
+                    offset < data.len() && data[offset] == 0xff,
+                    "Malformed JPEG marker"
+                );
+                while offset < data.len() && data[offset] == 0xff {
+                    offset += 1;
+                }
+                let marker = *data.get(offset).context("Truncated JPEG marker")?;
+                offset += 1;
+                if entropy && (marker == 0 || (0xd0..=0xd7).contains(&marker)) {
+                    continue;
+                }
+                ensure!(
+                    marker != 0xe1,
+                    "Displayed JPEG APP1 orientation metadata is unsupported"
+                );
+                if marker == 0xd9 {
+                    ensure!(offset == data.len(), "Unexpected data after JPEG EOI");
+                    return Ok(());
+                }
+                ensure!(
+                    !matches!(marker, 0 | 0x01 | 0xd0..=0xd8),
+                    "Unsupported JPEG marker"
+                );
+                ensure!(data.len() - offset >= 2, "Truncated JPEG segment");
+                let size = u16::from_be_bytes(data[offset..offset + 2].try_into()?) as usize;
+                ensure!(
+                    size >= 2 && size <= data.len() - offset,
+                    "Invalid JPEG segment length"
+                );
+                offset += size;
+                entropy = marker == 0xda;
+            }
+            bail!("JPEG has no complete EOI")
+        }
+        _ => bail!("Only displayed PNG/JPEG images are supported"),
+    }
+}
+
 pub fn table_column_widths(node: &Node) -> Result<Option<Vec<u64>>> {
     let Some(value) = node.attrs.get("columnWidthsTwips") else {
         return Ok(None);
@@ -360,7 +493,15 @@ pub fn validate(doc: &Node) -> Result<()> {
             "orderedList" => &["start", "type"],
             "table" => &["columnWidthsTwips", "tableAlign", "tableIndentTwips"],
             "tableCell" | "tableHeader" => &["colspan", "rowspan", "colwidth", "align"],
-            "image" => &["src", "alt", "title", "width", "height"],
+            "image" => &[
+                "src",
+                "alt",
+                "title",
+                "width",
+                "height",
+                "displayWidthEmu",
+                "displayHeightEmu",
+            ],
             "doc" | "text" | "hardBreak" | "pageBreak" | "bulletList" | "listItem" | "tableRow" => {
                 &[]
             }
@@ -552,6 +693,11 @@ pub fn validate(doc: &Node) -> Result<()> {
             );
         }
         if node.kind == "image" {
+            let dimensions = image_display_dimensions(node)?;
+            ensure!(
+                dimensions.is_none() || depth == 1,
+                "Explicit image dimensions require a top-level body image"
+            );
             let src = node
                 .attrs
                 .get("src")
@@ -563,6 +709,17 @@ pub fn validate(doc: &Node) -> Result<()> {
                     && src.len() <= 12 * 1024 * 1024,
                 "Only embedded PNG/JPEG images within limits are supported"
             );
+            if dimensions.is_some() {
+                let (header, encoded) = src.split_once(',').context("Invalid embedded image")?;
+                let mime = header
+                    .strip_prefix("data:")
+                    .and_then(|header| header.strip_suffix(";base64"))
+                    .context("Invalid embedded image MIME")?;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .context("Invalid image base64")?;
+                validate_image_display_media(mime, &bytes)?;
+            }
             for key in ["alt", "title"] {
                 if let Some(value) = node.attrs.get(key).filter(|v| !v.is_null()) {
                     ensure!(value.as_str().is_some_and(xml_text), "Invalid image {key}");
@@ -571,7 +728,7 @@ pub fn validate(doc: &Node) -> Result<()> {
             ensure!(
                 node.attrs.get("width").is_none_or(Value::is_null)
                     && node.attrs.get("height").is_none_or(Value::is_null),
-                "Custom image dimensions are not supported yet"
+                "Pixel image width/height are unsupported; use paired display EMU dimensions"
             );
         }
         if node.kind == "orderedList" {
@@ -630,7 +787,38 @@ pub fn validate(doc: &Node) -> Result<()> {
         }
         Ok(())
     }
-    visit(doc, 0, 0, false, &mut nodes, &mut text_bytes)
+    visit(doc, 0, 0, false, &mut nodes, &mut text_bytes)?;
+    // A size edit must not create a valid-looking draft which later fails the
+    // existing writer's media-count/aggregate limits. Preserve the historical
+    // validation route for documents with no explicit image dimensions.
+    let mut stack = vec![doc];
+    let mut images = Vec::new();
+    while let Some(node) = stack.pop() {
+        if node.kind == "image" {
+            images.push(node);
+        }
+        stack.extend(&node.content);
+    }
+    if images
+        .iter()
+        .any(|node| node.attrs.contains_key("displayWidthEmu"))
+    {
+        ensure!(images.len() <= 100, "Image count exceeds 100");
+        let mut total = 0usize;
+        for image in images {
+            let source = image.attrs["src"].as_str().expect("validated image source");
+            let encoded = source.split_once(',').context("Invalid embedded image")?.1;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .context("Invalid image base64")?;
+            total += bytes.len();
+            ensure!(
+                bytes.len() <= 8 * 1024 * 1024 && total <= 20 * 1024 * 1024,
+                "Image data exceeds limits"
+            );
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -910,7 +1098,7 @@ impl Writer {
         ensure!(
             node.attrs.get("width").is_none_or(Value::is_null)
                 && node.attrs.get("height").is_none_or(Value::is_null),
-            "Custom image dimensions are not supported yet"
+            "Pixel image width/height are unsupported; use paired display EMU dimensions"
         );
         let id = self.media.len() + 1;
         let name = format!("image{id}.{extension}");
@@ -919,8 +1107,18 @@ impl Writer {
         let scale = (600.0 / f64::from(width))
             .min(1.0)
             .min(800.0 / f64::from(height));
-        let cx = (f64::from(width) * scale * 9525.0).round() as u64;
-        let cy = (f64::from(height) * scale * 9525.0).round() as u64;
+        let dimensions = image_display_dimensions(node)?;
+        let inline_attributes = if dimensions.is_some() {
+            r#" distT="0" distB="0" distL="0" distR="0""#
+        } else {
+            ""
+        };
+        let (cx, cy) = dimensions.unwrap_or_else(|| {
+            (
+                (f64::from(width) * scale * 9525.0).round() as u64,
+                (f64::from(height) * scale * 9525.0).round() as u64,
+            )
+        });
         let alt = node.attrs.get("alt").and_then(Value::as_str).unwrap_or("");
         let title = node
             .attrs
@@ -929,7 +1127,7 @@ impl Writer {
             .unwrap_or("");
         ensure!(xml_text(alt) && xml_text(title), "Invalid image metadata");
         Ok(format!(
-            r#"<w:p><w:r><w:drawing><wp:inline><wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{id}" name="image{id}" descr="{}" title="{}"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="image{id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+            r#"<w:p><w:r><w:drawing><wp:inline{inline_attributes}><wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{id}" name="image{id}" descr="{}" title="{}"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="image{id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
             escaped(alt),
             escaped(title)
         ))

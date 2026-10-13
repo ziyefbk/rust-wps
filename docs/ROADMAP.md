@@ -2,6 +2,8 @@
 
 目标：Rust 核心的简洁办公工具，以本地离线使用为基础，先文字与 PDF，再电子表格，再演示文稿。
 
+本轮新增正文单独行内 PNG/JPEG 的有限显示宽高、比例/重置、撤销/草稿及 DOCX 往返。原始图片字节与明确双 extent 保留；浮动/裁剪/旋转/方向元数据和混合放置仍拒绝，图片段落位置仍规范化，范围见 [IMAGE_DIMENSIONS.md](IMAGE_DIMENSIONS.md)。这不关闭阶段 1 或原生渲染缺口。
+
 本轮扩展段前/段后间距与倍数行距的编辑、草稿和 DOCX 往返，修复部分样式覆盖及列表/空段间距丢失；独立消费者验证与未执行的浏览器/原生边界见 [PARAGRAPH_SPACING.md](PARAGRAPH_SPACING.md)。随后扩展简单矩形表格的有限固定列宽及整体对齐/左缩进，范围见 [TABLE_WIDTHS.md](TABLE_WIDTHS.md) 和 [TABLE_POSITION.md](TABLE_POSITION.md)；仍先完成文字/PDF 阶段。
 
 ## 当前能力审计

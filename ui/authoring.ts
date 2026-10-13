@@ -10,7 +10,8 @@ import StarterKit from '@tiptap/starter-kit';
 import {WordTable, createTableColumnWidthTransaction, createTablePositionTransaction, createTableStructureTransaction, omitDefaultTableWidths, parseTableColumnWidthPoints, selectedTableColumn, validateTableWidthsDocument, type TableStructureAction} from './word-table-widths';
 import {isTableAlignment, parseTableIndentPoints, selectedTablePosition, type TablePositionPatch} from './word-table-position';
 import { TableKit } from '@tiptap/extension-table';
-import Image from '@tiptap/extension-image';
+import {WordImage, omitDefaultImageDimensions, validateImageDimensionsDocument} from './word-image-dimensions';
+import {WordImageControls} from './word-image-controls';
 import {AllSelection,TextSelection} from '@tiptap/pm/state';
 import {closeHistory} from '@tiptap/pm/history';
 import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -78,6 +79,7 @@ let fontFamilyInputChanged = false;
 let fontFamilyInputEditing = false;
 let paragraphSpacingInputEditing = false;
 let tableWidthInputEditing = false;
+let imageControls: WordImageControls | null = null;
 let tableIndentInputEditing = false;
 let tableIndentInputChanged = false;
 const paragraphSpacingInputChanged = new Set<ParagraphSpacingField>();
@@ -85,7 +87,7 @@ const paragraphSpacingIds: Record<ParagraphSpacingField, string> = {
   spaceBefore: 'edit-space-before', spaceAfter: 'edit-space-after', lineSpacing: 'edit-line-spacing',
 };
 function snapshotDocument(owner: Pick<Editor, 'getJSON'>): JSONContent {
-  return omitDefaultTableWidths(omitDefaultParagraphSpacing(snapshotStyledDocument(owner)));
+  return omitDefaultImageDimensions(omitDefaultTableWidths(omitDefaultParagraphSpacing(snapshotStyledDocument(owner))));
 }
 let onChangeMode: (() => Promise<void>) | null = null;
 let canLeaveOther: () => Promise<boolean> = async () => true;
@@ -319,6 +321,8 @@ function updateToolbar() {
   el<HTMLInputElement>('edit-find').disabled=locked;
   el<HTMLInputElement>('edit-replacement').disabled=locked;
   for (const button of document.querySelectorAll<HTMLButtonElement>('#editor-toolbar button')) button.disabled = locked;
+  // Image-specific selection/saving locks must follow the toolbar defaults.
+  imageControls?.update();
   for (const mark of ['bold', 'italic', 'underline', 'strike', 'superscript', 'subscript', 'bulletList', 'orderedList']) {
     el(`edit-${mark}`).classList.toggle('active', !!editor?.isActive(mark));
     el(`edit-${mark}`).setAttribute('aria-pressed', String(!!editor?.isActive(mark)));
@@ -446,6 +450,7 @@ function queueDraft(doc: JSONContent) {
   });
 }
 export function closeAuthoring() {
+  imageControls?.reset();
   tableWidthInputEditing = false;
   tableIndentInputEditing = false;
   tableIndentInputChanged = false;
@@ -467,6 +472,7 @@ async function create(content?: JSONContent, ask = true) {
   documentStyleProfile(initial);
   validateParagraphSpacingDocument(initial);
   validateTableWidthsDocument(initial);
+  validateImageDimensionsDocument(initial);
   if (ask && !(await canLeaveAuthoring())) return;
   // Flush the previous document before a new draft enters the same slot.
   closeAuthoring();
@@ -478,7 +484,7 @@ async function create(content?: JSONContent, ask = true) {
     editable: !paused,
     element: el('editor-content'),
     extensions: [FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
-      ParagraphAlignment, ParagraphSpacing, PageBreak, TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), Image.configure({ allowBase64: true, resize: false })],
+      ParagraphAlignment, ParagraphSpacing, PageBreak, TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
     content: initial,
     editorProps: {
       attributes: state => ({ 'aria-label': '文档编辑区', spellcheck: 'false', 'data-style-profile': state.doc.attrs.styleProfile ?? 'legacy-v1' }),
@@ -516,6 +522,7 @@ async function create(content?: JSONContent, ask = true) {
 }
 
 export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof showNotice, beforeLeave: () => Promise<boolean> = async () => true) {
+  imageControls = new WordImageControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
   canLeaveOther = beforeLeave;
   onChangeMode = onMode; showNotice = notice;
   el('new-document').addEventListener('click', () => void create());
@@ -734,13 +741,19 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
   });
   el('edit-table-indent-apply').addEventListener('click', () => applyTablePosition());
   el('edit-table-position-reset').addEventListener('click', () => applyTablePosition({tableAlign: null, tableIndentTwips: null}));
-  el('edit-image').addEventListener('click', () => el<HTMLInputElement>('image-file').click());
+  el('edit-image').addEventListener('click', () => {
+    if (!editor || leaving || paused || printing || saving) return;
+    el<HTMLInputElement>('image-file').click();
+  });
   el('image-file').addEventListener('change', async () => {
     const input = el<HTMLInputElement>('image-file'); const file = input.files?.[0]; input.value = '';
-    if (!file) return;
+    if (!file || !editor || leaving || paused || printing || saving) return;
     if (!['image/png', 'image/jpeg'].includes(file.type) || file.size > 8 * 1024 * 1024) { showNotice('请选择小于 8 MiB 的 PNG 或 JPEG 图片。', true); return; }
-    const owner = editor;
-    const reader = new FileReader(); reader.onload = () => { if (owner && owner === editor) owner.chain().focus().setImage({ src: String(reader.result), alt: file.name }).run(); };
+    const owner = editor, before = owner.state.doc, selection = owner.state.selection;
+    const reader = new FileReader(); reader.onload = () => {
+      if (owner !== editor || leaving || paused || printing || saving || owner.state.doc !== before || !owner.state.selection.eq(selection)) return;
+      owner.chain().focus().setImage({src: String(reader.result), alt: file.name}).run();
+    };
     reader.onerror = () => showNotice('图片读取失败。', true); reader.readAsDataURL(file);
   });
   el('edit-save').addEventListener('click', () => void save());

@@ -56,6 +56,15 @@
         <button id="edit-table-position-reset" title="移除表格对齐和缩进，保留固定列宽">默认位置</button>
         <span id="edit-table-position-state" aria-live="polite"></span>
       </span>
+      <span id="image-dimension-controls" role="group" aria-label="图片显示尺寸">
+        <label>图片宽 <input id="edit-image-width" type="text" inputmode="decimal" aria-label="图片宽（pt）" title="最多 450 pt；小数须精确到整数 EMU，非终止小数可用 EMU/12700 分数"> pt</label>
+        <label>高 <input id="edit-image-height" type="text" inputmode="decimal" aria-label="图片高（pt）" title="最多 600 pt；小数须精确到整数 EMU，非终止小数可用 EMU/12700 分数"> pt</label>
+        <label><input id="edit-image-keep-ratio" type="checkbox" checked>保持比例</label>
+        <button id="edit-image-dimensions-apply" title="仅修改所选正文顶层图片的显示尺寸；原始图片字节不变，可一次撤销">应用尺寸</button>
+        <button id="edit-image-natural-ratio" title="恢复图片原始比例，尽量保留当前宽度；必要时缩小至尺寸上限">恢复原始比例</button>
+        <button id="edit-image-dimensions-reset" title="移除显示尺寸，恢复旧版默认图片布局">默认图片尺寸</button>
+        <span id="edit-image-dimension-state" aria-live="polite"></span>
+      </span>
       <button id="edit-page-break">插入分页符</button><button id="edit-link">编辑链接</button><button id="edit-image">插入图片</button><input id="image-file" type="file" accept="image/png,image/jpeg" hidden>
       <button id="edit-undo">撤销</button><button id="edit-redo">重做</button>
       <button id="edit-save" class="primary">另存 DOCX</button>

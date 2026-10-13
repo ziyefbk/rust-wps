@@ -274,6 +274,8 @@ el('import-document').addEventListener('click', () => operation('正在准备编
     'Inherited table indentation normalized; automatic table geometry not preserved': '继承的表格缩进已规范化；自动表格的原始几何布局不保留，请核对位置、宽度和换行',
     'Table borders and cell formatting normalized': '受支持的固定列宽会保留；表格边框和单元格格式改为默认样式，请核对换行和分页',
     'Table widths, borders and cell formatting normalized': '表格宽度、边框和单元格格式改为默认样式',
+    'Unsupported image geometry cannot be preserved in an editable copy': '图片包含尚不支持的几何布局，暂时只能只读查看，避免改变原始显示效果',
+    'Image paragraph placement and formatting normalized; original layout not preserved': '受支持的图片显示尺寸会保留；图片所在段落的位置和格式会规范化，不保留原始页面布局，请核对换行和分页',
     'Image position and display dimensions normalized': '图片位置和显示尺寸会改变',
     'Page and column breaks converted to paragraph boundaries': '分页和分栏改为段落分隔',
     'Column breaks converted to paragraph boundaries': '分栏符改为段落分隔；手动分页符保留',

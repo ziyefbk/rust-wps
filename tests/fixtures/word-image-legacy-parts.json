@@ -1,0 +1,55 @@
+{
+  "baseline_commit": "1adfef6845041dbe4b2720a02926cdb232274e31",
+  "baseline_cli_sha256": "b1c44b3e53f39dcb4dd3f5a268200915b1e0459706eaee2420bf70eb604ef137",
+  "input_fixture": "tests/fixtures/word-image-legacy.json",
+  "profiles": {
+    "legacy-v1": {
+      "[Content_Types].xml": "2aff16a2a64c5edf2b160f83628843b24033c78e62a634181a6e38fd1ce5c00f",
+      "_rels/.rels": "a5fccacd8d31d827860f143df0e03e2eef8668de711575e026c26db6b8474915",
+      "word/document.xml": "87b6a260576ccad50014f162f3d6bc9f40024675baa1160260f7b22645ea6907",
+      "word/styles.xml": "4772c8b1fcbd537d5f57da2c4aeabfa731eb773d94ed1e4e359e842ca4fde2be",
+      "word/numbering.xml": "d95c31a2b1622fb3d9ab5a268c40f0fdf6790ace3c9f3bdffec0173151632974",
+      "word/_rels/document.xml.rels": "53cfad119d4ca656ee975f790cbf31f055c45e99aa60765359b724f7102ea83c",
+      "word/media/image1.png": "403db015741909ac9d33376c36390a6b3ff6639c8c7724b8b1bf6ac56fd50c08",
+      "word/media/image2.jpeg": "23cb17bce09379cfb92ddd687d066c6b77834125f090246b6cc5dee42a714034",
+      "rust-wps/model-v1.json": "8385516172d20013bf4cd0cf650a72d6bae9643f2412d8be2b9c22ef645ac9b2"
+    },
+    "standard-v2": {
+      "[Content_Types].xml": "2aff16a2a64c5edf2b160f83628843b24033c78e62a634181a6e38fd1ce5c00f",
+      "_rels/.rels": "b501469ad7b4d918d24c98f4f75a64009513112cc176a0617d065b8ddb3eeb41",
+      "word/document.xml": "87b6a260576ccad50014f162f3d6bc9f40024675baa1160260f7b22645ea6907",
+      "word/styles.xml": "2af4c5d632cee6f8ea02eebf3d96310a55b882df494fef2ea32d59ebc05ee67a",
+      "word/numbering.xml": "d95c31a2b1622fb3d9ab5a268c40f0fdf6790ace3c9f3bdffec0173151632974",
+      "word/_rels/document.xml.rels": "53cfad119d4ca656ee975f790cbf31f055c45e99aa60765359b724f7102ea83c",
+      "word/media/image1.png": "403db015741909ac9d33376c36390a6b3ff6639c8c7724b8b1bf6ac56fd50c08",
+      "word/media/image2.jpeg": "23cb17bce09379cfb92ddd687d066c6b77834125f090246b6cc5dee42a714034",
+      "rust-wps/model-v2.json": "f7c4dffa2f6bc394d635e2a17a1f2f58993ced0e1e55b3e43a12a042457fc603"
+    }
+  },
+  "fixture_provenance": {
+    "kind": "Locally authored synthetic media, not an upstream or user original",
+    "generator": "Pillow 12.3.0",
+    "rgb": [
+      28,
+      122,
+      186
+    ],
+    "images": [
+      {
+        "format": "PNG",
+        "size": [
+          12,
+          8
+        ]
+      },
+      {
+        "format": "JPEG",
+        "size": [
+          1200,
+          900
+        ]
+      }
+    ],
+    "method": "Image.new(\"RGB\", size, (28,122,186)).save(BytesIO(), format=format); default encoder options"
+  }
+}

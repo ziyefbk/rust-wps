@@ -1,6 +1,6 @@
 //! Explicit conversion to an editable copy; never a lossless package editor.
 use crate::{
-    compatibility::{CompatibilityReport, audit_docx_bytes_with_tables},
+    compatibility::{CompatibilityReport, audit_docx_bytes_with_geometry},
     document::{Mark, Node},
 };
 use anyhow::{Result, bail, ensure};
@@ -137,7 +137,8 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         .take(64 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)?;
     ensure!(bytes.len() <= 64 * 1024 * 1024, "Input exceeds 64 MiB");
-    let (compatibility, table_widths) = audit_docx_bytes_with_tables(&bytes)?;
+    let audit = audit_docx_bytes_with_geometry(&bytes)?;
+    let compatibility = audit.compatibility;
     for risk in &compatibility.risks {
         ensure!(
             !matches!(
@@ -146,6 +147,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
                     | crate::compatibility::HIDDEN_TEXT_RISK
                     | crate::compatibility::PARAGRAPH_SPACING_RISK
                     | crate::table_widths::TABLE_GEOMETRY_RISK
+                    | crate::image_dimensions::IMAGE_GEOMETRY_RISK
                     | "Custom theme color mapping is unsupported"
                     | "Unsupported theme color scheme content"
                     | "Unsupported or unresolved hyperlink target"
@@ -199,12 +201,19 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         }
         Ok(())
     }
-    let mut widths = table_widths.iter();
+    let mut widths = audit.tables.iter();
     attach_widths(&mut report.document, &mut widths)?;
     ensure!(
         widths.next().is_none(),
         "Source table was discarded during import"
     );
+    verify_image_conversion(&mut report.document, &audit.images)?;
+    if !audit.images.is_empty() {
+        report
+            .compatibility
+            .risks
+            .insert(crate::image_dimensions::IMAGE_FORMATTING_RISK.into());
+    }
     // Missing effective DOCX spacing means OOXML's zero paragraph gaps and
     // single line spacing, not the editable profile's 6 pt / 1.5 defaults.
     // Trusted authored models bypass external conversion and retain omission.
@@ -221,6 +230,76 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     materialize(&mut report.document);
     crate::document::validate(&report.document)?;
     Ok(report)
+}
+
+// Source-order count alone is insufficient: verify the exact decoded media and
+// declared format and dimensions against geometry proven by the package audit.
+fn verify_image_conversion(
+    document: &mut Node,
+    images: &[crate::image_dimensions::ImageGeometry],
+) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    fn visit(
+        node: &mut Node,
+        images: &mut std::slice::Iter<'_, crate::image_dimensions::ImageGeometry>,
+    ) -> Result<()> {
+        if node.kind == "image" {
+            let source = images
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Image metadata does not match imported images"))?;
+            let src = node
+                .attrs
+                .get("src")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("Imported image has no source"))?;
+            let prefix = format!("data:{};base64,", source.mime);
+            let encoded = src.strip_prefix(&prefix).ok_or_else(|| {
+                anyhow::anyhow!("Imported image MIME differs from audited source")
+            })?;
+            let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)?;
+            ensure!(
+                <[u8; 32]>::from(Sha256::digest(&bytes)) == source.sha256,
+                "Imported image bytes differ from audited source"
+            );
+            ensure!(
+                crate::document::image_display_dimensions(node)?
+                    == Some((source.width_emu, source.height_emu)),
+                "Imported image dimensions differ from audited source"
+            );
+        }
+        for child in &mut node.content {
+            visit(child, images)?;
+        }
+        Ok(())
+    }
+    let mut images = images.iter();
+    visit(document, &mut images)?;
+    ensure!(
+        images.next().is_none(),
+        "Source image was discarded during import"
+    );
+    // The pinned converter hoists each inline picture AFTER its surrounding
+    // paragraph. The audit admits only one picture and no text in that body
+    // paragraph, so the preceding empty node is its placeholder, not a source
+    // blank paragraph. Remove exactly that one; never collapse neighboring
+    // genuine empty paragraphs. Refuse if this parser invariant changes.
+    let mut content: Vec<Node> = Vec::with_capacity(document.content.len());
+    for child in std::mem::take(&mut document.content) {
+        if child.kind == "image" {
+            ensure!(
+                content.last().is_some_and(|previous| matches!(
+                    previous.kind.as_str(),
+                    "paragraph" | "heading"
+                ) && previous.content.is_empty()
+                    && previous.text.is_none()),
+                "Image paragraph does not match the audited converter structure"
+            );
+            content.pop();
+        }
+        content.push(child);
+    }
+    document.content = content;
+    Ok(())
 }
 
 fn convert_ir(
@@ -530,9 +609,21 @@ fn blocks(
                 if let Some(alt) = &image.alt_text {
                     value.attrs.insert("alt".into(), alt.clone().into());
                 }
-                report
-                    .risks
-                    .insert("Image position and display dimensions normalized".into());
+                if spacing {
+                    let width = image
+                        .display_width_emu
+                        .ok_or_else(|| anyhow::anyhow!("Imported image width is missing"))?;
+                    let height = image
+                        .display_height_emu
+                        .ok_or_else(|| anyhow::anyhow!("Imported image height is missing"))?;
+                    value.attrs.insert("displayWidthEmu".into(), width.into());
+                    value.attrs.insert("displayHeightEmu".into(), height.into());
+                }
+                if !spacing {
+                    report
+                        .risks
+                        .insert("Image position and display dimensions normalized".into());
+                }
                 value
             }
             Element::PageBreak => {
@@ -642,6 +733,80 @@ mod side_story_tests {
                     .unwrap_err()
                     .to_string()
                     .contains("headers or footers")
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod image_conversion_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn audited_image_identity_counts_dimensions_and_placeholder_structure_must_match() {
+        let legacy: Node =
+            serde_json::from_str(include_str!("../tests/fixtures/word-image-legacy.json")).unwrap();
+        let mut picture = legacy.content[0].clone();
+        picture.attrs.insert("displayWidthEmu".into(), 95250.into());
+        picture
+            .attrs
+            .insert("displayHeightEmu".into(), 95250.into());
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(
+                picture.attrs["src"]
+                    .as_str()
+                    .unwrap()
+                    .split_once(',')
+                    .unwrap()
+                    .1,
+            )
+            .unwrap();
+        let geometry = crate::image_dimensions::ImageGeometry {
+            width_emu: 95250,
+            height_emu: 95250,
+            mime: "image/png".into(),
+            sha256: Sha256::digest(&bytes).into(),
+        };
+        let original = node("doc", vec![node("paragraph", vec![]), picture.clone()]);
+        let mut supported = original.clone();
+        verify_image_conversion(&mut supported, std::slice::from_ref(&geometry)).unwrap();
+        assert_eq!(supported.content.len(), 1);
+        assert_eq!(supported.content[0].kind, "image");
+        for mutation in [
+            "bytes",
+            "mime",
+            "width",
+            "height",
+            "missing",
+            "extra",
+            "placeholder",
+            "text",
+        ] {
+            let mut candidate = original.clone();
+            let mut proofs = vec![geometry.clone()];
+            match mutation {
+                "bytes" => proofs[0].sha256[0] ^= 1,
+                "mime" => proofs[0].mime = "image/jpeg".into(),
+                "width" => proofs[0].width_emu += 1,
+                "height" => proofs[0].height_emu += 1,
+                "missing" => proofs.clear(),
+                "extra" => proofs.push(geometry.clone()),
+                "placeholder" => {
+                    candidate.content.remove(0);
+                }
+                "text" => candidate.content[0].content.push(Node {
+                    kind: "text".into(),
+                    text: Some("Keep me".into()),
+                    attrs: Default::default(),
+                    content: vec![],
+                    marks: vec![],
+                }),
+                _ => unreachable!(),
+            }
+            assert!(
+                verify_image_conversion(&mut candidate, &proofs).is_err(),
+                "{mutation}"
             );
         }
     }
