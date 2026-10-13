@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "简文",
+  "version": "0.1.0",
+  "identifier": "local.rustwps.desktop",
+  "build": { "beforeDevCommand": "npm run dev", "beforeBuildCommand": "npm run build", "devUrl": "http://127.0.0.1:1420", "frontendDist": "../dist" },
+  "app": {
+    "windows": [{ "title": "简文 · 本地办公", "width": 1180, "height": 820, "minWidth": 760, "minHeight": 540 }],
+    "security": { "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; worker-src 'self' blob:; connect-src ipc: http://ipc.localhost 'self' blob:; object-src 'none'; frame-src 'none'" }
+  },
+  "bundle": { "active": false }
+}

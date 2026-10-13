@@ -1,0 +1,196 @@
+# Rust WPS exploration
+
+本地、离线、简洁的办公软件探索项目，Rust 负责文档核心。
+
+开发顺序：**DOC / DOCX / PDF → Excel（XLSX / XLS）→ PPT（PPTX / PPT）**。
+
+当前各格式能力与缺口见 [路线图](docs/ROADMAP.md)，已完成验证的计数、执行顺序和边界见 [回归记录](docs/REGRESSION.md)。真实 DOC/DOCX 语料经独立读取核对段落与分页；这些结果不代表完整 Office 排版兼容。
+
+后续开发入口见 [dot 接手说明](docs/DOT_HANDOFF.md)。
+
+目前包含 Tauri 桌面工作区、基础富文本编辑器和 Rust 文档核心。支持新建文字文档、标题/样式/列表/简单表格/PNG 和 JPEG 图片、常见外部超链接、撤销重做、本地草稿、DOCX 导出，及本应用生成文档的重新编辑。已有 DOC/DOCX 可正文搜索、导入基础结构并另存 DOCX；DOCX 另支持有限文本替换；PDF 可翻页和缩放。尚无任意 Word 文档的完整结构化导入、Word 分页排版、格式转换和 OCR。
+
+超链接支持 HTTP、HTTPS 和 mailto；编辑工具栏可修改或移除，草稿与 DOCX 保留目标。导入会规范化链接外观、提示文字和打开方式；书签、文件路径及无法解析的关系目前拒绝转为编辑副本。
+
+正文和标题支持左对齐、居中、右对齐及两端对齐，可通过“段落对齐”切换，草稿与 DOCX 读写保留设置；表格内段落同样适用。分散对齐暂不支持导入。
+
+文字字号支持 1–1638 pt、0.5 pt 递增，选中文字后输入并按 Enter 或点击“应用字号”；光标处设置影响后续输入。“默认字号”移除显式字号，混合选区会显示“混合”。支持撤销、草稿、DOCX 读写和 PDF 快照，包含表格文字、上下标及代码文字。
+
+“字体”可输入一个本机字体名称并应用于选区或后续输入；“默认字体”移除显式名称，混合选区显示“混合”。名称最多 31 个 UTF-16 单元，不接受首尾空白及控制字符；提供常见字体建议，也可输入其他本机字体。显式名称经草稿和 DOCX 四个字体槽保存；外部 DOCX 按脚本、样式和有限主题语言解析有效名称。主题字体转换为固定名称，缺失的主题槽会提示；本机未安装字体由系统替代。实际替代、复杂文字塑形及 Word/WPS 版式仍需验证。旧 DOC 的字体表尚未转换。
+
+新建文字文档及外部 DOC/DOCX 的编辑副本使用 `standard-v2` 默认样式：正文 Arial / 微软雅黑、11 pt、黑色、1.5 倍行距，段后 6 pt；标题 1–3 分别为 18/15/13 pt 粗体，段前 12 pt、段后 6 pt。编辑、DOCX 和打印快照采用同一组默认值，页面为 A4、四边 25.4 mm。旧自有 DOCX 和旧草稿没有 profile 时继续使用 V1，不自动升级，V1 编码部件字节保持不变。实际字体回退、自动分页和复杂版式仍有限，统一默认值不等于 Word/WPS 页面一致。
+
+文字颜色支持色盘、六位 RGB 输入和一键黑色，可对选区或后续输入应用，支持撤销、草稿及 DOCX 读写；“默认颜色”移除显式色，不等于设为黑色。导入保留可解析的 RGB 和标题有效颜色，普通主题色近似转为固定 RGB；自动色或无法解析的主题色使用编辑器默认色，并提示不保留主题联动。自定义主题映射及被文字引用的复杂主题颜色暂拒绝编辑导入。链接字形可着色，下划线外观仍可能与 Word 不同。
+
+字号/颜色原生回归：测试 feature 构建后运行 `node scripts/native-word-font-size-smoke.mjs`，覆盖实际 WebView2 选区编辑、磁盘草稿/撤销、独立 DOCX 字号/RGB 读取和 PDF 物理字号/填充色探针；结束后恢复普通构建。该探针不代表完整颜色管理、字体替代或复杂文字排版保真。
+
+默认样式原生回归：同一测试构建下运行 `node scripts/native-word-style-smoke.mjs`，验证未设置显式字号/颜色的新文档、V2 草稿、DOCX 导出与 worker 重开，以及 PDF 的实际字体、正文/标题字号和左边距；证据保存至 `tmp/native-word-style/`。
+
+字体原生回归：同一测试构建下运行 `node scripts/native-word-font-family-smoke.mjs`，验证真实 WebView2 输入、草稿、DOCX 字体槽和原生 PDF 中的字体资源；具体结果及边界见 [回归记录](docs/REGRESSION.md)。
+
+正文工具栏可插入手动分页符，DOCX 导入/导出和打印 PDF 保留分页。旧版 DOC 的受支持正文手动分页现也能恢复，并保留相邻真实空段落；分节布局仍未恢复。列表、表格内部暂不支持；DOCX 分栏符仍规范化为段落边界并提示。
+
+简单表格支持在当前单元格后增加行/列、删除当前行/列及整张表格，并可撤销重做；表格操作在光标位于表格内时可用。合并单元格和列宽调整仍未支持。
+
+Rust 核心的 release 性能测量与复现方法见 [性能基线](docs/PERFORMANCE.md)。它只测 CLI 读取/导入，不代表桌面启动或复杂 Office 排版性能。
+
+Excel 已接入桌面工作区：工作表切换、虚拟化网格、地址跳转、方向键导航和源公式栏；打开失败保留当前文档。CLI 入口 `cargo run --locked -- inspect-xlsx example.xlsx` 输出稀疏单元格、类型、公式和源缓存信息。外部文件先只读打开，基础 XLSX 可经审计转为编辑副本；显式有限计算和另存入口见下文。日期/样式/合并效果尚未完整显示。独立验证可运行 `scripts/check-spreadsheet.py`（需要 openpyxl）及 `node scripts/check-workbook-worker.mjs`。实现范围见 [Excel 探索](docs/EXCEL.md)。
+
+原生分页导出回归：测试 feature 构建后运行 `node scripts/native-page-break-smoke.mjs`，通过真实 WebView2/Tauri PDF 导出验证普通、文首、连续、文末分页的逐页文字、空白页和 A4 尺寸，同时检查源 DOCX 字节不变。测试结束后恢复普通构建。
+
+Excel 编辑入口：点击“新建工作簿”，选择单元格类型并输入内容后点“应用单元格”。支持撤销重做、独立自动草稿、恢复和另存 XLSX；本应用生成且模型校验通过的文件可重新编辑，外部工作簿默认只读，可经兼容性审计建立基础编辑副本。支持 Shift 扩展矩形选区、内容复制粘贴和整块清空；内部复制已支持 A1 相对/绝对/混合引用调整；公式可显式进行有限计算，完整格式编辑仍待实现。写入核心也可运行 `cargo run --locked -- create-xlsx docs/examples/workbook-v1.json new.xlsx`，由 `scripts/check-workbook-export.py` 用 openpyxl 独立校验。
+
+本应用生成的 XLSX 保存编辑模型；`cargo run --locked -- read-xlsx-model new.xlsx` 在完整包内容一致性校验后导出模型 JSON，可修改后另存。桌面 worker 同样校验模型，外部修改导致失效时继续只读预览并提示，避免旧模型覆盖实际工作簿。
+
+可编辑工作簿支持新增、重命名、删除、移动及隐藏/显示工作表，并纳入撤销、草稿和 XLSX 导出。结构操作维护有限范围的工作表公式前缀与三维引用端点；显式有限计算已接入，尚无自动或增量重算。
+
+数字格式可按选区设置常规、小数、千分位、百分比、日期、时间或自定义代码，支持整体撤销、草稿和 XLSX 导出。勾选“格式显示”可预览上述有限预设，公式栏保持原值；不支持的代码明确提示并回退原值。完整自定义格式及地区显示仍待实现。
+
+桌面“计算公式”通过隔离 Rust worker 显示有限算术、引用和 SUM 等函数的结果，并区分循环、不支持和资源上限；编辑后结果立即失效，迟到结果不会覆盖新版本。CLI 可运行 `cargo run --locked -- calculate-workbook docs/examples/workbook-v1.json`。可勾选“自动重算”，编辑停止 350 毫秒后更新支持的公式；默认手动计算。尚无增量重算或 XLSX 缓存写入，详见 [公式计算边界](docs/FORMULAS.md)。
+
+真实桌面 Excel 回归：以 `--features native-smoke` 构建后运行 `node scripts/native-workbook-smoke.mjs`，验证实际 IPC、草稿恢复、另存/重开、拒绝覆盖和写入失败阻止关闭；测试在隔离目录进行并指定文件路径，未覆盖系统对话框。结束后恢复普通构建。详见 [Excel 探索](docs/EXCEL.md)。
+
+## 桌面版
+
+需要 Rust 1.88+、Node.js 20.19+（或 22.12+）、npm，以及 Windows WebView2 和 MSVC 构建工具。当前在 Windows 开发，其他平台尚未验证。
+
+```powershell
+npm ci
+npm run desktop
+```
+
+生成内嵌前端资源的可执行文件（不生成安装包）：
+
+```powershell
+npx tauri build --no-bundle --debug
+# src-tauri/target/debug/rust-wps-desktop.exe
+```
+
+`npm run desktop:build` 构建 release 版本。`npm run dev` 仅供浏览器查看界面，文件打开和保存依赖桌面 Rust 命令，在普通浏览器中会禁用。
+
+PDF.js worker、CMap、标准字体和 WASM 解码器随构建打包，不从 CDN 加载。PDF 每次只渲染一页，搜索在正文视图中进行，尚无页面文字选区、标注与 OCR。正文提取失败时仍尝试页面预览；密码输入和 PDF.js 本机正文重提取的边界见下文。
+
+点击“新建文档”进入编辑器，“另存 DOCX”导出新文件。每次编辑后约 700 ms 自动保存到应用本地数据目录的 `draft-v1.json`，可通过“恢复本地草稿”读取。文件名沿用原草稿槽；V2 文档的内部 `version` 为 2，旧 V1 仍为 1，恢复时严格核对版本与样式 profile。当前只有一个草稿槽，开始编辑另一份文档后会替换它；草稿不是版本历史。浏览器界面预览可编辑但无法调用 Rust 导出和草稿存储。
+
+编辑时可用 Ctrl+F 查找正文，用上一处/下一处定位后点击“替换当前匹配”，或在完整扫描后点击“全部替换”。替换文字继承各匹配首字符的格式和链接，留空则删除；整批修改可一次撤销。当前为区分大小写的字面查找，替换限单行 4096 UTF-16 单元。扫描达到上限时禁用全部替换；超过正文、结构或草稿保存预算的替换会在修改前拒绝。
+本应用生成的 DOCX 内嵌编辑模型：V1 使用 `rust-wps/model-v1.json`，V2 使用 `rust-wps/model-v2.json`。重开时核对模型文件名、版本、profile 与包关系，并校验哈希覆盖、完整部件集合和重编码内容；双模型、未知版本及错配均拒绝直接编辑。经外部工具修改后若校验不一致，会回退到原文件正文预览，避免旧模型覆盖外部修改。现阶段不承诺其他办公软件重保存后仍可直接编辑。
+切换文档和关闭桌面窗口时，如有未导出修改，会提示确认并立即写入最后一份草稿；写入失败则保留文档并取消离开。草稿写入串行执行，期间暂停编辑；DOCX 正在导出时会阻止退出。原生关闭事件已接入，浏览器中的模拟 IPC 测试通过，真实 WebView2 端到端关闭验收仍待进行。意外崩溃仍可能丢失自动保存间隔内的修改，草稿不等同于已导出的 DOCX。
+
+## 运行
+
+需要 Rust 1.88+，首次构建需要下载 crates.io 依赖。
+
+```powershell
+cargo run -- inspect 'C:\documents\example.docx'
+cargo run -- inspect 'C:\documents\example.doc'
+cargo run -- inspect 'C:\documents\example.pdf'
+cargo run -- replace 'C:\documents\example.docx' 'C:\documents\edited.docx' '查找文字' '替换文字'
+cargo run -- create-docx tests/fixtures/authoring.json 'C:\documents\new.docx'
+cargo test
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-corpus.ps1
+```
+
+标准输出是 JSON：格式、解析后端、文件大小、解析耗时、正文与能力警告。
+错误通过标准错误输出并返回非零退出码。不会写入源文件。JSON 包含文档正文，请自行选择输出保存位置。
+
+文字模型通过根节点 `doc.attrs.styleProfile = "standard-v2"` 选择 V2，沿用现有 Node IPC 与草稿接口。省略该属性走 V1；显式 `legacy-v1`、`null`、未知值及非根节点上的该属性均拒绝。上面的 `authoring.json` 历史示例没有 profile，因此仍导出 V1；新建和外部 DOC/DOCX 编辑导入会设置 V2。
+
+## 当前边界
+
+| 格式 | 已接入 | 当前验证范围 | 下一步 |
+| --- | --- | --- | --- |
+| DOC | office_oxide 二进制解析 | 2 份 Apache POI 真实样本；文件头与损坏输入拒绝 | 多码页、中文、表格等更多真实样本 |
+| DOCX | 读取/文本替换；基础结构导入；新建文档编辑、导出和重开 | 中文、XML 转义、样式、列表、简单表格、图片及模型一致性；真实样本导入/替换重开 | 更广的外部结构、复杂样式、页眉页脚与视觉验证 |
+| PDF | pdf-extract 提取、PDF.js 页面/密码/正文搜索、文字与演示近似 PDF 导出 | 合成 PDF、加密解锁、中文原生导出及 A4/演示尺寸检查 | 中文字体映射、阅读顺序、真实复杂样本、扫描件 |
+| XLSX / XLS | 基础 XLSX 编辑/导入/导出/有限计算；BIFF8 XLS 只读 | openpyxl/xlrd 独立对照、草稿及模型一致性 | 完整样式、筛选、增量重算、XLS 编辑导入 |
+| PPTX / PPT | 基础 PPTX 编辑/审计导入/导出、放映和近似 PDF；PPT 文本/备注只读 | python-pptx 独立对照、真实 POI 文本样本、模型一致性 | 默认模板继承、基本形状、复杂图形与真实文稿保真 |
+
+文件扩展名和签名必须匹配；目前不支持以 `.doc` 命名的 RTF/HTML。
+`replace` 只另存新 DOCX，拒绝覆盖已有文件、空查找、控制字符和已签名文件。搜索可跨同段落的文字 run，但不会跨段落；正文及关联的页眉页脚、注释、脚注和尾注都在替换范围内。跨制表符、换行、字段或对象的潜在误匹配会拒绝保存。替换文字继承起始 run 样式，修改后的排版仍需复核。
+保存时保留所有未修改 ZIP 条目的解压后内容，包括原始关系文件和未知部件；ZIP 压缩及元数据会重建，不承诺整文件字节相同。输出先写同目录临时文件、同步，再以禁止覆盖方式发布，保存前检查部件和重新解析。
+输入上限 64 MiB；DOCX 预检限制 4096 项、128 MiB 总展开大小，并校验重复条目及 CRC。桌面解析另有超时和 Windows 内存配额；尚未完成任意文件的安全验收。
+DOCX 编辑额外限制 4096 个 ZIP 条目、128 MiB 解压总量；这不能替代解析进程隔离。
+新建文档模型暂限制 10000 节点、32 层结构、2 MiB 文字；支持标题 1–3、9 层列表和矩形表格。合并单元格、指定列宽和自定义图片尺寸尚不支持，Rust 导出器会明确拒绝。图片单张上限 8 MiB，总数据上限 20 MiB，支持嵌入的 PNG/JPEG，拒绝远程图片 URL。
+
+详情见 [路线图](docs/ROADMAP.md) 和 [技术探索](docs/EXPLORATION.md)。
+
+## 界面测试
+
+最近一次跨格式回归的计数、命令与验证边界见 [回归记录](docs/REGRESSION.md)。
+
+```powershell
+cargo build --locked
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-corpus.ps1
+npm run build
+npm run test:ui
+cargo clippy --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
+```
+
+界面测试使用已安装的 Microsoft Edge（Playwright msedge channel），通过模拟 IPC，并在需要读写证明的用例中连接真实 Rust CLI，覆盖文字/PDF、工作簿与演示的阅读、编辑、导入、导出、历史、草稿和失败恢复。草稿界面测试的存储运输层为内存模拟，Rust 测试另行验证磁盘持久化；它们不能代替原生文件对话框、WebView2 IPC、真实中文输入法和桌面版端到端验收。
+# DOCX 导入前检查
+
+桌面打开与 Word 导入使用独立解析进程，30 秒超时后终止并保留原工作区；响应限制为 32 MiB。`node scripts/check-worker.mjs` 可验证真实子进程打开/导入、损坏输入和源文件保护；原生冒烟脚本同时覆盖真实窗口中的失败恢复。Windows Job Object 限制解析进程提交内存 512 MiB、活动进程数 1，并在关闭时回收；设置失败则拒绝解析。尚无 CPU 配额或文件系统沙箱；CLI 和部分写入操作仍在调用进程中运行。
+
+原生 PDF 导出复现（Windows）：先执行 `npx tauri build --no-bundle --debug --features native-smoke`，再运行 `node scripts/native-pdf-smoke.mjs`。脚本使用真实 WebView2/CDP 和本机 COM 导出，隐藏测试窗口并隔离草稿；仅在显式测试 feature 和环境变量同时启用时绕过保存对话框。输出保存在 `tmp/native-pdf/`，验证后请使用普通 `npx tauri build --no-bundle --debug` 恢复标准构建。文字检查保留原始结果，并明确使用 NFKC/空白规范化比较；宋体的兼容字形映射尚需改进。
+
+PDF 页面预览与文字提取分开处理：桌面文字提取失败时仍尝试 PDF.js 页面打开，失败则保留文件与正文回退提示。加密 PDF 可以在本机输入密码，支持错误密码重试和取消；密码只传入 PDF.js，不发送至 Rust IPC，也不写入草稿。原提取失败或无正文时，页面打开后由本机 PDF.js 重新逐页提取文字，支持跨页正文搜索；也可点击“提取 PDF 正文”重试。可停止提取，单次上限为 1000 页和 2 Mi 字符，未完成时明确提示部分结果。扫描件仍需 OCR。CLI `inspect` 保持严格，提取失败返回错误。已接入编辑文档的 A4 打印快照和“打印 / 保存 PDF”入口，使用系统打印窗口选择目标；Windows 已接入 WebView2 专用“另存 PDF”：原生保存对话框选择新文件名，临时生成、重开校验后原子发布，拒绝覆盖。真实 WebView2 导出、A4 页面、中文/表格渲染和已有文件保护测试通过。系统打印窗口交互、复杂文档保真和 OCR 仍待完成。
+
+旧版 DOC：`cargo run --locked -- import-doc example.doc` 输出编辑模型及实验性转换提示。桌面打开 DOC 后可使用同一个“导入编辑副本”入口，修改后另存为 DOCX。解析警告、正文恢复不完整、宏、附属故事或不支持的结构会阻止转换；这不是完整二进制特性审计。真实 `simple.doc`、`SampleDoc.doc` 的转 DOCX / 重开 / 正文比对 / 源文件哈希检查已加入 `scripts/check-corpus.ps1`。仍需更多中文和复杂 DOC 样本及视觉验收。
+
+`cargo run --locked -- import-docx example.docx` 输出可编辑文档模型及兼容性报告。支持段落、1–3 级标题、基本文字样式、有效半点字号/RGB 文字颜色、嵌套列表、简单表格和嵌入 PNG/JPEG；正文级手动分页符保留，分栏符转为段落边界并报告。字体、动态颜色、对象尺寸及表格外观等会规范化。修订、域、合并单元格、公式、页眉页脚、批注和复杂对象目前拒绝导入。桌面打开 DOCX 后可点击“导入编辑副本”，查看中文兼容性提示后选择取消或接受变化；源文件始终保留，导出必须另存新文件。原生 WebView2 与文件对话框端到端验收仍待完成。
+
+`cargo run --locked -- audit-docx example.docx` 输出结构计数和已识别的兼容性风险，不修改原文件。此命令尚不转换为可编辑模型，也不保证未列出的特性能保真；`fidelity_verified` 始终为 `false`。
+
+
+
+旧版 XLS 新增只读实验预览：桌面打开 OLE BIFF8 文件，或运行 `cargo run --locked -- inspect-xls file.xls`。保留类型化值、日期系统及可恢复数字格式；公式明确标为源缓存，表达式未恢复，暂不支持编辑/重算/转存。支持边界和独立 xlrd 验证见 docs/EXCEL.md。
+
+## 演示文稿
+
+文本框的“文本框对齐”下拉框支持左对齐、居中和右对齐，预览、草稿及 PPTX 保存保留设置；近似 PDF 使用同一对齐。暂不支持两端/分散对齐和垂直对齐。
+
+演示预览、放映及近似 PDF 按文本框宽度自动换行。文字超出高度或绘制预算时会提示，并阻止 PDF 导出；可扩大文本框或减少文字后重试。原始文字仍完整保留，换行不代表 Office 精确排版。
+
+点击“新建演示文稿”编辑文本框、PNG/JPEG 图片及演讲者备注，可复制文本框/页面、调整位置、切换页面尺寸和隐藏页，并支持撤销、自动草稿与另存 PPTX。放映和近似 PDF 仅呈现可见页；备注不放入画布。PPTX 外部文稿先只读打开，可查找正文/备注或有限替换正文文字节点；“导入基础编辑副本”先展示风险，遇到继承位置、复杂对象或未知扩展时阻断。旧 PPT 当前只读提取正文、备注和母版静态文字，不恢复图片或版式。
+
+```powershell
+cargo run --locked -- inspect-pptx example.pptx
+cargo run --locked -- import-pptx example.pptx
+cargo run --locked -- create-pptx docs/examples/presentation-v1.json new.pptx
+cargo run --locked -- read-pptx-model new.pptx
+cargo run --locked -- inspect-ppt example.ppt
+```
+
+`import-pptx` 仅输出审计报告及允许转换时的模型，不写原文件；桌面接受后也另存新文件。自建 PPTX 经整包模型一致性验证后可重开编辑，外部修改导致失效时回到只读。支持范围、独立工具验证和原生 PDF 复现见 [演示文稿探索](docs/PRESENTATIONS.md)。
+
+Excel 连续录入可在公式栏按 Enter 提交并下移、Tab 提交并右移，Shift 反向；Esc 放弃未提交输入。网格 F2 或双击进入编辑，类型仍由类型菜单选择。
+
+Excel 工作簿工具栏支持查找原值或公式，包含隐藏表；Enter/Shift+Enter 跳转下一个/上一个匹配，网格内 Ctrl+F 聚焦查找。查找使用有限扫描预算，结果不完整时会提示。
+
+自建演示文本框可设置顶部、垂直居中或底部对齐，随草稿、撤销和 PPTX 另存保留，近似预览与 PDF 共用该设置。外部 PPTX 中显式的顶部/居中/底部对齐可读取和导入；继承或其他垂直对齐仍规范化为顶部，导入时会提示。
+
+演示编辑画布可直接点击文本框选择，双击进入文字编辑；键盘 Tab 聚焦文本框后，空格选择、Enter 编辑。可拖拽移动文本框，也可使用位置字段；拖拽限制在页面内，支持 Esc 取消和一次撤销。
+
+
+演示图片可一键恢复原始比例：保持左上角，在已应用的当前框内等比适配，支持撤销和草稿。图片原始字节保持不变。
+
+
+演示图片可直接在画布选择和拖拽，保持在页面内；支持 Esc 取消、一次撤销及草稿，Enter/双击编辑替代文字。
+
+
+演示画布对象聚焦后可用方向键微调，Shift 加速，支持逐键撤销；输入框中的方向键仍用于移动光标。
+
+
+演示文本框和图片选中后，可拖动右下角手柄调整尺寸；Shift 保持当前框比例，Esc 取消，松开后可一次撤销。图片自由调整可能拉伸。
+
+
+文字工具栏新增删除线按钮：选中文字后应用/移除，支持撤销、草稿和 DOCX 导入导出；光标处切换只影响后续输入。独立 python-docx 及原生 WebView 选区/草稿验证通过。
+
+
+文字工具栏支持互斥的上标/下标，草稿和 DOCX 保留，独立 python-docx 核对通过；修复快速移动光标后立即分段可能使用旧选区的问题。
+
+
+文字可“清除字符格式”：移除选区的粗斜体等样式，保留链接、标题及段落结构；光标处操作只影响后续输入。
+
+
+文字编辑中可 Ctrl+F 查找正文，Enter/Shift+Enter 循环定位；支持跨字符样式，编辑和撤销后刷新。匹配区分大小写，预算不足会提示扫描不完整。

@@ -1,0 +1,631 @@
+--- a/src/convert_doc.rs
++++ b/src/convert_doc.rs
+@@ -25,6 +25,7 @@
+     // the first `Element::Heading` below.
+     let has_structured_headings = paragraphs.iter().any(|p| p.props.outline_level.is_some());
+     let mut warnings = doc.warnings().to_vec();
++    warn_nested_manual_page_breaks(paragraphs, &mut warnings);
+ 
+     // One IR `Section` per document section. `build_paragraphs` ends a
+     // section's last paragraph at its section mark (terminator 0x0C, only
+@@ -684,6 +685,81 @@
+     }
+ }
+ 
++/// Page breaks inside table cells or list items need a richer layout path.
++/// The read-only IR degrades them to line breaks, with an explicit warning
++/// that consumers can use to refuse an editable conversion.
++fn nested_manual_page_break(p: &DocParagraph) -> bool {
++    p.text.contains('\x0C')
++        && (p.props.f_in_table
++            || p.props.is_table_trailing_mark
++            || (p.props.outline_level.is_none() && is_doc_list_item(p.props.ilfo)))
++}
++
++fn warn_nested_manual_page_breaks(paragraphs: &[DocParagraph], warnings: &mut Vec<String>) {
++    let count: usize = paragraphs
++        .iter()
++        .filter(|p| nested_manual_page_break(p))
++        .map(|p| p.text.matches('\x0C').count())
++        .sum();
++    if count > 0 {
++        warnings.push(format!(
++            "DOC_MANUAL_PAGE_BREAK_IN_TABLE_OR_LIST: {count} manual page break(s) inside table cells or list items are shown as line breaks; editable import must be blocked"
++        ));
++    }
++}
++
++/// Structured paragraph text keeps manual 0x0C marks; section marks have
++/// already been removed as paragraph terminators by `build_paragraphs`.
++/// Split only at those manual marks, preserving every other byte and the
++/// original byte-coordinate system for hyperlinks and character properties.
++fn emit_manual_page_break_paragraph(
++    p: &DocParagraph,
++    has_structured_headings: bool,
++    elements: &mut Vec<Element>,
++) {
++    let heading_level = p
++        .props
++        .outline_level
++        .map(|level| level.saturating_add(1).clamp(1, 6))
++        .or_else(|| {
++            (!has_structured_headings)
++                .then(|| guessed_heading_level(p.text.trim(), elements))
++                .flatten()
++        });
++    let mut base = 0;
++    for (index, segment) in p.text.split('\x0C').enumerate() {
++        if index > 0 {
++            elements.push(Element::PageBreak);
++        }
++        // Empty boundary pieces do not add blank paragraphs around a break.
++        // Whitespace-only pieces are real content and must remain intact.
++        if !segment.is_empty() {
++            let content = inline_content_at(segment, base, &p.hyperlinks, &p.chp_runs);
++            if let Some(level) = heading_level {
++                elements.push(Element::Heading(Heading {
++                    level,
++                    content,
++                    ..Default::default()
++                }));
++            } else {
++                elements.push(Element::Paragraph(Paragraph {
++                    content,
++                    tabs: p.props.tabs.clone(),
++                    alignment: p.props.alignment.clone(),
++                    indent_left_twips: p.props.indent_left_twips,
++                    indent_right_twips: p.props.indent_right_twips,
++                    first_line_indent_twips: p.props.first_line_indent_twips,
++                    space_before_twips: p.props.space_before_twips,
++                    space_after_twips: p.props.space_after_twips,
++                    line_spacing: p.props.line_spacing.clone(),
++                    ..Default::default()
++                }));
++            }
++        }
++        base += segment.len() + 1;
++    }
++}
++
+ /// Returns how many tables holding nested tables were flattened.
+ fn walk_paragraphs(
+     paragraphs: &[DocParagraph],
+@@ -701,6 +777,12 @@
+     let mut list_ilfo: Option<i16> = None;
+ 
+     for p in paragraphs {
++        if p.text.contains('\x0C') && !nested_manual_page_break(p) {
++            table.flush(elements);
++            flush_list(&mut list_items, list_ilfo.take(), list_formatting, elements);
++            emit_manual_page_break_paragraph(p, has_structured_headings, elements);
++            continue;
++        }
+         if p.props.is_table_trailing_mark {
+             flush_list(&mut list_items, list_ilfo.take(), list_formatting, elements);
+             table.end_row(p.props.tap.clone(), p.props.itap);
+@@ -731,7 +813,13 @@
+         } else {
+             table.flush(elements);
+             flush_list(&mut list_items, list_ilfo.take(), list_formatting, elements);
+-            if has_structured_headings {
++            let blank = p.text.trim().is_empty();
++            // Only a real paragraph mark establishes an empty prose paragraph.
++            // An empty section terminator is structural, not an extra blank line.
++            if blank && p.terminator != '\r' {
++                continue;
++            }
++            if has_structured_headings || blank {
+                 elements.push(Element::Paragraph(Paragraph {
+                     content: inline_content_for(&p.text, &p.hyperlinks, &p.chp_runs),
+                     tabs: p.props.tabs.clone(),
+@@ -805,11 +893,21 @@
+     hyperlinks: &[HyperlinkSpan],
+     chp_runs: &[(std::ops::Range<usize>, ChpProps)],
+ ) -> Vec<InlineContent> {
++    inline_content_at(text, 0, hyperlinks, chp_runs)
++}
++
++fn inline_content_at(
++    text: &str,
++    mut base: usize,
++    hyperlinks: &[HyperlinkSpan],
++    chp_runs: &[(std::ops::Range<usize>, ChpProps)],
++) -> Vec<InlineContent> {
+     let mut out = Vec::new();
+-    let mut base = 0usize;
+-    for seg in text.split('\n') {
++    // Ordinary manual breaks are consumed by the block-level splitter.
++    // Any remaining 0x0C belongs to a warned, non-editable table/list path.
++    for seg in text.split(['\n', '\x0C']) {
+         push_segment(seg, base, hyperlinks, chp_runs, &mut out);
+-        base += seg.len() + 1; // +1 for the '\n' the split consumed
++        base += seg.len() + 1; // Both delimiters are one UTF-8 byte.
+         out.push(InlineContent::LineBreak);
+     }
+     // Drop the trailing `LineBreak` appended after the final segment.
+@@ -1002,25 +1100,15 @@
+         return;
+     }
+ 
+-    let is_heading = trimmed.len() < 100
+-        && !trimmed.ends_with('.')
+-        && !trimmed.ends_with(',')
+-        && !is_heading_guess_junk(trimmed)
+-        && (trimmed
+-            .chars()
+-            .filter(|c| c.is_alphabetic())
+-            .all(|c| c.is_uppercase())
+-            || (elements.is_empty() && trimmed.len() < 60));
+-
+-    if is_heading {
+-        // Honour soft line breaks inside headings too: split on `'\n'` (the
+-        // sanitised form of `0x0B`) and keep each segment bold.
++    if let Some(level) = guessed_heading_level(trimmed, elements) {
++        // Honour soft line breaks inside headings too: split on '\n' (the
++        // sanitised form of 0x0B) and keep each segment bold.
+         let trim_start = text.len() - text.trim_start().len();
+         let shifted = shift_hyperlinks_for_trim(hyperlinks, trim_start, trimmed.len());
+         let shifted_chp = shift_chp_runs_for_trim(chp_runs, trim_start, trimmed.len());
+         let content = inline_content_for(trimmed, &shifted, &shifted_chp);
+         elements.push(Element::Heading(Heading {
+-            level: if elements.is_empty() { 1 } else { 2 },
++            level,
+             content,
+             ..Default::default()
+         }));
+@@ -1038,6 +1126,27 @@
+             ..Default::default()
+         }));
+     }
++}
++
++fn guessed_heading_level(trimmed: &str, elements: &[Element]) -> Option<u8> {
++    // Structured empty paragraphs now survive the walk. They must not change
++    // the existing first-visible-paragraph heuristic. A page break or any
++    // other block still counts as preceding content, as it did before.
++    let first_content = elements.iter().rev().all(|element| {
++        matches!(element, Element::Paragraph(p) if inline_to_text(&p.content).trim().is_empty())
++    });
++    let is_heading = !trimmed.is_empty()
++        && trimmed.len() < 100
++        && !trimmed.ends_with('.')
++        && !trimmed.ends_with(',')
++        && !is_heading_guess_junk(trimmed)
++        && (trimmed
++            .chars()
++            .filter(|c| c.is_alphabetic())
++            .all(|c| c.is_uppercase())
++            || (first_content && trimmed.len() < 60));
++
++    is_heading.then_some(if first_content { 1 } else { 2 })
+ }
+ 
+ /// Reject line shapes the ALL-CAPS / short-opening-line heading guess in
+@@ -1201,6 +1310,177 @@
+             cp_end: 0,
+             chp_runs: Vec::new(),
+         }
++    }
++
++    #[test]
++    fn manual_page_break_keeps_utf8_chp_hyperlinks_whitespace_and_paragraph_properties() {
++        let text = " 中\x0C文 \n末.";
++        let after_break = text.find('文').unwrap();
++        let mut p = para(text, PapProps {
++            indent_left_twips: Some(720),
++            ..Default::default()
++        });
++        p.hyperlinks.push(HyperlinkSpan {
++            range: text.find('中').unwrap()..after_break + '文'.len_utf8(),
++            url: "https://example.test/".into(),
++        });
++        p.chp_runs = vec![
++            (0..after_break, ChpProps { bold: true, ..Default::default() }),
++            (after_break..text.len(), ChpProps { italic: true, ..Default::default() }),
++        ];
++        let mut elements = Vec::new();
++        walk_paragraphs(&[p], true, &mut elements, &ListFormatting::default());
++        assert_eq!(elements.len(), 3);
++        assert!(matches!(elements[1], Element::PageBreak));
++        let (Element::Paragraph(before), Element::Paragraph(after)) =
++            (&elements[0], &elements[2]) else { panic!("{elements:?}"); };
++        assert_eq!(inline_to_text(&before.content), " 中");
++        assert_eq!(inline_to_text(&after.content), "文 \n末.");
++        assert_eq!(before.indent_left_twips, Some(720));
++        assert_eq!(after.indent_left_twips, Some(720));
++        let spans = |content: &[InlineContent]| content.iter().filter_map(|item| {
++            if let InlineContent::Text(span) = item { Some(span.clone()) } else { None }
++        }).collect::<Vec<_>>();
++        let before_spans = spans(&before.content);
++        let after_spans = spans(&after.content);
++        assert!(before_spans.iter().all(|span| span.bold && !span.italic));
++        assert!(after_spans.iter().all(|span| span.italic && !span.bold));
++        assert_eq!(before_spans.iter().filter(|s| s.hyperlink.is_some()).map(|s| s.text.as_str()).collect::<String>(), "中");
++        assert_eq!(after_spans.iter().filter(|s| s.hyperlink.is_some()).map(|s| s.text.as_str()).collect::<String>(), "文");
++        assert!(after.content.iter().any(|item| matches!(item, InlineContent::LineBreak)));
++    }
++
++    #[test]
++    fn manual_page_break_boundaries_and_blank_pages_are_not_trimmed_or_added() {
++        for structured in [false, true] {
++            let mut elements = Vec::new();
++            walk_paragraphs(&[para("\x0C\x0C", PapProps::default())], structured, &mut elements, &ListFormatting::default());
++            assert_eq!(elements.len(), 2);
++            assert!(elements.iter().all(|e| matches!(e, Element::PageBreak)));
++            elements.clear();
++            walk_paragraphs(&[para("\x0C \x0C", PapProps::default())], structured, &mut elements, &ListFormatting::default());
++            assert_eq!(elements.len(), 3);
++            assert!(matches!(elements[0], Element::PageBreak));
++            assert!(matches!(elements[2], Element::PageBreak));
++            let Element::Paragraph(p) = &elements[1] else { panic!("{elements:?}"); };
++            assert_eq!(inline_to_text(&p.content), " ");
++        }
++    }
++
++    #[test]
++    fn real_empty_prose_paragraphs_survive_beside_manual_page_breaks() {
++        for structured in [false, true] {
++            for blank_text in ["", " \t "] {
++                let paragraphs = [
++                    para("hello.", PapProps::default()),
++                    para(blank_text, PapProps { indent_left_twips: Some(720), ..Default::default() }),
++                    para("\x0C", PapProps::default()),
++                    para("world.", PapProps::default()),
++                ];
++                let mut elements = Vec::new();
++                walk_paragraphs(&paragraphs, structured, &mut elements, &ListFormatting::default());
++                assert_eq!(elements.len(), 4, "{elements:?}");
++                let Element::Paragraph(blank) = &elements[1] else { panic!("{elements:?}"); };
++                assert_eq!(inline_to_text(&blank.content), blank_text);
++                assert_eq!(blank.indent_left_twips, Some(720));
++                assert!(matches!(elements[2], Element::PageBreak));
++            }
++        }
++    }
++
++    #[test]
++    fn empty_section_terminators_do_not_become_prose_paragraphs() {
++        for structured in [false, true] {
++            for text in ["", " \t "] {
++                let mut section_end = para(text, PapProps::default());
++                section_end.terminator = '\x0C';
++                let mut elements = Vec::new();
++                walk_paragraphs(&[section_end], structured, &mut elements, &ListFormatting::default());
++                assert!(elements.is_empty(), "{elements:?}");
++            }
++        }
++    }
++
++    #[test]
++    fn preserving_prose_blanks_keeps_heading_guess_and_heading_list_paths() {
++        let mut elements = Vec::new();
++        walk_paragraphs(&[
++            para("", PapProps::default()),
++            para(" \t ", PapProps::default()),
++            para("  Opening title  ", PapProps::default()),
++        ], false, &mut elements, &ListFormatting::default());
++        assert_eq!(elements.len(), 3);
++        let Element::Heading(heading) = &elements[2] else { panic!("{elements:?}"); };
++        assert_eq!(heading.level, 1);
++        assert_eq!(inline_to_text(&heading.content), "Opening title");
++
++        elements.clear();
++        walk_paragraphs(&[
++            para("  Explicit title  ", PapProps { outline_level: Some(1), ..Default::default() }),
++            para("", PapProps { outline_level: Some(1), ..Default::default() }),
++            para(" \t ", PapProps { ilfo: Some(1), ..Default::default() }),
++        ], true, &mut elements, &ListFormatting::default());
++        assert_eq!(elements.len(), 2);
++        let Element::Heading(heading) = &elements[0] else { panic!("{elements:?}"); };
++        assert_eq!(heading.level, 2);
++        assert_eq!(inline_to_text(&heading.content), "Explicit title");
++        let Element::List(list) = &elements[1] else { panic!("{elements:?}"); };
++        let Element::Paragraph(item) = &list.items[0].content[0] else { panic!("{list:?}"); };
++        assert_eq!(inline_to_text(&item.content), " \t ");
++    }
++
++    #[test]
++    fn manual_page_break_in_numbered_heading_keeps_heading_level_and_spaces() {
++        let p = para("  标题甲\x0C标题乙  ", PapProps {
++            outline_level: Some(1),
++            ilfo: Some(1),
++            ..Default::default()
++        });
++        let mut warnings = Vec::new();
++        warn_nested_manual_page_breaks(std::slice::from_ref(&p), &mut warnings);
++        assert!(warnings.is_empty(), "a numbered heading is not a list item");
++        let mut elements = Vec::new();
++        walk_paragraphs(&[p], true, &mut elements, &ListFormatting::default());
++        assert_eq!(elements.len(), 3);
++        let (Element::Heading(before), Element::Heading(after)) = (&elements[0], &elements[2]) else { panic!("{elements:?}"); };
++        assert_eq!((before.level, after.level), (2, 2));
++        assert_eq!(inline_to_text(&before.content), "  标题甲");
++        assert_eq!(inline_to_text(&after.content), "标题乙  ");
++        assert!(matches!(elements[1], Element::PageBreak));
++    }
++
++    #[test]
++    fn manual_page_break_in_list_and_table_is_warned_and_readable() {
++        let list = para("列表前\x0C列表后", PapProps { ilfo: Some(1), ..Default::default() });
++        let mut cell = para("表格前\x0C\x0C表格后", PapProps { f_in_table: true, ..Default::default() });
++        cell.terminator = '\x07';
++        let paragraphs = [list, cell];
++        let mut warnings = Vec::new();
++        warn_nested_manual_page_breaks(&paragraphs, &mut warnings);
++        assert_eq!(warnings.len(), 1);
++        assert!(warnings[0].starts_with("DOC_MANUAL_PAGE_BREAK_IN_TABLE_OR_LIST: 3 "));
++        let mut elements = Vec::new();
++        walk_paragraphs(&paragraphs, false, &mut elements, &ListFormatting::default());
++        let Element::List(list) = &elements[0] else { panic!("{elements:?}"); };
++        let Element::Paragraph(list_p) = &list.items[0].content[0] else { panic!("{list:?}"); };
++        assert_eq!(inline_to_text(&list_p.content), "列表前\n列表后");
++        let Element::Table(table) = &elements[1] else { panic!("{elements:?}"); };
++        let Element::Paragraph(cell_p) = &table.rows[0].cells[0].content[0] else { panic!("{table:?}"); };
++        assert_eq!(inline_to_text(&cell_p.content), "表格前\n\n表格后");
++    }
++
++    #[test]
++    fn section_terminator_and_soft_line_break_are_not_manual_page_breaks() {
++        let mut p = para("正文\n第二行", PapProps::default());
++        p.terminator = '\x0C';
++        let mut warnings = Vec::new();
++        warn_nested_manual_page_breaks(std::slice::from_ref(&p), &mut warnings);
++        assert!(warnings.is_empty());
++        let mut elements = Vec::new();
++        walk_paragraphs(&[p], true, &mut elements, &ListFormatting::default());
++        assert_eq!(elements.len(), 1);
++        let Element::Paragraph(p) = &elements[0] else { panic!("{elements:?}"); };
++        assert_eq!(inline_to_text(&p.content), "正文\n第二行");
+     }
+ 
+     /// A `HYPERLINK` field's display text must reach
+--- a/src/doc/document.rs
++++ b/src/doc/document.rs
+@@ -11,7 +11,7 @@
+ use super::list_format::ListFormatting;
+ use super::papx::{DocParagraph, build_paragraphs, parse_papx_paragraphs};
+ use super::piece_table::{
+-    covers_declared_length, extract_text_range_excluding, parse_clx, sanitize_text,
++    covers_declared_length, decode_cp_range, extract_text_range_excluding, parse_clx, sanitize_text,
+ };
+ 
+ /// A parsed legacy Word document.
+@@ -440,7 +440,7 @@
+                 fib.text_len,
+                 fib.lid,
+                 &chpx_runs,
+-                &section_ends,
++                &section_ends[..section_ends.len().saturating_sub(1)],
+             )
+         } else {
+             Vec::new()
+@@ -466,7 +466,21 @@
+         // A container stream that came back shorter than its declared size
+         // lost content just as surely as a piece-table gap.
+         let text_complete = text_complete && cfb.truncated_streams().is_empty();
+-        let warnings = container_warnings(&cfb);
++        let mut warnings = container_warnings(&cfb);
++        warn_incomplete_paragraph_coverage(&paragraphs, fib.text_len, &mut warnings);
++        if raw_text.contains('\x0C') {
++            if paragraphs.is_empty() {
++                warnings.push("DOC_PAGE_BREAK_NO_STRUCTURED_PARAGRAPHS: page breaks cannot be recovered from the text fallback".into());
++            }
++            if section_ends.last().is_none_or(|end| *end < fib.text_len)
++                || section_ends.iter().take(section_ends.len().saturating_sub(1)).any(|end| {
++                    *end == 0 || *end > fib.text_len
++                        || decode_cp_range(&word_doc, &pieces, end - 1, *end, fib.lid) != "\x0C"
++                })
++            {
++                warnings.push("DOC_PAGE_SECTION_BOUNDARIES_UNCERTAIN: invalid or missing section boundary metadata".into());
++            }
++        }
+ 
+         Ok(Self {
+             text,
+@@ -600,6 +614,12 @@
+         &self.warnings
+     }
+ 
++    /// Whether main-body paragraph/control boundaries came from PAPX rather
++    /// than the sanitized plain-text fallback. This is not a fidelity claim.
++    pub fn has_structured_paragraphs(&self) -> bool {
++        !self.paragraphs.is_empty()
++    }
++
+     /// Get all extracted images.
+     pub fn images(&self) -> &[DocImage] {
+         self.images
+@@ -748,6 +768,22 @@
+             .map(|name| format!("stream {name:?} is shorter than its declared size")),
+     );
+     out
++}
++
++/// Piece-table completeness only proves flat-text recovery. A nonempty
++/// structured view can still end early when the last PAPX run is missing;
++/// do not let consumers mistake that partial view for an editable copy.
++fn warn_incomplete_paragraph_coverage(
++    paragraphs: &[DocParagraph],
++    text_len: u32,
++    warnings: &mut Vec<String>,
++) {
++    if let Some(last) = paragraphs.last().filter(|last| last.cp_end != text_len) {
++        warnings.push(format!(
++            "DOC_STRUCTURED_TEXT_INCOMPLETE: structured paragraphs end at CP {}, but main text ends at CP {text_len}; editable import must be blocked",
++            last.cp_end
++        ));
++    }
+ }
+ 
+ fn clx_size_zero_or_oob(clx_size: u32, clx_start: usize, stream_len: usize) -> bool {
+@@ -1001,7 +1037,7 @@
+         return Vec::new();
+     }
+     let n = (cb - 4) / (4 + SED_SIZE);
+-    let mut ends: Vec<u32> = (1..=n)
++    let boundaries: Vec<u32> = (0..=n)
+         .map(|i| {
+             let at = start + i * 4;
+             u32::from_le_bytes([
+@@ -1012,11 +1048,12 @@
+             ])
+         })
+         .collect();
+-    // Callers binary-search these; a malformed PLC out of order must not
+-    // make that search silently wrong.
+-    ends.sort_unstable();
+-    ends.dedup();
+-    ends
++    // Never repair malformed section order: that can turn a manual page
++    // break into a section mark. The final CP is a sentinel, not a break.
++    if boundaries.first() != Some(&0) || boundaries.windows(2).any(|w| w[0] >= w[1]) {
++        return Vec::new();
++    }
++    boundaries[1..].to_vec()
+ }
+ 
+ /// The `aCP[0..=n]` boundary CPs of `PlcfHdd`, or `None` when the PLC is
+@@ -1201,6 +1238,71 @@
+ 
+ #[cfg(test)]
+ mod tests {
++    #[test]
++    fn partial_papx_coverage_warns_even_when_the_piece_table_covers_all_text() {
++        use crate::doc::papx::FkpParagraph;
++        use crate::doc::piece_table::Piece;
++
++        for raw in ["\u{1F600}\rTail\x0CAfter\r", "\u{1F600}\rTail without a break.\r"] {
++            let data: Vec<u8> = raw.encode_utf16().flat_map(u16::to_le_bytes).collect();
++            let text_len = raw.encode_utf16().count() as u32;
++            let pieces = [Piece {
++                cp_start: 0,
++                cp_end: text_len,
++                fc: 0,
++                is_compressed: false,
++                prm_grpprl: Vec::new(),
++            }];
++            assert!(covers_declared_length(&pieces, text_len));
++            for complete in [false, true] {
++                // The incomplete PAPX ends after the astral character and
++                // paragraph mark (3 UTF-16 CPs), leaving real text unread.
++                let fkp = [FkpParagraph {
++                    fc_start: 0,
++                    fc_end: if complete { data.len() as u32 } else { 6 },
++                    grpprl: Vec::new(),
++                }];
++                let paragraphs = build_paragraphs(&data, &pieces, &fkp, text_len, 0x409, &[], &[]);
++                let mut warnings = Vec::new();
++                warn_incomplete_paragraph_coverage(&paragraphs, text_len, &mut warnings);
++                if complete {
++                    assert_eq!(paragraphs.last().unwrap().cp_end, text_len);
++                    assert!(warnings.is_empty());
++                } else {
++                    assert_eq!(paragraphs.len(), 1);
++                    assert_eq!(paragraphs[0].text, "\u{1F600}");
++                    assert_eq!(paragraphs[0].cp_end, 3);
++                    assert_eq!(warnings.len(), 1);
++                    assert!(warnings[0].starts_with("DOC_STRUCTURED_TEXT_INCOMPLETE:"));
++                    let mut doc = make_doc_with_paragraphs(paragraphs);
++                    doc.warnings = warnings;
++                    assert!(crate::convert_doc::doc_to_ir(&doc).metadata.warnings[0]
++                        .starts_with("DOC_STRUCTURED_TEXT_INCOMPLETE:"));
++                }
++            }
++            // No structured paragraphs means the existing flat-text fallback;
++            // this is distinct from a partially populated structured view.
++            let mut warnings = Vec::new();
++            warn_incomplete_paragraph_coverage(&[], text_len, &mut warnings);
++            assert!(warnings.is_empty());
++        }
++    }
++
++    #[test]
++    fn section_boundaries_reject_duplicates_or_reordering_instead_of_repairing() {
++        fn plc(boundaries: &[u32]) -> Vec<u8> {
++            let mut bytes: Vec<u8> = boundaries.iter().flat_map(|n| n.to_le_bytes()).collect();
++            bytes.resize(bytes.len() + boundaries.len().saturating_sub(1) * 12, 0);
++            bytes
++        }
++        let valid = plc(&[0, 4, 10]);
++        assert_eq!(super::parse_plcf_sed_ends(&valid, 0, valid.len() as u32), vec![4, 10]);
++        for cp in [&[0, 4, 4][..], &[0, 10, 4], &[1, 4, 10]] {
++            let invalid = plc(cp);
++            assert!(super::parse_plcf_sed_ends(&invalid, 0, invalid.len() as u32).is_empty());
++        }
++        assert!(super::parse_plcf_sed_ends(&valid, 0, valid.len() as u32 - 1).is_empty());
++    }
+     use super::*;
+ 
+     #[test]
+--- a/src/doc/papx.rs
++++ b/src/doc/papx.rs
+@@ -443,6 +443,21 @@
+     use crate::doc::piece_table::Piece;
+     use crate::doc::sprm::extract_pap_props;
+ 
++    #[test]
++    fn manual_page_control_survives_but_section_terminator_is_removed() {
++        let raw = "😀甲\x0C乙\x0C丙\r";
++        let data: Vec<u8> = raw.encode_utf16().flat_map(u16::to_le_bytes).collect();
++        let count = raw.encode_utf16().count() as u32;
++        let fkp = [FkpParagraph { fc_start: 0, fc_end: data.len() as u32, grpprl: Vec::new() }];
++        let paragraphs = build_paragraphs(&data, &[unicode_piece(0, count)], &fkp, count, 0x409, &[], &[6]);
++        assert_eq!(paragraphs.len(), 2);
++        assert_eq!(paragraphs[0].text, "😀甲\x0C乙");
++        assert_eq!(paragraphs[0].terminator, '\x0C');
++        assert_eq!(paragraphs[0].cp_end, 6);
++        assert_eq!(paragraphs[1].text, "丙");
++        assert_eq!(paragraphs[1].terminator, '\r');
++    }
++
+     fn unicode_piece(fc: u32, cp_end: u32) -> Piece {
+         Piece {
+             cp_start: 0,
+--- a/src/doc/piece_table.rs
++++ b/src/doc/piece_table.rs
+@@ -491,6 +491,9 @@
+ /// start or interrupt a run — consecutive *emitted* chars with equal
+ /// `ChpProps` merge into one span, exactly mirroring how consecutive
+ /// characters with unrelated formatting must not.
++/// Unlike plain text extraction, this structured path keeps an interior
++/// manual page break (0x0C). Section terminators have already been removed
++/// by `papx::emit_paragraph`; byte offsets are measured after this mapping.
+ pub(crate) fn sanitize_text_with_hyperlinks_and_chp(
+     text: &str,
+     char_props: &[super::sprm::ChpProps],
+@@ -598,7 +601,11 @@
+             _ => {
+                 if visible(&stack) {
+                     track_chp_run(char_props, idx, &out, &mut chp_spans, &mut open_run);
+-                    push_mapped(ch, &mut out);
++                    if char_props.is_some() && ch == '\x0C' {
++                        out.push(ch);
++                    } else {
++                        push_mapped(ch, &mut out);
++                    }
+                 } else if let Some(top) = stack.last_mut() {
+                     if !top.in_result {
+                         // The innermost field's own instruction text. Only
+@@ -968,6 +975,22 @@
+         assert_eq!(&text[links[0].range.clone()], "Hyperlink text");
+     }
+ 
++    #[test]
++    fn structured_manual_break_keeps_links_and_unicode_chp_offsets() {
++        use super::super::sprm::ChpProps;
++        let raw = "甲\x13 HYPERLINK \"https://example.com/\" \x14中\x0C😀\x15乙\x0B丙";
++        let props: Vec<_> = raw.chars().map(|ch| ChpProps { bold: ch == '😀', ..Default::default() }).collect();
++        let (text, links, spans) = sanitize_text_with_hyperlinks_and_chp(raw, &props);
++        assert_eq!(text, "甲中\x0C😀乙\n丙");
++        assert_eq!(sanitize_text(raw), "甲中\n😀乙\n丙");
++        assert_eq!(&text[links[0].range.clone()], "中\x0C😀");
++        let bold = spans.iter().find(|(_, p)| p.bold).unwrap();
++        assert_eq!(&text[bold.0.clone()], "😀");
++        let hidden = "\x13 IGNORE \x0C \x14shown\x15";
++        let (text, _, _) = sanitize_text_with_hyperlinks_and_chp(hidden, &vec![ChpProps::default(); hidden.chars().count()]);
++        assert_eq!(text, "shown");
++    }
++
+     /// A `\l` switch targets an internal bookmark, not an external URL —
+     /// surfaced as a `#bookmark`-shaped target the way a browser-style
+     /// consumer would expect.

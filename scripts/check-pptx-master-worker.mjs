@@ -1,0 +1,12 @@
+import {execFileSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const file=path.resolve('tests/fixtures/apache-poi/WithMaster.pptx'),before=readFileSync(file);
+const options={encoding:'utf8',windowsHide:true,timeout:35000,maxBuffer:32*1024*1024};
+const expected=JSON.parse(execFileSync(path.resolve('target/debug/rust-wps.exe'),['inspect-pptx',file],options));
+const worker=JSON.parse(execFileSync(path.resolve('src-tauri/target/debug/rust-wps-desktop.exe'),['--document-worker'],{...options,input:JSON.stringify({operation:'open',path:file})}));
+assert.equal(worker.result,'opened');assert.deepEqual(worker.document.presentation,expected);
+assert.equal(expected.master_text,'This text comes from the Master Slide\n');assert.equal(worker.document.presentation_model,undefined);
+assert.deepEqual(readFileSync(file),before);
+console.log('Real PPTX static master text survives worker open; source unchanged.');

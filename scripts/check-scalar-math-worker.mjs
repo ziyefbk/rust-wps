@@ -1,0 +1,16 @@
+import {execFileSync} from 'node:child_process';
+import {mkdirSync,mkdtempSync,writeFileSync,readFileSync} from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+mkdirSync('tmp/spreadsheets',{recursive:true});
+const directory=mkdtempSync(path.resolve('tmp/spreadsheets/scalar-worker-'));
+const formulas=['INT(-8.9)','SQRT(16)','SIGN(-0)','SIGN(-1e-200)','SQRT(-1)','IFERROR(SQRT(-1),42)','SQRT(ABS(B1))'];
+const model={version:1,sheets:[{name:'Math',cells:formulas.map((value,row)=>({row,column:1,content:{type:'formula',value}}))}]};
+const file=path.join(directory,'model.json');writeFileSync(file,JSON.stringify(model));const before=readFileSync(file);
+const options={encoding:'utf8',windowsHide:true,timeout:35000};
+const cli=JSON.parse(execFileSync(path.resolve('target/debug/rust-wps.exe'),['calculate-workbook',file],options));
+const worker=JSON.parse(execFileSync(path.resolve('src-tauri/target/debug/rust-wps-desktop.exe'),['--calculation-worker'],{...options,input:JSON.stringify(model)}));
+assert.equal(worker.result,'calculated');assert.deepEqual(worker.report,cli);assert.equal(cli.complete,true);
+assert.deepEqual(cli.cells.map(cell=>cell.value?.value??cell.failure?.code),[-9,4,0,-1,'#NUM!',42,3]);
+assert.deepEqual(readFileSync(file),before);
+console.log(JSON.stringify({scalarMathWorker:true,cliMatchesWorker:true,negativeFloor:true,signedZero:true,numericErrorAndFallback:true,dependency:true,sourceUnchanged:true}));

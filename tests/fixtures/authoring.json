@@ -1,0 +1,15 @@
+{
+  "type": "doc",
+  "content": [
+    {"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Rust 办公文档"}]},
+    {"type":"paragraph","content":[{"type":"text","text":"中文 & <正文> ","marks":[{"type":"bold"},{"type":"italic"},{"type":"underline"}]},{"type":"hardBreak"},{"type":"text","text":"第二行\t缩进"}]},
+    {"type":"orderedList","attrs":{"start":3,"type":null},"content":[
+      {"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"第一个编号项目"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"嵌套列表"}]}]}]}]},
+      {"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"第二个编号项目"}]}]}
+    ]},
+    {"type":"table","content":[
+      {"type":"tableRow","content":[{"type":"tableHeader","attrs":{"colspan":1,"rowspan":1,"colwidth":null,"align":null},"content":[{"type":"paragraph","content":[{"type":"text","text":"姓名"}]}]},{"type":"tableHeader","content":[{"type":"paragraph","content":[{"type":"text","text":"分数"}]}]}]},
+      {"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"测试"}]}]},{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"100"}]}]}]}
+    ]}
+  ]
+}

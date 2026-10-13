@@ -1,0 +1,13 @@
+/target/
+/tmp/
+/output/
+/node_modules/
+/dist/
+/src-tauri/target/
+/vendor/office_oxide/target/
+/vendor/office_oxide/Cargo.lock
+/src-tauri/gen/
+/ui/public/pdf/
+/test-results/
+__pycache__/
+*.pyc

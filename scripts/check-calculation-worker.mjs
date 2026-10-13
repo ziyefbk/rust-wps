@@ -1,0 +1,27 @@
+import { execFileSync } from 'node:child_process';
+import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const desktop = path.resolve('src-tauri/target/debug/rust-wps-desktop.exe');
+const cli = path.resolve('target/debug/rust-wps.exe');
+const directory = mkdtempSync(path.resolve('tmp/spreadsheets/calculation-worker-'));
+const options = { encoding: 'utf8', windowsHide: true, timeout: 35000, maxBuffer: 32 * 1024 * 1024 };
+const run = model => JSON.parse(execFileSync(desktop, ['--calculation-worker'], { ...options, input: JSON.stringify(model) }));
+const sample = JSON.parse(readFileSync('docs/examples/workbook-v1.json', 'utf8'));
+const expected = JSON.parse(execFileSync(cli, ['calculate-workbook', 'docs/examples/workbook-v1.json'], options));
+assert.deepEqual(run(sample), { result: 'calculated', report: expected });
+const cells = Array.from({ length: 2000 }, (_, row) => ({ row, column: 0, content: { type: 'number', value: row } }));
+cells.push({ row: 0, column: 1, content: { type: 'formula', value: 'IFERROR(IF(AND(A2>0,NOT(FALSE)),SUM(A1:A2000),1/0),0)' } });
+const large = { version: 1, sheets: [{ name: 'Data', cells }] };
+assert.ok(Buffer.byteLength(JSON.stringify(large)) > 65536);
+const input = path.join(directory, 'large.json'); writeFileSync(input, JSON.stringify(large));
+const largeReport = run(large).report;
+assert.deepEqual(largeReport, JSON.parse(execFileSync(cli, ['calculate-workbook', input], options)));
+assert.equal(largeReport.complete, true);
+assert.deepEqual(largeReport.cells[0].value, { type: 'number', value: 1999000 });
+assert.equal(run({ ...sample, unknown: true }).result, 'error');
+assert.equal(run({ version: 1, sheets: [] }).result, 'error');
+assert.throws(() => execFileSync(desktop, ['--calculation-worker'], { ...options, input: ' '.repeat(16 * 1024 * 1024 + 1) }), error => error.status === 2);
+assert.throws(() => execFileSync(desktop, ['--document-worker'], { ...options, input: ' '.repeat(65537) }), error => error.status === 2);
+console.log(JSON.stringify({ realCalculationWorker: true, matchesCli: true, largerThan64KiB: true, calculationRequestLimit16MiB: true, documentRequestLimit64KiB: true, rejectsInvalidModels: true }));
+

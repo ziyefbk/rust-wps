@@ -1,0 +1,11 @@
+{
+  "repository": "apache/poi",
+  "revision": "ae62bb5116b9aee19ebd5834e3a82066132c9f7f",
+  "directory": "test-data/document",
+  "note": "Public upstream test fixtures. Download for local testing only; individual fixture redistribution rights have not been reviewed. No binaries are committed here.",
+  "fixtures": [
+    { "name": "simple.doc", "bytes": 19456, "sha256": "4876e828e62d490fa188c7c4e47013e2e0dfdf02f5903dfd374bc0d2b2049ca1" },
+    { "name": "SampleDoc.doc", "bytes": 27136, "sha256": "717585c0a88f20862c86220163dd03da87cd743970354c6b29add32725f2e833" },
+    { "name": "SampleDoc.docx", "bytes": 11611, "sha256": "ea2c517bd7be4628887eb97f630334b93b894f4522d2c0adae263e602d76df92" }
+  ]
+}

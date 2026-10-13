@@ -1,0 +1,518 @@
+{
+  "measured_at_utc": "2026-10-10T19:32:06.822023+00:00",
+  "scope": "release CLI only; fresh process per run; OS cache uncontrolled, no cold-start claim; synthetic DOCX/PDF are simple structures, not complex Office fidelity",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "logical_cpus": 16,
+  "compiler": "rustc 1.92.0 (ded5c06cf 2025-12-08)",
+  "executable_sha256": "d84ba76d590743a5800fa9e56da0a1a8bcb5a608dfe776b52ea3b7692a0fe71c",
+  "cargo_lock_sha256": "47afaf5664f2673cf7bfd91e40da929f88cadfe09f4db0eee78942b3e24e3d94",
+  "memory_reference": "https://learn.microsoft.com/en-us/windows/win32/api/psapi/ns-psapi-process_memory_counters",
+  "results": [
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\corpus\\simple.doc",
+      "bytes": 19456,
+      "sha256": "4876e828e62d490fa188c7c4e47013e2e0dfdf02f5903dfd374bc0d2b2049ca1",
+      "operation": "inspect",
+      "first_process_ms": 22.692,
+      "repeat_median_ms": 34.2795,
+      "max_peak_working_set_bytes": 5251072,
+      "runs": [
+        {
+          "wall_ms": 22.692,
+          "inspection_ms": 0,
+          "peak_working_set_bytes": 5234688,
+          "peak_commit_bytes": 798720,
+          "stdout_bytes": 268
+        },
+        {
+          "wall_ms": 22.51,
+          "inspection_ms": 0,
+          "peak_working_set_bytes": 5246976,
+          "peak_commit_bytes": 798720,
+          "stdout_bytes": 268
+        },
+        {
+          "wall_ms": 35.213,
+          "inspection_ms": 0,
+          "peak_working_set_bytes": 5238784,
+          "peak_commit_bytes": 806912,
+          "stdout_bytes": 268
+        },
+        {
+          "wall_ms": 33.346,
+          "inspection_ms": 0,
+          "peak_working_set_bytes": 5251072,
+          "peak_commit_bytes": 819200,
+          "stdout_bytes": 268
+        },
+        {
+          "wall_ms": 40.944,
+          "inspection_ms": 0,
+          "peak_working_set_bytes": 5238784,
+          "peak_commit_bytes": 811008,
+          "stdout_bytes": 268
+        }
+      ]
+    },
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\corpus\\simple.doc",
+      "bytes": 19456,
+      "sha256": "4876e828e62d490fa188c7c4e47013e2e0dfdf02f5903dfd374bc0d2b2049ca1",
+      "operation": "import-doc",
+      "first_process_ms": 49.306,
+      "repeat_median_ms": 71.3665,
+      "max_peak_working_set_bytes": 5464064,
+      "runs": [
+        {
+          "wall_ms": 49.306,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 5464064,
+          "peak_commit_bytes": 806912,
+          "stdout_bytes": 639
+        },
+        {
+          "wall_ms": 74.405,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 5402624,
+          "peak_commit_bytes": 811008,
+          "stdout_bytes": 639
+        },
+        {
+          "wall_ms": 82.37,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 5410816,
+          "peak_commit_bytes": 823296,
+          "stdout_bytes": 639
+        },
+        {
+          "wall_ms": 68.328,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 5410816,
+          "peak_commit_bytes": 811008,
+          "stdout_bytes": 639
+        },
+        {
+          "wall_ms": 49.778,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 5464064,
+          "peak_commit_bytes": 806912,
+          "stdout_bytes": 639
+        }
+      ]
+    },
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\corpus\\SampleDoc.doc",
+      "bytes": 27136,
+      "sha256": "717585c0a88f20862c86220163dd03da87cd743970354c6b29add32725f2e833",
+      "operation": "inspect",
+      "first_process_ms": 60.954,
+      "repeat_median_ms": 71.116,
+      "max_peak_working_set_bytes": 5246976,
+      "runs": [
+        {
+          "wall_ms": 60.954,
+          "inspection_ms": 2,
+          "peak_working_set_bytes": 5226496,
+          "peak_commit_bytes": 806912,
+          "stdout_bytes": 369
+        },
+        {
+          "wall_ms": 50.869,
+          "inspection_ms": 1,
+          "peak_working_set_bytes": 5230592,
+          "peak_commit_bytes": 798720,
+          "stdout_bytes": 369
+        },
+        {
+          "wall_ms": 61.523,
+          "inspection_ms": 1,
+          "peak_working_set_bytes": 5238784,
+          "peak_commit_bytes": 815104,
+          "stdout_bytes": 369
+        },
+        {
+          "wall_ms": 80.709,
+          "inspection_ms": 2,
+          "peak_working_set_bytes": 5246976,
+          "peak_commit_bytes": 802816,
+          "stdout_bytes": 369
+        },
+        {
+          "wall_ms": 102.267,
+          "inspection_ms": 2,
+          "peak_working_set_bytes": 5226496,
+          "peak_commit_bytes": 802816,
+          "stdout_bytes": 369
+        }
+      ]
+    },
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\corpus\\SampleDoc.doc",
+      "bytes": 27136,
+      "sha256": "717585c0a88f20862c86220163dd03da87cd743970354c6b29add32725f2e833",
+      "operation": "import-doc",
+      "first_process_ms": 68.17,
+      "repeat_median_ms": 37.7905,
+      "max_peak_working_set_bytes": 5476352,
+      "runs": [
+        {
+          "wall_ms": 68.17,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 5427200,
+          "peak_commit_bytes": 798720,
+          "stdout_bytes": 1625
+        },
+        {
+          "wall_ms": 41.25,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 5435392,
+          "peak_commit_bytes": 806912,
+          "stdout_bytes": 1625
+        },
+        {
+          "wall_ms": 54.302,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 5439488,
+          "peak_commit_bytes": 806912,
+          "stdout_bytes": 1625
+        },
+        {
+          "wall_ms": 34.331,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 5435392,
+          "peak_commit_bytes": 806912,
+          "stdout_bytes": 1625
+        },
+        {
+          "wall_ms": 29.001,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 5476352,
+          "peak_commit_bytes": 794624,
+          "stdout_bytes": 1625
+        }
+      ]
+    },
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\corpus\\SampleDoc.docx",
+      "bytes": 11611,
+      "sha256": "ea2c517bd7be4628887eb97f630334b93b894f4522d2c0adae263e602d76df92",
+      "operation": "inspect",
+      "first_process_ms": 50.674,
+      "repeat_median_ms": 41.019999999999996,
+      "max_peak_working_set_bytes": 5931008,
+      "runs": [
+        {
+          "wall_ms": 50.674,
+          "inspection_ms": 3,
+          "peak_working_set_bytes": 5918720,
+          "peak_commit_bytes": 843776,
+          "stdout_bytes": 368
+        },
+        {
+          "wall_ms": 46.695,
+          "inspection_ms": 2,
+          "peak_working_set_bytes": 5914624,
+          "peak_commit_bytes": 872448,
+          "stdout_bytes": 368
+        },
+        {
+          "wall_ms": 38.858,
+          "inspection_ms": 2,
+          "peak_working_set_bytes": 5926912,
+          "peak_commit_bytes": 872448,
+          "stdout_bytes": 368
+        },
+        {
+          "wall_ms": 43.182,
+          "inspection_ms": 2,
+          "peak_working_set_bytes": 5922816,
+          "peak_commit_bytes": 880640,
+          "stdout_bytes": 368
+        },
+        {
+          "wall_ms": 37.264,
+          "inspection_ms": 1,
+          "peak_working_set_bytes": 5931008,
+          "peak_commit_bytes": 884736,
+          "stdout_bytes": 368
+        }
+      ]
+    },
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\corpus\\SampleDoc.docx",
+      "bytes": 11611,
+      "sha256": "ea2c517bd7be4628887eb97f630334b93b894f4522d2c0adae263e602d76df92",
+      "operation": "import-docx",
+      "first_process_ms": 62.401,
+      "repeat_median_ms": 47.424499999999995,
+      "max_peak_working_set_bytes": 6262784,
+      "runs": [
+        {
+          "wall_ms": 62.401,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 6242304,
+          "peak_commit_bytes": 974848,
+          "stdout_bytes": 1470
+        },
+        {
+          "wall_ms": 54.566,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 6262784,
+          "peak_commit_bytes": 1011712,
+          "stdout_bytes": 1470
+        },
+        {
+          "wall_ms": 51.815,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 6262784,
+          "peak_commit_bytes": 1007616,
+          "stdout_bytes": 1470
+        },
+        {
+          "wall_ms": 43.034,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 6262784,
+          "peak_commit_bytes": 1011712,
+          "stdout_bytes": 1470
+        },
+        {
+          "wall_ms": 28.936,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 6254592,
+          "peak_commit_bytes": 1011712,
+          "stdout_bytes": 1470
+        }
+      ]
+    },
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\benchmarks\\core-5r7buah0\\paragraphs-1000.docx",
+      "bytes": 9136,
+      "sha256": "692011c92d7ff3cdbf7a4d0a5376519c7076f7688ce96fbdbdaad070edf341c9",
+      "operation": "inspect",
+      "first_process_ms": 43.245,
+      "repeat_median_ms": 37.183,
+      "max_peak_working_set_bytes": 6123520,
+      "runs": [
+        {
+          "wall_ms": 43.245,
+          "inspection_ms": 8,
+          "peak_working_set_bytes": 6119424,
+          "peak_commit_bytes": 1544192,
+          "stdout_bytes": 77107
+        },
+        {
+          "wall_ms": 45.827,
+          "inspection_ms": 6,
+          "peak_working_set_bytes": 6111232,
+          "peak_commit_bytes": 1540096,
+          "stdout_bytes": 77107
+        },
+        {
+          "wall_ms": 28.539,
+          "inspection_ms": 3,
+          "peak_working_set_bytes": 6115328,
+          "peak_commit_bytes": 1540096,
+          "stdout_bytes": 77107
+        },
+        {
+          "wall_ms": 27.963,
+          "inspection_ms": 5,
+          "peak_working_set_bytes": 6123520,
+          "peak_commit_bytes": 1552384,
+          "stdout_bytes": 77107
+        },
+        {
+          "wall_ms": 46.655,
+          "inspection_ms": 9,
+          "peak_working_set_bytes": 6115328,
+          "peak_commit_bytes": 1540096,
+          "stdout_bytes": 77107
+        }
+      ]
+    },
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\benchmarks\\core-5r7buah0\\paragraphs-1000.docx",
+      "bytes": 9136,
+      "sha256": "692011c92d7ff3cdbf7a4d0a5376519c7076f7688ce96fbdbdaad070edf341c9",
+      "operation": "import-docx",
+      "first_process_ms": 67.486,
+      "repeat_median_ms": 72.3015,
+      "max_peak_working_set_bytes": 8146944,
+      "runs": [
+        {
+          "wall_ms": 67.486,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 8118272,
+          "peak_commit_bytes": 3354624,
+          "stdout_bytes": 227272
+        },
+        {
+          "wall_ms": 52.522,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 8138752,
+          "peak_commit_bytes": 3366912,
+          "stdout_bytes": 227272
+        },
+        {
+          "wall_ms": 65.028,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 8130560,
+          "peak_commit_bytes": 3338240,
+          "stdout_bytes": 227272
+        },
+        {
+          "wall_ms": 94.666,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 8146944,
+          "peak_commit_bytes": 3387392,
+          "stdout_bytes": 227272
+        },
+        {
+          "wall_ms": 79.575,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 8101888,
+          "peak_commit_bytes": 3309568,
+          "stdout_bytes": 227272
+        }
+      ]
+    },
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\benchmarks\\core-5r7buah0\\paragraphs-4000.docx",
+      "bytes": 27186,
+      "sha256": "0981609020f7baddc156326e1a406e560dd767f1b520deb53eb5c1cf3f70779d",
+      "operation": "inspect",
+      "first_process_ms": 55.484,
+      "repeat_median_ms": 48.397,
+      "max_peak_working_set_bytes": 8704000,
+      "runs": [
+        {
+          "wall_ms": 55.484,
+          "inspection_ms": 9,
+          "peak_working_set_bytes": 8699904,
+          "peak_commit_bytes": 4194304,
+          "stdout_bytes": 311108
+        },
+        {
+          "wall_ms": 34.258,
+          "inspection_ms": 10,
+          "peak_working_set_bytes": 8699904,
+          "peak_commit_bytes": 4186112,
+          "stdout_bytes": 311109
+        },
+        {
+          "wall_ms": 44.428,
+          "inspection_ms": 12,
+          "peak_working_set_bytes": 8704000,
+          "peak_commit_bytes": 4186112,
+          "stdout_bytes": 311109
+        },
+        {
+          "wall_ms": 68.523,
+          "inspection_ms": 22,
+          "peak_working_set_bytes": 8704000,
+          "peak_commit_bytes": 4186112,
+          "stdout_bytes": 311109
+        },
+        {
+          "wall_ms": 52.366,
+          "inspection_ms": 11,
+          "peak_working_set_bytes": 8687616,
+          "peak_commit_bytes": 4161536,
+          "stdout_bytes": 311109
+        }
+      ]
+    },
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\benchmarks\\core-5r7buah0\\paragraphs-4000.docx",
+      "bytes": 27186,
+      "sha256": "0981609020f7baddc156326e1a406e560dd767f1b520deb53eb5c1cf3f70779d",
+      "operation": "import-docx",
+      "first_process_ms": 52.676,
+      "repeat_median_ms": 89.92500000000001,
+      "max_peak_working_set_bytes": 15892480,
+      "runs": [
+        {
+          "wall_ms": 52.676,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 15773696,
+          "peak_commit_bytes": 11063296,
+          "stdout_bytes": 911272
+        },
+        {
+          "wall_ms": 48.993,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 15892480,
+          "peak_commit_bytes": 11194368,
+          "stdout_bytes": 911272
+        },
+        {
+          "wall_ms": 79.778,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 15757312,
+          "peak_commit_bytes": 11042816,
+          "stdout_bytes": 911272
+        },
+        {
+          "wall_ms": 100.072,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 15863808,
+          "peak_commit_bytes": 11218944,
+          "stdout_bytes": 911272
+        },
+        {
+          "wall_ms": 109.629,
+          "inspection_ms": null,
+          "peak_working_set_bytes": 15765504,
+          "peak_commit_bytes": 11059200,
+          "stdout_bytes": 911272
+        }
+      ]
+    },
+    {
+      "input": "C:\\Users\\28275\\Documents\\ChatGPT\\rust-wps\\tmp\\benchmarks\\core-5r7buah0\\text-100-pages.pdf",
+      "bytes": 29401,
+      "sha256": "e9982446982437faf1be9561e38a0096f0b29254f3c1550bd34ff70fe7cd8799",
+      "operation": "inspect",
+      "first_process_ms": 78.801,
+      "repeat_median_ms": 62.839,
+      "max_peak_working_set_bytes": 5644288,
+      "runs": [
+        {
+          "wall_ms": 78.801,
+          "inspection_ms": 12,
+          "peak_working_set_bytes": 5640192,
+          "peak_commit_bytes": 1204224,
+          "stdout_bytes": 2177
+        },
+        {
+          "wall_ms": 63.51,
+          "inspection_ms": 10,
+          "peak_working_set_bytes": 5636096,
+          "peak_commit_bytes": 1191936,
+          "stdout_bytes": 2177
+        },
+        {
+          "wall_ms": 66.235,
+          "inspection_ms": 13,
+          "peak_working_set_bytes": 5611520,
+          "peak_commit_bytes": 1146880,
+          "stdout_bytes": 2177
+        },
+        {
+          "wall_ms": 59.901,
+          "inspection_ms": 11,
+          "peak_working_set_bytes": 5644288,
+          "peak_commit_bytes": 1196032,
+          "stdout_bytes": 2177
+        },
+        {
+          "wall_ms": 62.168,
+          "inspection_ms": 12,
+          "peak_working_set_bytes": 5640192,
+          "peak_commit_bytes": 1200128,
+          "stdout_bytes": 2177
+        }
+      ]
+    }
+  ]
+}

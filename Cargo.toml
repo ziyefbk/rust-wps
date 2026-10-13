@@ -1,0 +1,19 @@
+[package]
+name = "rust-wps"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Local office document compatibility exploration"
+
+[dependencies]
+anyhow = "1"
+office_oxide = { version = "=0.1.13", path = "vendor/office_oxide" }
+pdf-extract = "=0.12.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+zip = { version = "7", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
+base64 = "0.22"
+sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

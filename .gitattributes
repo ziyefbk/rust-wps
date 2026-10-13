@@ -1,0 +1,3 @@
+* text=auto
+vendor/office_oxide/** -text
+*.patch text eol=lf

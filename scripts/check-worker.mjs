@@ -1,0 +1,17 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+const exe = path.resolve('src-tauri/target/debug/rust-wps-desktop.exe');
+const directory = mkdtempSync(path.resolve('tmp/corpus/worker-'));
+const source = path.resolve('tmp/corpus/SampleDoc.docx');
+const before = readFileSync(source);
+const worker = request => JSON.parse(execFileSync(exe, ['--document-worker'], { input: JSON.stringify(request), encoding: 'utf8', timeout: 35000, maxBuffer: 32 * 1024 * 1024, windowsHide: true }));
+const opened = worker({ operation: 'open', path: source });
+if (opened.result !== 'opened' || !opened.document.inspection.text.includes('I am a test document')) throw new Error('Worker open failed');
+const imported = worker({ operation: 'import', path: source });
+if (imported.result !== 'imported' || imported.report.document.type !== 'doc') throw new Error('Worker import failed');
+const broken = path.join(directory, '损坏.docx'); writeFileSync(broken, 'PK\x03\x04invalid');
+if (worker({ operation: 'open', path: broken }).result !== 'error') throw new Error('Corrupt input accepted');
+if (worker({ operation: 'invalid', path: source }).result !== 'error') throw new Error('Unknown operation accepted');
+if (!readFileSync(source).equals(before)) throw new Error('Worker modified source');
+console.log(JSON.stringify({ workerOpen: true, workerImport: true, corruptRejected: true, unknownOperationRejected: true, sourcePreserved: true }));

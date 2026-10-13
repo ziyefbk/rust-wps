@@ -1,0 +1,2201 @@
+use crate::core::theme::ColorRef;
+use crate::core::units::{HalfPoint, Twip};
+
+/// Run-level formatting properties (`w:rPr`).
+#[derive(Debug, Clone, Default)]
+pub struct RunProperties {
+    /// Bold toggle.
+    pub bold: Option<bool>,
+    /// Italic toggle.
+    pub italic: Option<bool>,
+    /// Underline style.
+    pub underline: Option<UnderlineType>,
+    /// Single strikethrough toggle.
+    pub strike: Option<bool>,
+    /// Double strikethrough toggle.
+    pub dstrike: Option<bool>,
+    /// Font size in half-points.
+    pub font_size: Option<HalfPoint>,
+    /// Primary font family name.
+    pub font_name: Option<String>,
+    /// Text color reference.
+    pub color: Option<ColorRef>,
+    /// Highlight color name (e.g., `"yellow"`).
+    pub highlight: Option<String>,
+    /// Vertical alignment (superscript/subscript).
+    pub vertical_align: Option<VerticalAlign>,
+    /// Character style ID.
+    pub style_id: Option<String>,
+    /// All-caps toggle (`<w:caps/>`).
+    pub caps: Option<bool>,
+    /// Small-caps toggle (`<w:smallCaps/>`).
+    pub small_caps: Option<bool>,
+    /// Character spacing from `<w:spacing w:val="N"/>` inside `w:rPr`.
+    /// Signed, in the same units the writer emits (twentieths of a point).
+    pub char_spacing: Option<i32>,
+    /// Run shading fill from `<w:shd w:fill="RRGGBB"/>` inside `w:rPr`.
+    /// The writer uses this (not `<w:highlight>`) to encode
+    /// `TextSpan::highlight`, so reading it back is what closes the
+    /// write→read loop for highlighted text.
+    pub shading_fill: Option<String>,
+    /// `<w:vanish/>` — Word never renders this run at all (draft notes,
+    /// comment-reference glyph scaffolding, TOC/index field-code
+    /// internals). Converters use this to exclude the run from every
+    /// extraction surface, the same way a run-level `w:del` already is.
+    pub hidden: Option<bool>,
+    /// The non-Latin halves of the run's formatting: the other three
+    /// `w:rFonts` faces and the complex-script size/bold/italic. Boxed:
+    /// absent from most runs, and a run is the most numerous struct in a
+    /// document.
+    pub script: Option<Box<ScriptRunProperties>>,
+    /// Theme font the ASCII slot refers to (`w:rFonts/@w:asciiTheme`). Per
+    /// ECMA-376 Part 1 §17.3.2.26 a theme reference supersedes the
+    /// literal `w:ascii` face; resolve it with [`ThemeFont::resolve`].
+    pub font_theme: Option<ThemeFont>,
+}
+
+/// Run formatting that applies to text by script (ECMA-376 §17.3.2.26):
+/// `font_name` on [`RunProperties`] is `w:rFonts/@w:ascii`; these are the
+/// faces and sizes Word uses for every other character class.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScriptRunProperties {
+    /// `w:rFonts/@w:hAnsi` — characters outside Basic Latin that are
+    /// neither East Asian nor complex script.
+    pub font_h_ansi: Option<String>,
+    /// `w:rFonts/@w:eastAsia` — East Asian characters.
+    pub font_east_asia: Option<String>,
+    /// `w:rFonts/@w:cs` — complex-script characters.
+    pub font_cs: Option<String>,
+    /// Theme reference for the high ANSI font slot.
+    pub font_h_ansi_theme: Option<ThemeFont>,
+    /// Theme reference for the East Asian font slot.
+    pub font_east_asia_theme: Option<ThemeFont>,
+    /// Theme reference for the complex-script font slot.
+    pub font_cs_theme: Option<ThemeFont>,
+    /// `w:rFonts/@w:hint` = `eastAsia`: characters shared between the
+    /// Latin and East Asian ranges use the East Asian face.
+    pub east_asia_hint: Option<bool>,
+    /// `w:szCs` (§17.3.2) — complex-script font size.
+    pub font_size_cs: Option<HalfPoint>,
+    /// `w:bCs` (§17.3.2) — complex-script bold.
+    pub bold_cs: Option<bool>,
+    /// `w:iCs` (§17.3.2) — complex-script italic.
+    pub italic_cs: Option<bool>,
+    /// `w:cs` (§17.3.2) — treat every character as complex script.
+    pub complex_script: Option<bool>,
+    /// `w:rtl` (§17.3.2) — right-to-left run, also complex script.
+    pub rtl: Option<bool>,
+}
+
+impl ScriptRunProperties {
+    fn overlay(&mut self, src: &ScriptRunProperties) {
+        macro_rules! take {
+            ($($f:ident),* $(,)?) => {$(
+                if src.$f.is_some() { self.$f = src.$f.clone(); }
+            )*};
+        }
+        take!(
+            east_asia_hint,
+            font_size_cs,
+            bold_cs,
+            italic_cs,
+            complex_script,
+            rtl,
+        );
+        // A more specific literal or theme replaces the inherited pair for
+        // that slot; an unrelated slot must not clear its neighbours.
+        macro_rules! font_pair {
+            ($literal:ident, $theme:ident) => {
+                if src.$literal.is_some() || src.$theme.is_some() {
+                    self.$literal = src.$literal.clone();
+                    self.$theme = src.$theme;
+                }
+            };
+        }
+        font_pair!(font_h_ansi, font_h_ansi_theme);
+        font_pair!(font_east_asia, font_east_asia_theme);
+        font_pair!(font_cs, font_cs_theme);
+    }
+}
+
+/// Which `w:rFonts` face Word uses for a character (ECMA-376 §17.3.2.26,
+/// with Word's script itemisation for complex scripts, which is what
+/// LibreOffice's importer matches too).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScriptClass {
+    /// Basic Latin (U+0000–U+007F): `w:ascii`.
+    Ascii,
+    /// Every other character not below: `w:hAnsi`.
+    HAnsi,
+    /// CJK, kana, Hangul, Yi and full-width forms: `w:eastAsia`.
+    EastAsia,
+    /// Right-to-left and South/South-East Asian scripts: `w:cs`.
+    Complex,
+}
+
+/// Classify one character. See [`ScriptClass`].
+pub(crate) fn char_script_class(c: char) -> ScriptClass {
+    match c as u32 {
+        0x0000..=0x007F => ScriptClass::Ascii,
+        // Hebrew, Arabic, Syriac, Arabic Supplement, Thaana, NKo,
+        // Samaritan, Mandaic, Arabic Extended; Indic scripts through
+        // Sinhala; Thai, Lao, Tibetan, Myanmar; Khmer; Hebrew and Arabic
+        // presentation forms.
+        0x0590..=0x08FF
+        | 0x0900..=0x0DFF
+        | 0x0E00..=0x0FFF
+        | 0x1000..=0x109F
+        | 0x1780..=0x17FF
+        | 0xFB1D..=0xFDFF
+        | 0xFE70..=0xFEFF => ScriptClass::Complex,
+        // Hangul Jamo; CJK radicals through CJK Unified Ideographs
+        // (including kana, Bopomofo, compatibility Jamo); Yi; Hangul
+        // syllables; CJK compatibility ideographs and forms; half- and
+        // full-width forms; the supplementary ideographic planes.
+        0x1100..=0x11FF
+        | 0x2E80..=0x9FFF
+        | 0xA000..=0xA4CF
+        | 0xA960..=0xA97F
+        | 0xAC00..=0xD7FF
+        | 0xF900..=0xFAFF
+        | 0xFE30..=0xFE4F
+        | 0xFF00..=0xFFEF
+        | 0x20000..=0x3FFFF => ScriptClass::EastAsia,
+        _ => ScriptClass::HAnsi,
+    }
+}
+
+/// Apply one script-dependent `w:rPr` child (`w:rFonts`, `w:szCs`,
+/// `w:bCs`, `w:iCs`, `w:cs`, `w:rtl`) to `props`. Returns `false` for any
+/// other element.
+fn apply_script_property(
+    local: &str,
+    e: &BytesStart,
+    props: &mut RunProperties,
+) -> crate::core::Result<bool> {
+    fn script(props: &mut RunProperties) -> &mut ScriptRunProperties {
+        props.script.get_or_insert_with(Default::default)
+    }
+    match local {
+        "rFonts" => {
+            for attr in xml::attrs(e) {
+                let (key, value) = attr?;
+                match key {
+                    "w:ascii" => props.font_name = Some(value.into_owned()),
+                    "w:hAnsi" => script(props).font_h_ansi = Some(value.into_owned()),
+                    "w:eastAsia" => script(props).font_east_asia = Some(value.into_owned()),
+                    "w:cs" => script(props).font_cs = Some(value.into_owned()),
+                    "w:asciiTheme" => props.font_theme = Some(ThemeFont::parse(&value).unwrap_or(ThemeFont::Unresolved)),
+                    "w:hAnsiTheme" => script(props).font_h_ansi_theme = Some(ThemeFont::parse(&value).unwrap_or(ThemeFont::Unresolved)),
+                    "w:eastAsiaTheme" => script(props).font_east_asia_theme = Some(ThemeFont::parse(&value).unwrap_or(ThemeFont::Unresolved)),
+                    "w:cstheme" | "w:csTheme" => script(props).font_cs_theme = Some(ThemeFont::parse(&value).unwrap_or(ThemeFont::Unresolved)),
+                    "w:hint" => script(props).east_asia_hint = Some(value == "eastAsia"),
+                    _ => {},
+                }
+            }
+        },
+        "szCs" => {
+            if let Some(val) = parse_half_point_val(e)? {
+                script(props).font_size_cs = Some(val);
+            }
+        },
+        "bCs" => script(props).bold_cs = Some(parse_toggle(e)),
+        "iCs" => script(props).italic_cs = Some(parse_toggle(e)),
+        "cs" => script(props).complex_script = Some(parse_toggle(e)),
+        "rtl" => script(props).rtl = Some(parse_toggle(e)),
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// The face, size, bold and italic Word applies to text of one
+/// [`ScriptClass`] in a run with these (effective) properties.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScriptFace<'a> {
+    pub font_name: Option<&'a str>,
+    pub font_size: Option<HalfPoint>,
+    pub bold: bool,
+    pub italic: bool,
+}
+
+impl RunProperties {
+    /// Whether every character of the run is complex script regardless of
+    /// its code point (`w:cs` or `w:rtl`).
+    pub(crate) fn forces_complex_script(&self) -> bool {
+        self.script
+            .as_deref()
+            .is_some_and(|s| s.complex_script == Some(true) || s.rtl == Some(true))
+    }
+
+    /// The class of a run's text for the properties that apply to the run
+    /// as a whole (bold and italic): the class of its first non-whitespace
+    /// character. Per-character bold is not representable in a single
+    /// span, and a run that mixes complex-script and other text with
+    /// different `w:b`/`w:bCs` values is vanishingly rare.
+    pub(crate) fn run_script_class<'t>(
+        &self,
+        text: impl IntoIterator<Item = &'t str>,
+    ) -> ScriptClass {
+        if self.forces_complex_script() {
+            return ScriptClass::Complex;
+        }
+        text.into_iter()
+            .flat_map(str::chars)
+            .find(|c| !c.is_whitespace())
+            .map_or(ScriptClass::Ascii, |c| self.script_class_of(c))
+    }
+
+    /// The class Word formats `c` with in this run.
+    pub(crate) fn script_class_of(&self, c: char) -> ScriptClass {
+        if self.forces_complex_script() {
+            return ScriptClass::Complex;
+        }
+        match char_script_class(c) {
+            ScriptClass::HAnsi
+                if self
+                    .script
+                    .as_deref()
+                    .is_some_and(|s| s.east_asia_hint == Some(true)) =>
+            {
+                ScriptClass::EastAsia
+            },
+            class => class,
+        }
+    }
+
+    /// Split `text` where the face or size Word uses for it changes,
+    /// calling `emit` with each piece and its face. Whitespace joins the
+    /// piece before it (or after it, at the start) rather than splitting
+    /// a phrase into alternating faces. One piece in the common case.
+    /// Resolve the four font slots independently before splitting.
+    pub(crate) fn for_each_script_segment<'s>(
+        &'s self,
+        text: &str,
+        fonts: &ResolvedFonts<'s>,
+        mut emit: impl FnMut(&str, &ScriptFace<'s>),
+    ) {
+        let key = |f: &ScriptFace<'s>| (f.font_name, f.font_size);
+        let mut start = 0;
+        let mut current: Option<ScriptFace<'s>> = None;
+        for (i, c) in text.char_indices() {
+            if c.is_whitespace() {
+                continue;
+            }
+            let class = self.script_class_of(c);
+            let mut face = self.face_for(class);
+            face.font_name = fonts.face(class);
+            match &current {
+                Some(cur) if key(cur) == key(&face) => {},
+                Some(cur) => {
+                    emit(&text[start..i], cur);
+                    start = i;
+                    current = Some(face);
+                },
+                None => current = Some(face),
+            }
+        }
+        let face = current.unwrap_or_else(|| {
+            let class = self.script_class_of(' ');
+            let mut face = self.face_for(class);
+            face.font_name = fonts.face(class);
+            face
+        });
+        emit(&text[start..], &face);
+    }
+
+    /// A theme reference supersedes its same-layer literal, including
+    /// when it cannot be resolved. Do not freeze that stale literal (or
+    /// an unrelated ASCII face) as the font of EA/complex-script text.
+    pub(crate) fn resolved_fonts<'s>(
+        &'s self,
+        theme: Option<&'s crate::core::theme::Theme>,
+        languages: &ThemeFontLanguages,
+    ) -> ResolvedFonts<'s> {
+        let resolve = |literal: Option<&'s str>, reference: Option<ThemeFont>, fallback| {
+            match reference {
+                Some(reference) => {
+                    let name = theme.and_then(|theme| reference.resolve_with_languages(&theme.font_scheme, languages));
+                    (name, name.is_none())
+                },
+                None => (literal.filter(|name| !name.is_empty()).or(fallback), false),
+            }
+        };
+        let ascii = resolve(self.font_name.as_deref(), self.font_theme, None);
+        let script = self.script.as_deref();
+        let mut h_ansi = resolve(script.and_then(|s| s.font_h_ansi.as_deref()), script.and_then(|s| s.font_h_ansi_theme), ascii.0);
+        let mut east_asia = resolve(script.and_then(|s| s.font_east_asia.as_deref()), script.and_then(|s| s.font_east_asia_theme), ascii.0);
+        let mut complex = resolve(script.and_then(|s| s.font_cs.as_deref()), script.and_then(|s| s.font_cs_theme), ascii.0);
+        // An omitted slot inherits the unresolved ASCII fallback too.
+        for slot in [&mut h_ansi, &mut east_asia, &mut complex] {
+            if slot.0.is_none() && ascii.1 { slot.1 = true; }
+        }
+        ResolvedFonts { slots: [ascii, h_ansi, east_asia, complex] }
+    }
+
+    /// Face, size and weight for text of `class`. A face the run does not
+    /// name falls back to `w:ascii`, as it did before the other three were
+    /// read; complex-script bold/italic come only from `w:bCs`/`w:iCs`
+    /// (`w:b`/`w:i` apply to non-complex-script characters, §17.3.2).
+    pub(crate) fn face_for(&self, class: ScriptClass) -> ScriptFace<'_> {
+        self.face_with_ascii(class, self.font_name.as_deref())
+    }
+
+    /// [`Self::face_for`] with the run's ASCII face given explicitly: the
+    /// face a theme reference (`font_theme`) resolves to supersedes the
+    /// literal `w:ascii` one, and only the caller has the theme.
+    pub(crate) fn face_with_ascii<'s>(
+        &'s self,
+        class: ScriptClass,
+        ascii: Option<&'s str>,
+    ) -> ScriptFace<'s> {
+        let s = self.script.as_deref();
+        let bold = self.bold.unwrap_or(false);
+        let italic = self.italic.unwrap_or(false);
+        match class {
+            ScriptClass::Ascii => ScriptFace {
+                font_name: ascii,
+                font_size: self.font_size,
+                bold,
+                italic,
+            },
+            ScriptClass::HAnsi => ScriptFace {
+                font_name: s.and_then(|s| s.font_h_ansi.as_deref()).or(ascii),
+                font_size: self.font_size,
+                bold,
+                italic,
+            },
+            ScriptClass::EastAsia => ScriptFace {
+                font_name: s.and_then(|s| s.font_east_asia.as_deref()).or(ascii),
+                font_size: self.font_size,
+                bold,
+                italic,
+            },
+            ScriptClass::Complex => ScriptFace {
+                font_name: s.and_then(|s| s.font_cs.as_deref()).or(ascii),
+                font_size: s.and_then(|s| s.font_size_cs).or(self.font_size),
+                bold: s.and_then(|s| s.bold_cs).unwrap_or(false),
+                italic: s.and_then(|s| s.italic_cs).unwrap_or(false),
+            },
+        }
+    }
+}
+
+pub(crate) struct ResolvedFonts<'a> {
+    slots: [(Option<&'a str>, bool); 4],
+}
+
+impl<'a> ResolvedFonts<'a> {
+    fn index(class: ScriptClass) -> usize {
+        match class { ScriptClass::Ascii => 0, ScriptClass::HAnsi => 1, ScriptClass::EastAsia => 2, ScriptClass::Complex => 3 }
+    }
+
+    fn face(&self, class: ScriptClass) -> Option<&'a str> {
+        self.slots[Self::index(class)].0
+    }
+
+    pub(crate) fn unresolved(&self, class: ScriptClass) -> bool {
+        self.slots[Self::index(class)].1
+    }
+}
+
+/// Document settings that map theme references onto supplemental script
+/// fonts. These are distinct from a run's proofing language (`w:lang`).
+#[derive(Debug, Clone, Default)]
+pub struct ThemeFontLanguages {
+    /// Language used to select the theme's Latin font.
+    pub latin: Option<String>,
+    /// Language used to select the theme's East Asian font.
+    pub east_asia: Option<String>,
+    /// Language used to select the theme's complex-script font.
+    pub complex: Option<String>,
+    /// A malformed settings part must not silently imply default fonts.
+    pub unreadable: bool,
+}
+
+impl ThemeFontLanguages {
+    pub(crate) fn parse(data: &[u8]) -> crate::core::Result<Self> {
+        xml::check_root_closed(data, "word/settings.xml", "settings")?;
+        let mut reader = quick_xml::Reader::from_reader(data);
+        let mut out = Self::default();
+        loop {
+            match reader.read_event()? {
+                Event::Start(ref e) | Event::Empty(ref e) if e.local_name().as_ref() == "themeFontLang" => {
+                    out.latin = xml::optional_attr_str(e, "w:val")?.map(|v| v.into_owned());
+                    out.east_asia = xml::optional_attr_str(e, "w:eastAsia")?.map(|v| v.into_owned());
+                    out.complex = xml::optional_attr_str(e, "w:bidi")?.map(|v| v.into_owned());
+                },
+                Event::Eof => break,
+                _ => {},
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// A theme font reference (`ST_Theme`, ECMA-376 Part 1 §17.18.96): which
+/// of the theme's major (heading) or minor (body) fonts, for which script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeFont {
+    /// An explicit but unsupported reference must not reveal a stale literal.
+    Unresolved,
+    /// `majorAscii` / `majorHAnsi`: the major Latin font.
+    MajorLatin,
+    /// `majorEastAsia`: the major East Asian font.
+    MajorEastAsia,
+    /// `majorBidi`: the major complex-script font.
+    MajorBidi,
+    /// `minorAscii` / `minorHAnsi`: the minor Latin font.
+    MinorLatin,
+    /// `minorEastAsia`: the minor East Asian font.
+    MinorEastAsia,
+    /// `minorBidi`: the minor complex-script font.
+    MinorBidi,
+}
+
+impl ThemeFont {
+    /// Parse an `ST_Theme` value.
+    pub fn parse(val: &str) -> Option<Self> {
+        Some(match val {
+            "majorAscii" | "majorHAnsi" => Self::MajorLatin,
+            "majorEastAsia" => Self::MajorEastAsia,
+            "majorBidi" => Self::MajorBidi,
+            "minorAscii" | "minorHAnsi" => Self::MinorLatin,
+            "minorEastAsia" => Self::MinorEastAsia,
+            "minorBidi" => Self::MinorBidi,
+            _ => return None,
+        })
+    }
+
+    /// The face name this reference resolves to in `scheme`. `None` when
+    /// the scheme leaves that script's font empty (inherit).
+    pub fn resolve(self, scheme: &crate::core::theme::FontScheme) -> Option<String> {
+        let face = match self {
+            Self::Unresolved => None,
+            Self::MajorLatin => Some(&scheme.major_latin),
+            Self::MinorLatin => Some(&scheme.minor_latin),
+            Self::MajorEastAsia => scheme.major_ea.as_ref(),
+            Self::MinorEastAsia => scheme.minor_ea.as_ref(),
+            Self::MajorBidi => scheme.major_cs.as_ref(),
+            Self::MinorBidi => scheme.minor_cs.as_ref(),
+        }?;
+        (!face.is_empty()).then(|| face.clone())
+    }
+
+    fn resolve_with_languages<'s>(
+        self,
+        scheme: &'s crate::core::theme::FontScheme,
+        languages: &ThemeFontLanguages,
+    ) -> Option<&'s str> {
+        if languages.unreadable { return None; }
+        let (default, language, scripts) = match self {
+            Self::MajorLatin => (Some(scheme.major_latin.as_str()), &languages.latin, &scheme.major_scripts),
+            Self::MinorLatin => (Some(scheme.minor_latin.as_str()), &languages.latin, &scheme.minor_scripts),
+            Self::MajorEastAsia => (scheme.major_ea.as_deref(), &languages.east_asia, &scheme.major_scripts),
+            Self::MinorEastAsia => (scheme.minor_ea.as_deref(), &languages.east_asia, &scheme.minor_scripts),
+            Self::MajorBidi => (scheme.major_cs.as_deref(), &languages.complex, &scheme.major_scripts),
+            Self::MinorBidi => (scheme.minor_cs.as_deref(), &languages.complex, &scheme.minor_scripts),
+            Self::Unresolved => return None,
+        };
+        let default = default.filter(|name| !name.is_empty());
+        let Some(language) = language.as_deref() else { return default; };
+        let script = language_script(language)?;
+        // Latin languages normally use the collection's latin element;
+        // non-Latin mappings need the named supplemental font. In
+        // particular an empty ea/cs element is not the Latin typeface.
+        scripts.get(script).map(String::as_str).or_else(|| (script == "Latn").then_some(default).flatten())
+    }
+}
+
+/// Common BCP 47 languages and explicit script subtags used by Office
+/// themeFontLang. Ambiguous/unknown languages remain unresolved instead
+/// of assigning a font from a different script.
+fn language_script(language: &str) -> Option<&'static str> {
+    let language = language.to_ascii_lowercase();
+    let mut parts = language.split('-');
+    let primary = parts.next()?;
+    let subtags: Vec<_> = parts.collect();
+    for subtag in &subtags {
+        let script = match *subtag {
+            "latn" => "Latn", "cyrl" => "Cyrl", "grek" => "Grek", "hans" => "Hans", "hant" => "Hant",
+            "jpan" => "Jpan", "hang" | "kore" => "Hang", "arab" => "Arab", "hebr" => "Hebr",
+            "syrc" => "Syrc", "thaa" => "Thaa", "deva" => "Deva", "beng" => "Beng", "guru" => "Guru",
+            "gujr" => "Gujr", "orya" => "Orya", "taml" => "Taml", "telu" => "Telu", "knda" => "Knda",
+            "mlym" => "Mlym", "sinh" => "Sinh", "thai" => "Thai", "laoo" => "Laoo", "tibt" => "Tibt",
+            "mymr" => "Mymr", "khmr" => "Khmr", "mong" => "Mong", "ethi" => "Ethi", "armn" => "Armn",
+            "geor" => "Geor", "cans" => "Cans", "cher" => "Cher", "yiii" => "Yiii", _ => continue,
+        };
+        return Some(script);
+    }
+    Some(match primary {
+        "zh" if subtags.iter().any(|s| matches!(*s, "tw" | "hk" | "mo")) => "Hant",
+        "zh" if subtags.iter().any(|s| matches!(*s, "cn" | "sg")) => "Hans",
+        "ja" => "Jpan", "ko" => "Hang", "ar" | "fa" | "ur" | "ps" | "ug" => "Arab",
+        "he" | "iw" | "yi" => "Hebr", "syr" => "Syrc", "dv" => "Thaa",
+        "hi" | "mr" | "ne" | "sa" => "Deva", "bn" | "as" => "Beng", "gu" => "Gujr", "or" => "Orya",
+        "ta" => "Taml", "te" => "Telu", "kn" => "Knda", "ml" => "Mlym", "si" => "Sinh",
+        "th" => "Thai", "lo" => "Laoo", "bo" | "dz" => "Tibt", "my" => "Mymr", "km" => "Khmr",
+        "am" | "ti" => "Ethi", "hy" => "Armn", "ka" => "Geor", "iu" => "Cans", "chr" => "Cher", "ii" => "Yiii",
+        "el" => "Grek", "ru" | "uk" | "bg" | "be" | "mk" | "kk" | "ky" | "tg" => "Cyrl",
+        "en" | "fr" | "de" | "es" | "it" | "pt" | "nl" | "sv" | "no" | "nb" | "nn" | "da" | "fi"
+        | "is" | "ga" | "cy" | "gd" | "pl" | "cs" | "sk" | "sl" | "hr" | "hu" | "ro" | "tr" | "vi"
+        | "id" | "ms" | "sw" | "af" | "sq" | "et" | "lv" | "lt" | "eu" | "ca" | "gl" | "mt" | "fil" => "Latn",
+        _ => return None,
+    })
+}
+
+/// Paragraph-level formatting properties (`w:pPr`).
+#[derive(Debug, Clone, Default)]
+pub struct ParagraphProperties {
+    /// Paragraph style ID.
+    pub style_id: Option<String>,
+    /// Text justification.
+    pub justification: Option<Justification>,
+    /// Paragraph indentation.
+    pub indent: Option<ParagraphIndent>,
+    /// Paragraph spacing.
+    pub spacing: Option<ParagraphSpacing>,
+    /// Numbering reference for list paragraphs.
+    pub numbering_ref: Option<NumberingRef>,
+    /// Outline level (0 = Heading 1, 1 = Heading 2, …).
+    pub outline_level: Option<u8>,
+    /// Paragraph-mark run properties (`w:rPr` inside `w:pPr`). Boxed:
+    /// present on only a small minority of real paragraphs, but
+    /// `Option<T>` reserves `size_of(T)` even when `None`.
+    pub run_properties: Option<Box<RunProperties>>,
+    /// Frame position from `<w:framePr>`. When present this paragraph is
+    /// absolutely positioned on the page (used by layout-preserving
+    /// PDF-derived DOCX, e.g. pdf_oxide's `to_docx_bytes_layout`).
+    pub frame_position: Option<FrameProps>,
+    /// Section properties from `<w:sectPr>` inside this paragraph's `<w:pPr>`.
+    /// When present this paragraph terminates a section — the properties
+    /// describe the section that ends here. Boxed: only the last
+    /// paragraph of each section carries this.
+    pub section_properties: Option<Box<super::SectionProperties>>,
+    /// True when the paragraph has a `<w:pBdr><w:bottom .../></w:pBdr>`.
+    /// Used to recover horizontal rules: pdf_to_ir emits
+    /// `Element::ThematicBreak` which round-trips through DOCX as an
+    /// empty paragraph with a single bottom border. Without
+    /// preserving this flag the rule would be silently dropped on
+    /// re-parse and turned into a plain empty paragraph.
+    pub has_bottom_border: bool,
+    /// Full `<w:pBdr>` edge styling. `has_bottom_border` stays as the
+    /// cheap horizontal-rule probe; this carries the actual widths,
+    /// colours and styles so they survive a read. Boxed: rare on real
+    /// paragraphs.
+    pub borders: Option<Box<ParagraphBorders>>,
+    /// `<w:keepNext/>` — keep with the following paragraph. `None` when the
+    /// element is absent, so a style-inherited value is distinguishable from
+    /// an explicit `w:val="0"` that turns it off.
+    pub keep_next: Option<bool>,
+    /// `<w:keepLines/>` — keep all lines of this paragraph together.
+    pub keep_lines: Option<bool>,
+    /// `<w:pageBreakBefore/>` — force a page break before this paragraph.
+    pub page_break_before: Option<bool>,
+    /// Paragraph shading (`<w:shd>`) — background fill. Boxed: rare on
+    /// real paragraphs.
+    pub shading: Option<Box<super::table::Shading>>,
+    /// Custom tab stops from `<w:tabs>`.
+    pub tabs: Vec<TabStopDef>,
+}
+
+/// One `<w:tab>` entry inside `<w:tabs>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabStopDef {
+    /// Position in twips (`w:pos`).
+    pub position_twips: i32,
+    /// Alignment (`w:val`): left/center/right/decimal/bar.
+    pub alignment: String,
+    /// Leader character style (`w:leader`).
+    pub leader: Option<String>,
+}
+
+/// A single border edge (`<w:top>`, `<w:left>`, …) as it appears
+/// inside `<w:pBdr>`, `<w:tblBorders>` and `<w:tcBorders>`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BorderEdge {
+    /// `w:val` — the line style name (`single`, `double`, `dotted`, …).
+    pub style: Option<String>,
+    /// `w:color` — `RRGGBB` or `auto`.
+    pub color: Option<String>,
+    /// `w:sz` — line width in eighths of a point.
+    pub size: Option<u32>,
+    /// `w:space` — padding between border and text, in points.
+    pub space: Option<u32>,
+}
+
+/// The five paragraph border edges (`<w:pBdr>`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParagraphBorders {
+    /// Top edge.
+    pub top: Option<BorderEdge>,
+    /// Bottom edge.
+    pub bottom: Option<BorderEdge>,
+    /// Left edge.
+    pub left: Option<BorderEdge>,
+    /// Right edge.
+    pub right: Option<BorderEdge>,
+    /// Edge drawn between consecutive paragraphs sharing this border set.
+    pub between: Option<BorderEdge>,
+}
+
+/// Table / cell border edges (`<w:tblBorders>`, `<w:tcBorders>`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TableBorders {
+    /// Top edge.
+    pub top: Option<BorderEdge>,
+    /// Bottom edge.
+    pub bottom: Option<BorderEdge>,
+    /// Left (`w:left` / `w:start`) edge.
+    pub left: Option<BorderEdge>,
+    /// Right (`w:right` / `w:end`) edge.
+    pub right: Option<BorderEdge>,
+    /// Interior horizontal edges.
+    pub inside_h: Option<BorderEdge>,
+    /// Interior vertical edges.
+    pub inside_v: Option<BorderEdge>,
+}
+
+/// Parse one border edge element's attributes.
+pub(crate) fn parse_border_edge(e: &BytesStart) -> BorderEdge {
+    // One pass over the attributes: a bordered table has six edges per
+    // cell, and reading four keys with four rescans each was a fifth of
+    // the parse of a large table document.
+    let mut edge = BorderEdge::default();
+    for attr in xml::attrs(e) {
+        let Ok((key, value)) = attr else { break };
+        match key {
+            "w:val" => edge.style = Some(value.into_owned()),
+            "w:color" => edge.color = Some(value.into_owned()),
+            "w:sz" => edge.size = value.parse().ok(),
+            "w:space" => edge.space = value.parse().ok(),
+            _ => {},
+        }
+    }
+    edge
+}
+
+impl RunProperties {
+    /// Overlay `src` on top of `self`: every field `src` states explicitly
+    /// wins, everything else is left alone. Used to fold a style chain
+    /// (document defaults → style → parent style → direct `w:rPr`) into one
+    /// effective property set.
+    pub fn overlay(&mut self, src: &RunProperties) {
+        macro_rules! take {
+            ($($f:ident),* $(,)?) => {$(
+                if src.$f.is_some() { self.$f = src.$f.clone(); }
+            )*};
+        }
+        take!(
+            bold,
+            italic,
+            underline,
+            strike,
+            dstrike,
+            font_size,
+            color,
+            highlight,
+            vertical_align,
+            style_id,
+            caps,
+            small_caps,
+            char_spacing,
+            shading_fill,
+            hidden,
+        );
+        if let Some(src) = src.script.as_deref() {
+            self.script
+                .get_or_insert_with(Default::default)
+                .overlay(src);
+        }
+        // The ASCII face and its theme reference come from one `w:rFonts`
+        // and override together: a level that names a face directly
+        // drops a theme reference inherited from below, and vice versa.
+        if src.font_name.is_some() || src.font_theme.is_some() {
+            self.font_name = src.font_name.clone();
+            self.font_theme = src.font_theme;
+        }
+    }
+}
+
+impl ParagraphProperties {
+    /// Overlay `src` on top of `self`. See [`RunProperties::overlay`].
+    ///
+    /// `run_properties` is merged recursively rather than replaced, so a
+    /// paragraph style that sets only the font does not wipe out the bold
+    /// flag its parent style set.
+    pub fn overlay(&mut self, src: &ParagraphProperties) {
+        macro_rules! take {
+            ($($f:ident),* $(,)?) => {$(
+                if src.$f.is_some() { self.$f = src.$f.clone(); }
+            )*};
+        }
+        take!(
+            style_id,
+            justification,
+            indent,
+            spacing,
+            numbering_ref,
+            outline_level,
+            frame_position,
+            section_properties,
+            borders,
+            keep_next,
+            keep_lines,
+            page_break_before,
+            shading,
+        );
+        if !src.tabs.is_empty() {
+            self.tabs = src.tabs.clone();
+        }
+        if src.has_bottom_border {
+            self.has_bottom_border = true;
+        }
+        match (self.run_properties.as_mut(), src.run_properties.as_ref()) {
+            (Some(dst), Some(s)) => dst.overlay(s),
+            (None, Some(s)) => self.run_properties = Some(s.clone()),
+            _ => {},
+        }
+    }
+}
+
+/// `<w:framePr>` attributes — page-anchored frame coordinates in twips.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FrameProps {
+    /// X position in twips, anchored to the page (top-left).
+    pub x_twips: i32,
+    /// Y position in twips, anchored to the page (top-left).
+    pub y_twips: i32,
+    /// Frame width in twips.
+    pub width_twips: i32,
+    /// Frame height in twips.
+    pub height_twips: i32,
+}
+
+/// Underline style.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnderlineType {
+    /// Single underline.
+    Single,
+    /// Double underline.
+    Double,
+    /// Thick (heavy) underline.
+    Thick,
+    /// Dotted underline.
+    Dotted,
+    /// Dashed underline.
+    Dash,
+    /// Dot-dash underline.
+    DotDash,
+    /// Dot-dot-dash underline.
+    DotDotDash,
+    /// Wave underline.
+    Wave,
+    /// Underline under words only.
+    Words,
+    /// No underline (explicit removal).
+    None,
+    /// Any other underline value.
+    Other(String),
+}
+
+/// Vertical alignment (superscript/subscript).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerticalAlign {
+    /// Superscript text.
+    Superscript,
+    /// Subscript text.
+    Subscript,
+    /// Normal (baseline) alignment.
+    Baseline,
+}
+
+/// Paragraph justification / alignment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Justification {
+    /// Left-aligned (default).
+    Left,
+    /// Centered.
+    Center,
+    /// Right-aligned.
+    Right,
+    /// Justified (both edges).
+    Both,
+    /// Distributed (East Asian spacing).
+    Distribute,
+}
+
+/// Paragraph indentation values.
+#[derive(Debug, Clone, Default)]
+pub struct ParagraphIndent {
+    /// Left indent in twips.
+    pub left: Option<Twip>,
+    /// Right indent in twips.
+    pub right: Option<Twip>,
+    /// First-line indent in twips (positive = indent).
+    pub first_line: Option<Twip>,
+    /// Hanging indent in twips (first-line de-indent).
+    pub hanging: Option<Twip>,
+}
+
+/// Paragraph spacing.
+#[derive(Debug, Clone, Default)]
+pub struct ParagraphSpacing {
+    /// Space before the paragraph in twips.
+    pub before: Option<Twip>,
+    /// Space after the paragraph in twips.
+    pub after: Option<Twip>,
+    /// Line spacing value and rule.
+    pub line: Option<SpacingLine>,
+}
+
+/// Line spacing rule and value.
+#[derive(Debug, Clone)]
+pub struct SpacingLine {
+    /// Line spacing value (interpretation depends on `rule`).
+    pub value: i32,
+    /// The rule governing how `value` is applied.
+    pub rule: Option<LineSpacingRule>,
+}
+
+/// Line spacing rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineSpacingRule {
+    /// Automatic (proportional to font size).
+    Auto,
+    /// Exact line height in twips.
+    Exact,
+    /// Minimum line height in twips.
+    AtLeast,
+}
+
+/// Reference to a numbering definition from a paragraph.
+#[derive(Debug, Clone)]
+pub struct NumberingRef {
+    /// Numbering instance ID.
+    pub num_id: u32,
+    /// Indent level (0-based).
+    pub ilvl: u8,
+}
+
+// ---------------------------------------------------------------------------
+// Parsing helpers
+// ---------------------------------------------------------------------------
+
+use quick_xml::events::{BytesStart, Event};
+
+use crate::core::xml;
+
+/// Parse a justification value string.
+pub(crate) fn parse_justification_value(val: &str) -> Justification {
+    match val {
+        "left" | "start" => Justification::Left,
+        "center" => Justification::Center,
+        "right" | "end" => Justification::Right,
+        "both" => Justification::Both,
+        "distribute" => Justification::Distribute,
+        _ => Justification::Left,
+    }
+}
+
+/// Parse `w:rPr` element children using NsReader. Caller has already consumed the `Start(w:rPr)` event.
+/// NOTE: Only used by test code via NsReader. Production code uses `parse_run_properties_fast`.
+#[cfg(test)]
+pub(crate) fn parse_run_properties(
+    reader: &mut quick_xml::NsReader<&[u8]>,
+) -> crate::core::Result<RunProperties> {
+    let wml = xml::ns::WML;
+    let mut props = RunProperties::default();
+
+    loop {
+        match reader.read_resolved_event()? {
+            (ref resolve, Event::Start(ref e)) => {
+                if xml::matches_ns(resolve, wml) {
+                    let local = e.local_name();
+                    match local.as_ref() {
+                        "b" => {
+                            props.bold = Some(parse_toggle(e));
+                            xml::skip_element(reader)?;
+                        },
+                        "i" => {
+                            props.italic = Some(parse_toggle(e));
+                            xml::skip_element(reader)?;
+                        },
+                        "strike" => {
+                            props.strike = Some(parse_toggle(e));
+                            xml::skip_element(reader)?;
+                        },
+                        "dstrike" => {
+                            props.dstrike = Some(parse_toggle(e));
+                            xml::skip_element(reader)?;
+                        },
+                        "u" => {
+                            props.underline = Some(parse_underline(e));
+                            xml::skip_element(reader)?;
+                        },
+                        "sz" => {
+                            if let Some(val) = parse_half_point_val(e)? {
+                                props.font_size = Some(val);
+                            }
+                            xml::skip_element(reader)?;
+                        },
+                        name if apply_script_property(name, e, &mut props)? => {
+                            xml::skip_element(reader)?;
+                        },
+                        "color" => {
+                            props.color = parse_color_ref(e)?;
+                            xml::skip_element(reader)?;
+                        },
+                        "highlight" => {
+                            if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                                props.highlight = Some(val.into_owned());
+                            }
+                            xml::skip_element(reader)?;
+                        },
+                        "vertAlign" => {
+                            if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                                props.vertical_align = Some(match val.as_ref() {
+                                    "superscript" => VerticalAlign::Superscript,
+                                    "subscript" => VerticalAlign::Subscript,
+                                    _ => VerticalAlign::Baseline,
+                                });
+                            }
+                            xml::skip_element(reader)?;
+                        },
+                        "rStyle" => {
+                            if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                                props.style_id = Some(val.into_owned());
+                            }
+                            xml::skip_element(reader)?;
+                        },
+                        "vanish" => {
+                            props.hidden = Some(parse_toggle(e));
+                            xml::skip_element(reader)?;
+                        },
+                        _ => {
+                            xml::skip_element(reader)?;
+                        },
+                    }
+                } else {
+                    xml::skip_element(reader)?;
+                }
+            },
+            (ref resolve, Event::Empty(ref e)) if xml::matches_ns(resolve, wml) => {
+                let local = e.local_name();
+                match local.as_ref() {
+                    "b" => props.bold = Some(parse_toggle(e)),
+                    "i" => props.italic = Some(parse_toggle(e)),
+                    "strike" => props.strike = Some(parse_toggle(e)),
+                    "dstrike" => props.dstrike = Some(parse_toggle(e)),
+                    "u" => props.underline = Some(parse_underline(e)),
+                    "sz" => {
+                        if let Some(val) = parse_half_point_val(e)? {
+                            props.font_size = Some(val);
+                        }
+                    },
+                    name if apply_script_property(name, e, &mut props)? => {},
+                    "color" => {
+                        props.color = parse_color_ref(e)?;
+                    },
+                    "highlight" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.highlight = Some(val.into_owned());
+                        }
+                    },
+                    "vertAlign" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.vertical_align = Some(match val.as_ref() {
+                                "superscript" => VerticalAlign::Superscript,
+                                "subscript" => VerticalAlign::Subscript,
+                                _ => VerticalAlign::Baseline,
+                            });
+                        }
+                    },
+                    "rStyle" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.style_id = Some(val.into_owned());
+                        }
+                    },
+                    "vanish" => {
+                        props.hidden = Some(parse_toggle(e));
+                    },
+                    _ => {},
+                }
+            },
+            (ref resolve, Event::End(ref e))
+                if xml::matches_ns(resolve, wml) && e.local_name().as_ref() == "rPr" =>
+            {
+                break;
+            },
+            (_, Event::Eof) => break,
+            _ => {},
+        }
+    }
+    Ok(props)
+}
+
+/// Parse `w:pPr` element children using NsReader. Caller has already consumed the `Start(w:pPr)` event.
+/// NOTE: Only used by test code via NsReader. Production code uses `parse_paragraph_properties_fast`.
+#[cfg(test)]
+pub(crate) fn parse_paragraph_properties(
+    reader: &mut quick_xml::NsReader<&[u8]>,
+) -> crate::core::Result<ParagraphProperties> {
+    let wml = xml::ns::WML;
+    let mut props = ParagraphProperties::default();
+
+    loop {
+        match reader.read_resolved_event()? {
+            (ref resolve, Event::Start(ref e)) => {
+                if xml::matches_ns(resolve, wml) {
+                    let local = e.local_name();
+                    match local.as_ref() {
+                        "pStyle" => {
+                            if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                                props.style_id = Some(val.into_owned());
+                            }
+                            xml::skip_element(reader)?;
+                        },
+                        "jc" => {
+                            if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                                props.justification = Some(parse_justification_value(&val));
+                            }
+                            xml::skip_element(reader)?;
+                        },
+                        "ind" => {
+                            props.indent = Some(parse_indent(e)?);
+                            xml::skip_element(reader)?;
+                        },
+                        "spacing" => {
+                            props.spacing = Some(parse_spacing(e)?);
+                            xml::skip_element(reader)?;
+                        },
+                        "numPr" => {
+                            props.numbering_ref = Some(parse_num_pr(reader)?);
+                        },
+                        "outlineLvl" => {
+                            if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                                props.outline_level = parse_outline_level(&val);
+                            }
+                            xml::skip_element(reader)?;
+                        },
+                        "rPr" => {
+                            props.run_properties = Some(Box::new(parse_run_properties(reader)?));
+                        },
+                        _ => {
+                            xml::skip_element(reader)?;
+                        },
+                    }
+                } else {
+                    xml::skip_element(reader)?;
+                }
+            },
+            (ref resolve, Event::Empty(ref e)) if xml::matches_ns(resolve, wml) => {
+                let local = e.local_name();
+                match local.as_ref() {
+                    "pStyle" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.style_id = Some(val.into_owned());
+                        }
+                    },
+                    "jc" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.justification = Some(parse_justification_value(&val));
+                        }
+                    },
+                    "ind" => {
+                        props.indent = Some(parse_indent(e)?);
+                    },
+                    "spacing" => {
+                        props.spacing = Some(parse_spacing(e)?);
+                    },
+                    "outlineLvl" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.outline_level = parse_outline_level(&val);
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            (ref resolve, Event::End(ref e))
+                if xml::matches_ns(resolve, wml) && e.local_name().as_ref() == "pPr" =>
+            {
+                break;
+            },
+            (_, Event::Eof) => break,
+            _ => {},
+        }
+    }
+    Ok(props)
+}
+
+// ---------------------------------------------------------------------------
+// Fast (plain Reader) variants — no namespace resolution
+// ---------------------------------------------------------------------------
+
+/// Parse `w:rPr` using plain `Reader` (no namespace resolution).
+pub(crate) fn parse_run_properties_fast(
+    reader: &mut quick_xml::Reader<&[u8]>,
+) -> crate::core::Result<RunProperties> {
+    let mut props = RunProperties::default();
+
+    loop {
+        match reader.read_event()? {
+            Event::Start(ref e) => {
+                let local = e.local_name();
+                match local.as_ref() {
+                    "b" => {
+                        props.bold = Some(parse_toggle(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "i" => {
+                        props.italic = Some(parse_toggle(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "strike" => {
+                        props.strike = Some(parse_toggle(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "dstrike" => {
+                        props.dstrike = Some(parse_toggle(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "u" => {
+                        props.underline = Some(parse_underline(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "sz" => {
+                        if let Some(val) = parse_half_point_val(e)? {
+                            props.font_size = Some(val);
+                        }
+                        xml::skip_element_fast(reader)?;
+                    },
+                    name if apply_script_property(name, e, &mut props)? => {
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "color" => {
+                        props.color = parse_color_ref(e)?;
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "highlight" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.highlight = Some(val.into_owned());
+                        }
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "vertAlign" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.vertical_align = Some(match val.as_ref() {
+                                "superscript" => VerticalAlign::Superscript,
+                                "subscript" => VerticalAlign::Subscript,
+                                _ => VerticalAlign::Baseline,
+                            });
+                        }
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "rStyle" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.style_id = Some(val.into_owned());
+                        }
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "caps" => {
+                        props.caps = Some(parse_toggle(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "smallCaps" => {
+                        props.small_caps = Some(parse_toggle(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "spacing" => {
+                        props.char_spacing = parse_signed_val(e);
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "shd" => {
+                        props.shading_fill = xml::optional_attr_str(e, "w:fill")
+                            .ok()
+                            .flatten()
+                            .map(|v| v.into_owned());
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "vanish" => {
+                        props.hidden = Some(parse_toggle(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    _ => {
+                        xml::skip_element_fast(reader)?;
+                    },
+                }
+            },
+            Event::Empty(ref e) => {
+                let local = e.local_name();
+                match local.as_ref() {
+                    "caps" => props.caps = Some(parse_toggle(e)),
+                    "smallCaps" => props.small_caps = Some(parse_toggle(e)),
+                    "spacing" => props.char_spacing = parse_signed_val(e),
+                    "vanish" => props.hidden = Some(parse_toggle(e)),
+                    "shd" => {
+                        props.shading_fill = xml::optional_attr_str(e, "w:fill")
+                            .ok()
+                            .flatten()
+                            .map(|v| v.into_owned());
+                    },
+                    "b" => props.bold = Some(parse_toggle(e)),
+                    "i" => props.italic = Some(parse_toggle(e)),
+                    "strike" => props.strike = Some(parse_toggle(e)),
+                    "dstrike" => props.dstrike = Some(parse_toggle(e)),
+                    "u" => props.underline = Some(parse_underline(e)),
+                    "sz" => {
+                        if let Some(val) = parse_half_point_val(e)? {
+                            props.font_size = Some(val);
+                        }
+                    },
+                    name if apply_script_property(name, e, &mut props)? => {},
+                    "color" => {
+                        props.color = parse_color_ref(e)?;
+                    },
+                    "highlight" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.highlight = Some(val.into_owned());
+                        }
+                    },
+                    "vertAlign" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.vertical_align = Some(match val.as_ref() {
+                                "superscript" => VerticalAlign::Superscript,
+                                "subscript" => VerticalAlign::Subscript,
+                                _ => VerticalAlign::Baseline,
+                            });
+                        }
+                    },
+                    "rStyle" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.style_id = Some(val.into_owned());
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            Event::End(ref e) if e.local_name().as_ref() == "rPr" => {
+                break;
+            },
+            Event::Eof => break,
+            _ => {},
+        }
+    }
+    Ok(props)
+}
+
+/// Parse `w:pPr` using plain `Reader` (no namespace resolution).
+pub(crate) fn parse_paragraph_properties_fast(
+    reader: &mut quick_xml::Reader<&[u8]>,
+) -> crate::core::Result<ParagraphProperties> {
+    let mut props = ParagraphProperties::default();
+
+    loop {
+        match reader.read_event()? {
+            Event::Start(ref e) => {
+                let local = e.local_name();
+                match local.as_ref() {
+                    "pStyle" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.style_id = Some(val.into_owned());
+                        }
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "jc" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.justification = Some(parse_justification_value(&val));
+                        }
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "ind" => {
+                        props.indent = Some(parse_indent(e)?);
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "spacing" => {
+                        props.spacing = Some(parse_spacing(e)?);
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "numPr" => {
+                        props.numbering_ref = Some(parse_num_pr_fast(reader)?);
+                    },
+                    "outlineLvl" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.outline_level = parse_outline_level(&val);
+                        }
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "rPr" => {
+                        props.run_properties = Some(Box::new(parse_run_properties_fast(reader)?));
+                    },
+                    "framePr" => {
+                        props.frame_position = parse_frame_pr(e);
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "sectPr" => {
+                        props.section_properties =
+                            Some(Box::new(super::parse_section_properties(reader, e)?));
+                    },
+                    "pBdr" => {
+                        // Capture every `<w:pBdr>` edge with its full
+                        // styling. `has_bottom_border` stays the cheap
+                        // horizontal-rule probe (empty paragraph + bottom
+                        // border = the conventional DOCX `<hr/>`), but the
+                        // widths, colours and styles now survive the read
+                        // instead of being narrowed to that one boolean.
+                        let borders = parse_paragraph_borders_fast(reader)?;
+                        props.has_bottom_border = borders.bottom.is_some();
+                        props.borders = Some(Box::new(borders));
+                    },
+                    "keepNext" => {
+                        props.keep_next = Some(parse_toggle(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "keepLines" => {
+                        props.keep_lines = Some(parse_toggle(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "pageBreakBefore" => {
+                        props.page_break_before = Some(parse_toggle(e));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "shd" => {
+                        props.shading = Some(Box::new(parse_shading(e)));
+                        xml::skip_element_fast(reader)?;
+                    },
+                    "tabs" => {
+                        props.tabs = parse_tabs_fast(reader)?;
+                    },
+                    _ => {
+                        xml::skip_element_fast(reader)?;
+                    },
+                }
+            },
+            Event::Empty(ref e) => {
+                let local = e.local_name();
+                match local.as_ref() {
+                    "keepNext" => props.keep_next = Some(parse_toggle(e)),
+                    "keepLines" => props.keep_lines = Some(parse_toggle(e)),
+                    "pageBreakBefore" => props.page_break_before = Some(parse_toggle(e)),
+                    "shd" => props.shading = Some(Box::new(parse_shading(e))),
+                    "pStyle" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.style_id = Some(val.into_owned());
+                        }
+                    },
+                    "jc" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.justification = Some(parse_justification_value(&val));
+                        }
+                    },
+                    "ind" => {
+                        props.indent = Some(parse_indent(e)?);
+                    },
+                    "spacing" => {
+                        props.spacing = Some(parse_spacing(e)?);
+                    },
+                    "framePr" => {
+                        props.frame_position = parse_frame_pr(e);
+                    },
+                    "outlineLvl" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            props.outline_level = parse_outline_level(&val);
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            Event::End(ref e) if e.local_name().as_ref() == "pPr" => {
+                break;
+            },
+            Event::Eof => break,
+            _ => {},
+        }
+    }
+    Ok(props)
+}
+
+/// Parse a signed `w:val` integer attribute (used by `<w:spacing>` in `w:rPr`).
+fn parse_signed_val(e: &BytesStart) -> Option<i32> {
+    xml::optional_attr_str(e, "w:val")
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse().ok())
+}
+
+/// Parse a `<w:shd>` element's attributes.
+pub(crate) fn parse_shading(e: &BytesStart) -> super::table::Shading {
+    super::table::Shading {
+        fill: xml::optional_attr_str(e, "w:fill")
+            .ok()
+            .flatten()
+            .map(|v| v.into_owned()),
+        color: xml::optional_attr_str(e, "w:color")
+            .ok()
+            .flatten()
+            .map(|v| v.into_owned()),
+        pattern: xml::optional_attr_str(e, "w:val")
+            .ok()
+            .flatten()
+            .map(|v| v.into_owned()),
+    }
+}
+
+/// Parse the children of `<w:pBdr>`. The caller has consumed the start tag.
+fn parse_paragraph_borders_fast(
+    reader: &mut quick_xml::Reader<&[u8]>,
+) -> crate::core::Result<ParagraphBorders> {
+    let mut b = ParagraphBorders::default();
+    loop {
+        match reader.read_event()? {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                let edge = parse_border_edge(e);
+                match e.local_name().as_ref() {
+                    "top" => b.top = Some(edge),
+                    "bottom" => b.bottom = Some(edge),
+                    "left" | "start" => b.left = Some(edge),
+                    "right" | "end" => b.right = Some(edge),
+                    "between" => b.between = Some(edge),
+                    _ => {},
+                }
+            },
+            Event::End(ref e) if e.local_name().as_ref() == "pBdr" => break,
+            Event::Eof => break,
+            _ => {},
+        }
+    }
+    Ok(b)
+}
+
+/// Parse the children of `<w:tblBorders>` / `<w:tcBorders>`. The caller has
+/// consumed the start tag; `end` names the closing element to stop at.
+pub(crate) fn parse_table_borders_fast(
+    reader: &mut quick_xml::Reader<&[u8]>,
+    end: &str,
+) -> crate::core::Result<TableBorders> {
+    let mut b = TableBorders::default();
+    loop {
+        match reader.read_event()? {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                let edge = parse_border_edge(e);
+                match e.local_name().as_ref() {
+                    "top" => b.top = Some(edge),
+                    "bottom" => b.bottom = Some(edge),
+                    "left" | "start" => b.left = Some(edge),
+                    "right" | "end" => b.right = Some(edge),
+                    "insideH" => b.inside_h = Some(edge),
+                    "insideV" => b.inside_v = Some(edge),
+                    _ => {},
+                }
+            },
+            Event::End(ref e) if e.local_name().as_ref() == end => break,
+            Event::Eof => break,
+            _ => {},
+        }
+    }
+    Ok(b)
+}
+
+/// Parse the children of `<w:tabs>`. The caller has consumed the start tag.
+fn parse_tabs_fast(reader: &mut quick_xml::Reader<&[u8]>) -> crate::core::Result<Vec<TabStopDef>> {
+    let mut tabs = Vec::new();
+    loop {
+        match reader.read_event()? {
+            Event::Start(ref e) | Event::Empty(ref e) if e.local_name().as_ref() == "tab" => {
+                let pos = xml::optional_attr_str(e, "w:pos")
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.parse::<i32>().ok());
+                if let Some(position_twips) = pos {
+                    tabs.push(TabStopDef {
+                        position_twips,
+                        alignment: xml::optional_attr_str(e, "w:val")
+                            .ok()
+                            .flatten()
+                            .map(|v| v.into_owned())
+                            .unwrap_or_else(|| "left".to_string()),
+                        leader: xml::optional_attr_str(e, "w:leader")
+                            .ok()
+                            .flatten()
+                            .map(|v| v.into_owned()),
+                    });
+                }
+            },
+            Event::End(ref e) if e.local_name().as_ref() == "tabs" => break,
+            Event::Eof => break,
+            _ => {},
+        }
+    }
+    Ok(tabs)
+}
+
+fn parse_num_pr_fast(reader: &mut quick_xml::Reader<&[u8]>) -> crate::core::Result<NumberingRef> {
+    let mut num_id: u32 = 0;
+    let mut ilvl: u8 = 0;
+
+    loop {
+        match reader.read_event()? {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                let local = e.local_name();
+                match local.as_ref() {
+                    "numId" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            num_id = val.parse().unwrap_or(0);
+                        }
+                    },
+                    "ilvl" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            ilvl = val.parse().unwrap_or(0);
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            Event::End(ref e) if e.local_name().as_ref() == "numPr" => {
+                break;
+            },
+            Event::Eof => break,
+            _ => {},
+        }
+    }
+    Ok(NumberingRef { num_id, ilvl })
+}
+
+/// Parse a `<w:outlineLvl w:val="N"/>` value.
+///
+/// ECMA-376 §17.3.1.20 defines the range as 0–9, where `9` "specifically
+/// indicates that there is no outline level specifically applied to this
+/// paragraph" — i.e. body text — and is also the value assumed when the
+/// element is absent. Returning `Some(9)` made every consumer treat a
+/// paragraph explicitly marked as body text as a heading: the IR converter
+/// produced an H6, and the markdown renderer emitted nine `#` characters,
+/// which no markdown reader treats as a heading at all. Word writes
+/// `w:val="9"` for "Outline level: Body Text", and the built-in
+/// `TOCHeading` style uses it to cancel the level it inherits, so any
+/// document with a generated table of contents was affected.
+///
+/// Out-of-range values are also rejected rather than passed through.
+pub(crate) fn parse_outline_level(val: &str) -> Option<u8> {
+    match val.trim().parse::<u8>() {
+        Ok(lvl) if lvl <= 8 => Some(lvl),
+        _ => None,
+    }
+}
+
+/// Parse a boolean toggle attribute. `<w:b/>` = true, `<w:b w:val="0"/>` = false.
+fn parse_toggle(e: &BytesStart) -> bool {
+    xml::parse_toggle(e, "w:val")
+}
+
+fn parse_underline(e: &BytesStart) -> UnderlineType {
+    match xml::optional_attr_str(e, "w:val") {
+        Ok(Some(ref val)) => match val.as_ref() {
+            "single" => UnderlineType::Single,
+            "double" => UnderlineType::Double,
+            "thick" => UnderlineType::Thick,
+            "dotted" => UnderlineType::Dotted,
+            "dash" => UnderlineType::Dash,
+            "dotDash" => UnderlineType::DotDash,
+            "dotDotDash" => UnderlineType::DotDotDash,
+            "wave" => UnderlineType::Wave,
+            "words" => UnderlineType::Words,
+            "none" => UnderlineType::None,
+            other => UnderlineType::Other(other.to_string()),
+        },
+        _ => UnderlineType::Single,
+    }
+}
+
+/// Parse a numeric value, stripping any trailing unit suffix (e.g., "20pt" → 20).
+/// OOXML Strict format uses unit suffixes and decimal values (e.g., "12.95pt");
+/// Transitional uses bare integers. We truncate decimals for integer types.
+fn parse_numeric<T: std::str::FromStr>(s: &str) -> std::result::Result<T, T::Err> {
+    let numeric = s.trim_end_matches(|c: char| c.is_ascii_alphabetic() || c == '%');
+    // Try direct parse first (fast path for integers)
+    if let Ok(v) = numeric.parse() {
+        return Ok(v);
+    }
+    // If that fails and there's a decimal point, try parsing as f64 and truncating
+    if numeric.contains('.') {
+        if let Ok(f) = numeric.parse::<f64>() {
+            // Round to nearest integer and try to parse the string representation
+            let rounded = format!("{}", f.round() as i64);
+            if let Ok(v) = rounded.parse() {
+                return Ok(v);
+            }
+        }
+    }
+    // Final fallback — return the original parse error
+    numeric.parse()
+}
+
+fn parse_half_point_val(e: &BytesStart) -> crate::core::Result<Option<HalfPoint>> {
+    match xml::optional_attr_str(e, "w:val")? {
+        Some(ref val) => parse_half_point_measure(val).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// ST_HpsMeasure is an unsigned integer in half-points, or a positive
+/// universal measurement (ECMA-376 Part 1 17.18.42 / 22.9.2.12). A suffix
+/// changes the unit: `13.5pt` is 27 half-points, never 14. Keep conversion
+/// exact so an unsupported fractional half-point cannot silently change
+/// the font size. Other measurement types (twips, signed offsets, etc.)
+/// must not use this unsigned half-point parser.
+fn parse_half_point_measure(value: &str) -> crate::core::Result<HalfPoint> {
+    use crate::core::Error;
+    let invalid = || Error::MalformedXml("invalid DOCX half-point measurement".into());
+    let out_of_range = || Error::Unsupported(
+        "DOCX half-point measurement exceeds the supported integer range or precision".into()
+    );
+    let value = value.trim_matches([' ', '\t', '\r', '\n']);
+    let digits = value.strip_prefix('+').unwrap_or(value);
+    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+        return digits.parse::<u32>().map(HalfPoint).map_err(|_| out_of_range());
+    }
+
+    // Rational multipliers in half-points per unit. pc and pi both mean
+    // picas (12 points); 1 inch = 2.54 cm = 25.4 mm = 72 points.
+    let (number, multiplier, unit_divisor) = [
+        ("pt", 2u128, 1u128),
+        ("in", 144, 1),
+        ("cm", 7200, 127),
+        ("mm", 720, 127),
+        ("pc", 24, 1),
+        ("pi", 24, 1),
+    ].into_iter().find_map(|(unit, multiplier, divisor)| {
+        value.strip_suffix(unit).map(|number| (number, multiplier, divisor))
+    }).ok_or_else(invalid)?;
+    let (whole, fraction) = match number.split_once('.') {
+        Some((whole, fraction)) if !fraction.is_empty() => (whole, fraction),
+        Some(_) => return Err(invalid()),
+        None => (number, ""),
+    };
+    if whole.is_empty() || !whole.bytes().all(|b| b.is_ascii_digit())
+        || !fraction.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    // Trailing zeroes do not consume precision, even if a producer writes
+    // a long decimal representation of an exact half-point measurement.
+    let fraction = fraction.trim_end_matches('0');
+    let scale = u32::try_from(fraction.len()).ok()
+        .and_then(|length| 10u128.checked_pow(length)).ok_or_else(out_of_range)?;
+    let whole = whole.parse::<u128>().map_err(|_| out_of_range())?;
+    let fraction = if fraction.is_empty() { 0 } else {
+        fraction.parse::<u128>().map_err(|_| out_of_range())?
+    };
+    let numerator = whole.checked_mul(scale)
+        .and_then(|n| n.checked_add(fraction))
+        .and_then(|n| n.checked_mul(multiplier)).ok_or_else(out_of_range)?;
+    let denominator = scale.checked_mul(unit_divisor).ok_or_else(out_of_range)?;
+    if numerator % denominator != 0 {
+        return Err(Error::Unsupported(
+            "DOCX measurement is not exactly representable in integer half-points".into()
+        ));
+    }
+    u32::try_from(numerator / denominator).map(HalfPoint).map_err(|_| out_of_range())
+}
+
+fn parse_color_ref(e: &BytesStart) -> crate::core::Result<Option<ColorRef>> {
+    use crate::core::theme::{RgbColor, ThemeColorSlot};
+
+    let val = xml::optional_attr_str(e, "w:val")?;
+    let theme_color = xml::optional_attr_str(e, "w:themeColor")?;
+
+    // The literal `w:val` doubles as the fallback for consumers that
+    // cannot resolve the theme, so parse it before branching on
+    // `w:themeColor` and carry it into the theme reference.
+    let literal = match val.as_deref() {
+        None | Some("auto") => None,
+        Some(value) => Some(RgbColor::from_hex(value)?),
+    };
+    let tint = parse_theme_color_fraction(e, "w:themeTint")?;
+    let shade = parse_theme_color_fraction(e, "w:themeShade")?;
+
+    if let Some(tc) = theme_color.as_deref().filter(|tc| *tc != "none") {
+        let slot = ThemeColorSlot::from_word_val(tc).ok_or_else(|| {
+            crate::core::Error::MalformedXml("invalid DOCX w:themeColor".into())
+        })?;
+        return Ok(Some(ColorRef::Theme { slot, tint, shade, fallback: literal }));
+    }
+
+    if val.as_deref() == Some("auto") {
+        return Ok(Some(ColorRef::Auto));
+    }
+    Ok(literal.map(ColorRef::Rgb))
+}
+
+fn parse_theme_color_fraction(e: &BytesStart, attr: &str) -> crate::core::Result<Option<f64>> {
+    let Some(value) = xml::optional_attr_str(e, attr)? else { return Ok(None) };
+    // CT_Color's ST_UcharHexNumber accepts one or two ASCII hex digits.
+    // Do not silently discard malformed transforms or accept signs/Unicode.
+    if !(1..=2).contains(&value.len()) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(crate::core::Error::MalformedXml(format!("invalid DOCX {attr}")));
+    }
+    Ok(Some(f64::from(u8::from_str_radix(&value, 16)?) / 255.0))
+}
+
+pub(crate) fn parse_indent(e: &BytesStart) -> crate::core::Result<ParagraphIndent> {
+    let mut indent = ParagraphIndent::default();
+    if let Some(val) = xml::optional_attr_str(e, "w:left")? {
+        indent.left = Some(Twip(parse_numeric(&val)?));
+    }
+    if indent.left.is_none() {
+        if let Some(val) = xml::optional_attr_str(e, "w:start")? {
+            indent.left = Some(Twip(parse_numeric(&val)?));
+        }
+    }
+    if let Some(val) = xml::optional_attr_str(e, "w:right")? {
+        indent.right = Some(Twip(parse_numeric(&val)?));
+    }
+    if indent.right.is_none() {
+        if let Some(val) = xml::optional_attr_str(e, "w:end")? {
+            indent.right = Some(Twip(parse_numeric(&val)?));
+        }
+    }
+    if let Some(val) = xml::optional_attr_str(e, "w:firstLine")? {
+        indent.first_line = Some(Twip(parse_numeric(&val)?));
+    }
+    if let Some(val) = xml::optional_attr_str(e, "w:hanging")? {
+        indent.hanging = Some(Twip(parse_numeric(&val)?));
+    }
+    Ok(indent)
+}
+
+/// Parse `<w:framePr>` attributes (`w:x`, `w:y`, `w:w`, `w:h`).
+/// Returns `None` if the element doesn't carry usable absolute coords —
+/// e.g. when only `wrap`/`anchor` modifiers are set without explicit
+/// position/size, which we can't reproduce as positional.
+fn parse_frame_pr(e: &BytesStart) -> Option<FrameProps> {
+    let read_int = |attr: &str| -> Option<i32> {
+        xml::optional_attr_str(e, attr)
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<i32>().ok())
+    };
+    let x = read_int("w:x");
+    let y = read_int("w:y");
+    let w = read_int("w:w");
+    let h = read_int("w:h");
+    match (x, y, w, h) {
+        (Some(x), Some(y), Some(w), Some(h)) => Some(FrameProps {
+            x_twips: x,
+            y_twips: y,
+            width_twips: w,
+            height_twips: h,
+        }),
+        _ => None,
+    }
+}
+
+fn parse_spacing(e: &BytesStart) -> crate::core::Result<ParagraphSpacing> {
+    let mut spacing = ParagraphSpacing::default();
+    if let Some(val) = xml::optional_attr_str(e, "w:before")? {
+        spacing.before = Some(Twip(parse_numeric(&val)?));
+    }
+    if let Some(val) = xml::optional_attr_str(e, "w:after")? {
+        spacing.after = Some(Twip(parse_numeric(&val)?));
+    }
+    if let Some(val) = xml::optional_attr_str(e, "w:line")? {
+        let line_val: i32 = parse_numeric(&val)?;
+        let rule = xml::optional_attr_str(e, "w:lineRule")?.map(|r| match r.as_ref() {
+            "auto" => LineSpacingRule::Auto,
+            "exact" => LineSpacingRule::Exact,
+            "atLeast" => LineSpacingRule::AtLeast,
+            _ => LineSpacingRule::Auto,
+        });
+        spacing.line = Some(SpacingLine {
+            value: line_val,
+            rule,
+        });
+    }
+    Ok(spacing)
+}
+
+#[cfg(test)]
+fn parse_num_pr(reader: &mut quick_xml::NsReader<&[u8]>) -> crate::core::Result<NumberingRef> {
+    let wml = xml::ns::WML;
+    let mut num_id: u32 = 0;
+    let mut ilvl: u8 = 0;
+
+    loop {
+        match reader.read_resolved_event()? {
+            (ref resolve, Event::Start(ref e)) | (ref resolve, Event::Empty(ref e))
+                if xml::matches_ns(resolve, wml) =>
+            {
+                let local = e.local_name();
+                match local.as_ref() {
+                    "numId" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            num_id = val.parse().unwrap_or(0);
+                        }
+                    },
+                    "ilvl" => {
+                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+                            ilvl = val.parse().unwrap_or(0);
+                        }
+                    },
+                    _ => {},
+                }
+            },
+            (ref resolve, Event::End(ref e))
+                if xml::matches_ns(resolve, wml) && e.local_name().as_ref() == "numPr" =>
+            {
+                break;
+            },
+            (_, Event::Eof) => break,
+            _ => {},
+        }
+    }
+    Ok(NumberingRef { num_id, ilvl })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn word_color_parser_accepts_word_slots_and_validates_transforms() {
+        use crate::core::theme::{RgbColor, ThemeColorSlot};
+        for (name, expected) in [
+            ("dark1", ThemeColorSlot::Dk1), ("text1", ThemeColorSlot::Dk1),
+            ("light1", ThemeColorSlot::Lt1), ("background1", ThemeColorSlot::Lt1),
+            ("dark2", ThemeColorSlot::Dk2), ("text2", ThemeColorSlot::Dk2),
+            ("light2", ThemeColorSlot::Lt2), ("background2", ThemeColorSlot::Lt2),
+            ("accent1", ThemeColorSlot::Accent1), ("accent2", ThemeColorSlot::Accent2),
+            ("accent3", ThemeColorSlot::Accent3), ("accent4", ThemeColorSlot::Accent4),
+            ("accent5", ThemeColorSlot::Accent5), ("accent6", ThemeColorSlot::Accent6),
+            ("hyperlink", ThemeColorSlot::Hlink), ("followedHyperlink", ThemeColorSlot::FolHlink),
+        ] {
+            let mut element = BytesStart::new("w:color");
+            element.push_attribute(("w:val", "aBcD09"));
+            element.push_attribute(("w:themeColor", name));
+            element.push_attribute(("w:themeTint", "f"));
+            element.push_attribute(("w:themeShade", "FF"));
+            let Some(ColorRef::Theme { slot, tint, shade, fallback }) = parse_color_ref(&element).unwrap() else {
+                panic!("expected Word theme color: {name}");
+            };
+            assert_eq!(slot, expected);
+            assert_eq!(tint, Some(15.0 / 255.0));
+            assert_eq!(shade, Some(1.0));
+            assert_eq!(fallback, Some(RgbColor([0xAB, 0xCD, 0x09])));
+        }
+        let mut element = BytesStart::new("w:color");
+        element.push_attribute(("w:themeColor", "none"));
+        element.push_attribute(("w:val", "auto"));
+        assert!(matches!(parse_color_ref(&element).unwrap(), Some(ColorRef::Auto)));
+    }
+
+    #[test]
+    fn word_color_is_strict_in_both_run_readers_and_element_forms() {
+        for empty_element in [false, true] {
+            for (attrs, valid) in [
+                (r#"w:val="aBcD09""#, true),
+                (r#"w:val="auto""#, true),
+                (r#"w:val="123456" w:themeColor="none" w:themeTint="99""#, true),
+                (r#"w:val="auto" w:themeColor="text1" w:themeShade="0""#, true),
+                (r#"w:themeColor="accent1" w:themeTint="99""#, true),
+                (r#"w:val="中ABC""#, false),
+                (r#"w:val="GG0000""#, false),
+                (r#"w:val="12345""#, false),
+                (r#"w:val="AUTO""#, false),
+                (r#"w:val="112233" w:themeColor="dk1""#, false),
+                (r#"w:val="112233" w:themeColor="hlink""#, false),
+                (r#"w:val="112233" w:themeColor="unknown""#, false),
+                (r#"w:val="112233" w:themeTint="+F""#, false),
+                (r#"w:val="112233" w:themeTint="000""#, false),
+                (r#"w:val="112233" w:themeTint="""#, false),
+                (r#"w:val="112233" w:themeShade="GG""#, false),
+                (r#"w:val="112233" w:themeShade="é""#, false),
+            ] {
+                let child = if empty_element { format!("<w:color {attrs}/>") } else {
+                    format!("<w:color {attrs}></w:color>")
+                };
+                let document = format!(r#"<w:rPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{child}</w:rPr>"#);
+                let mut fast = xml::make_fast_reader(document.as_bytes());
+                assert!(matches!(fast.read_event().unwrap(), Event::Start(_)));
+                let mut resolved = xml::make_reader(document.as_bytes());
+                assert!(matches!(resolved.read_resolved_event().unwrap(), (_, Event::Start(_))));
+                for result in [parse_run_properties_fast(&mut fast), parse_run_properties(&mut resolved)] {
+                    assert_eq!(result.is_ok(), valid, "{child}");
+                    if valid { assert!(result.unwrap().color.is_some(), "{child}"); }
+                }
+            }
+        }
+    }
+
+    /// Regression: `ParagraphProperties`'s rarely-populated
+    /// sub-structs must stay boxed, not silently regress back to
+    /// `Option<T>` (which reserves `size_of(T)` even when `None`).
+    /// `Paragraph` (paragraph.rs) was 896 bytes before this fix, dominated
+    /// by an unboxed `ParagraphProperties` at 872 bytes; both are checked
+    /// here with headroom above the measured post-fix sizes (176B /
+    /// 200B) so an unrelated new field doesn't make this test flaky, but
+    /// a *large struct un-boxed back into `Option<T>`* — the actual
+    /// regression this guards against — still trips it.
+    #[test]
+    fn test_paragraph_properties_size_stays_boxed() {
+        assert!(
+            std::mem::size_of::<ParagraphProperties>() <= 250,
+            "ParagraphProperties grew to {} bytes — check borders/run_properties/\
+             section_properties/shading are still Option<Box<T>>, not Option<T>",
+            std::mem::size_of::<ParagraphProperties>()
+        );
+        assert!(
+            std::mem::size_of::<super::super::paragraph::Paragraph>() <= 300,
+            "Paragraph grew to {} bytes — a ParagraphProperties field regression \
+             would show up here too",
+            std::mem::size_of::<super::super::paragraph::Paragraph>()
+        );
+    }
+
+    #[test]
+    fn test_parse_toggle_bare() {
+        let xml =
+            br#"<w:b xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+        let mut reader = xml::make_reader(xml);
+        loop {
+            match reader.read_resolved_event().unwrap() {
+                (_, Event::Empty(ref e)) => {
+                    assert!(parse_toggle(e));
+                    break;
+                },
+                (_, Event::Eof) => panic!("unexpected eof"),
+                _ => {},
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_toggle_false() {
+        let xml = br#"<w:b w:val="0" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+        let mut reader = xml::make_reader(xml);
+        loop {
+            match reader.read_resolved_event().unwrap() {
+                (_, Event::Empty(ref e)) => {
+                    assert!(!parse_toggle(e));
+                    break;
+                },
+                (_, Event::Eof) => panic!("unexpected eof"),
+                _ => {},
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_run_props_bold_italic() {
+        let xml =
+            br#"<w:rPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:b/>
+            <w:i/>
+            <w:sz w:val="24"/>
+        </w:rPr>"#;
+        let mut reader = xml::make_reader(xml);
+        // advance past <w:rPr>
+        loop {
+            if let (_, Event::Start(_)) = reader.read_resolved_event().unwrap() {
+                break;
+            }
+        }
+        let rp = parse_run_properties(&mut reader).unwrap();
+        assert_eq!(rp.bold, Some(true));
+        assert_eq!(rp.italic, Some(true));
+        assert_eq!(rp.font_size, Some(HalfPoint(24)));
+    }
+
+    #[test]
+    fn half_point_measure_preserves_integers_and_converts_units_exactly() {
+        for (value, expected) in [
+            ("27", 27), ("+27", 27), (" 0027\t", 27), ("0", 0),
+            ("13.5pt", 27), ("13.500000000000000000000000pt", 27),
+            ("0.1875in", 27), ("0.47625cm", 27), ("4.7625mm", 27),
+            ("1.125pc", 27), ("1.125pi", 27), ("1in", 144),
+            ("2.54cm", 144), ("25.4mm", 144), ("0pt", 0),
+            ("4294967295", u32::MAX), ("2147483647.5pt", u32::MAX),
+        ] {
+            assert_eq!(parse_half_point_measure(value).unwrap(), HalfPoint(expected), "{value}");
+        }
+    }
+
+    #[test]
+    fn half_point_measure_rejects_invalid_or_unrepresentable_values_without_rounding() {
+        for value in [
+            "", "27.5", "27.0", "13.25pt", "13.5000000000000001pt", "12.95pt", "1mm", "1cm",
+            "12px", "12%", "12PT", "12ptpt", "12garbage", "1e2pt",
+            "NaNpt", "infpt", "-12pt", "+12pt", ".5pt", "12.pt",
+            "12.5.0pt", "12 pt", "１２pt", "-27", "4294967296",
+            "2147483648pt", "9999999999999999999999999999999999999999pt",
+            "0.0000000000000000000000000000000000000001pt",
+        ] {
+            assert!(parse_half_point_measure(value).is_err(), "must not round or strip arbitrary suffixes: {value}");
+        }
+    }
+
+    #[test]
+    fn half_point_measure_is_strict_in_both_run_readers_and_complex_script_sizes() {
+        for empty_element in [false, true] {
+            for (value, expected) in [("13.5pt", Some(27)), ("27", Some(27)),
+                ("27.5", None), ("13.25pt", None), ("13px", None)] {
+                for tag in ["sz", "szCs"] {
+                    let child = if empty_element {
+                        format!(r#"<w:{tag} w:val="{value}"/>"#)
+                    } else {
+                        format!(r#"<w:{tag} w:val="{value}"></w:{tag}>"#)
+                    };
+                    let document = format!(r#"<w:rPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{child}</w:rPr>"#);
+                    let mut fast = xml::make_fast_reader(document.as_bytes());
+                    assert!(matches!(fast.read_event().unwrap(), Event::Start(_)));
+                    let mut resolved = xml::make_reader(document.as_bytes());
+                    assert!(matches!(resolved.read_resolved_event().unwrap(), (_, Event::Start(_))));
+                    for result in [parse_run_properties_fast(&mut fast), parse_run_properties(&mut resolved)] {
+                        if let Some(expected) = expected {
+                            let properties = result.unwrap();
+                            let actual = if tag == "sz" { properties.font_size } else {
+                                properties.script.as_ref().and_then(|script| script.font_size_cs)
+                            };
+                            assert_eq!(actual, Some(HalfPoint(expected)), "{tag} {value}");
+                        } else {
+                            assert!(result.is_err(), "{tag} {value} must be rejected by both readers");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_paragraph_props_style_justification() {
+        let xml =
+            br#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            <w:pStyle w:val="Heading1"/>
+            <w:jc w:val="center"/>
+            <w:outlineLvl w:val="0"/>
+        </w:pPr>"#;
+        let mut reader = xml::make_reader(xml);
+        loop {
+            if let (_, Event::Start(_)) = reader.read_resolved_event().unwrap() {
+                break;
+            }
+        }
+        let pp = parse_paragraph_properties(&mut reader).unwrap();
+        assert_eq!(pp.style_id.as_deref(), Some("Heading1"));
+        assert_eq!(pp.justification, Some(Justification::Center));
+        assert_eq!(pp.outline_level, Some(0));
+    }
+
+    #[test]
+    fn test_parse_indent_values() {
+        let xml = br#"<w:ind w:left="720" w:hanging="360" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+        let mut reader = xml::make_reader(xml);
+        loop {
+            match reader.read_resolved_event().unwrap() {
+                (_, Event::Empty(ref e)) => {
+                    let indent = parse_indent(e).unwrap();
+                    assert_eq!(indent.left, Some(Twip(720)));
+                    assert_eq!(indent.hanging, Some(Twip(360)));
+                    assert!(indent.right.is_none());
+                    assert!(indent.first_line.is_none());
+                    break;
+                },
+                (_, Event::Eof) => panic!("unexpected eof"),
+                _ => {},
+            }
+        }
+    }
+
+    // Advance a fast reader past the opening <w:pPr> wrapper so the
+    // caller can drive parse_paragraph_properties_fast directly.
+    fn open_ppr_fast(xml: &[u8]) -> quick_xml::Reader<&[u8]> {
+        let mut reader = xml::make_fast_reader(xml);
+        loop {
+            match reader.read_event().unwrap() {
+                Event::Start(ref e) if e.local_name().as_ref() == "pPr" => return reader,
+                Event::Eof => panic!("no <w:pPr> in test xml"),
+                _ => {},
+            }
+        }
+    }
+
+    // ── framePr ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_frame_pr_empty_element() {
+        let xml =
+            br#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:framePr w:x="720" w:y="1080" w:w="3000" w:h="500"/>
+        </w:pPr>"#;
+        let mut reader = open_ppr_fast(xml);
+        let pp = parse_paragraph_properties_fast(&mut reader).unwrap();
+        let fp = pp.frame_position.expect("framePr parsed");
+        assert_eq!(fp.x_twips, 720);
+        assert_eq!(fp.y_twips, 1080);
+        assert_eq!(fp.width_twips, 3000);
+        assert_eq!(fp.height_twips, 500);
+    }
+
+    #[test]
+    fn test_parse_frame_pr_missing_attrs_returns_none() {
+        // Missing w:h → frame_position must be None.
+        let xml =
+            br#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:framePr w:x="100" w:y="200" w:w="300"/>
+        </w:pPr>"#;
+        let mut reader = open_ppr_fast(xml);
+        let pp = parse_paragraph_properties_fast(&mut reader).unwrap();
+        assert!(pp.frame_position.is_none());
+    }
+
+    #[test]
+    fn test_parse_frame_pr_inside_start_form() {
+        // Start/End form (rather than Empty) — should still parse.
+        let xml =
+            br#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:framePr w:x="10" w:y="20" w:w="30" w:h="40"></w:framePr>
+        </w:pPr>"#;
+        let mut reader = open_ppr_fast(xml);
+        let pp = parse_paragraph_properties_fast(&mut reader).unwrap();
+        let fp = pp.frame_position.expect("framePr parsed");
+        assert_eq!(fp.x_twips, 10);
+        assert_eq!(fp.width_twips, 30);
+    }
+
+    // ── pBdr / has_bottom_border ────────────────────────────────────────
+
+    #[test]
+    fn test_parse_p_bdr_with_bottom() {
+        let xml =
+            br#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:pBdr>
+            <w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/>
+          </w:pBdr>
+        </w:pPr>"#;
+        let mut reader = open_ppr_fast(xml);
+        let pp = parse_paragraph_properties_fast(&mut reader).unwrap();
+        assert!(pp.has_bottom_border);
+    }
+
+    #[test]
+    fn test_parse_p_bdr_without_bottom() {
+        let xml =
+            br#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:pBdr>
+            <w:top w:val="single" w:sz="6"/>
+            <w:left w:val="single" w:sz="6"/>
+          </w:pBdr>
+        </w:pPr>"#;
+        let mut reader = open_ppr_fast(xml);
+        let pp = parse_paragraph_properties_fast(&mut reader).unwrap();
+        assert!(!pp.has_bottom_border);
+    }
+
+    #[test]
+    fn test_paragraph_properties_default_has_no_frame_or_border() {
+        let xml =
+            br#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:pStyle w:val="Normal"/>
+        </w:pPr>"#;
+        let mut reader = open_ppr_fast(xml);
+        let pp = parse_paragraph_properties_fast(&mut reader).unwrap();
+        assert!(pp.frame_position.is_none());
+        assert!(!pp.has_bottom_border);
+    }
+}

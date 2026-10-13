@@ -1,0 +1,1659 @@
+--- a/src/convert_docx.rs
++++ b/src/convert_docx.rs
+@@ -15,10 +15,13 @@
+ /// own style-id strings.
+ #[derive(Default)]
+ struct StyleFolds<'d> {
+-    runs: RefCell<HashMap<(u32, Option<&'d str>, Option<&'d str>), Rc<RunProperties>>>,
+-    paragraphs: RefCell<HashMap<(u32, Option<&'d str>), Rc<ParagraphProperties>>>,
++    // The boolean distinguishes an omitted pStyle (use the default) from
++    // an explicit unknown pStyle (no paragraph style). Both intern to None.
++    runs: RefCell<HashMap<(u32, bool, Option<&'d str>, Option<&'d str>), Rc<RunProperties>>>,
++    paragraphs: RefCell<HashMap<(u32, bool, Option<&'d str>), Rc<ParagraphProperties>>>,
+     /// Ids for table-style layers; 0 means "not in a styled cell".
+     next_layer: Cell<u32>,
++    unresolved_font_theme: Cell<bool>,
+ }
+ 
+ /// Everything the `docx_to_ir` helpers share: the document (which it
+@@ -74,7 +77,8 @@
+ 
+     /// Intern a style id as the stylesheet's own key, so it can key the
+     /// memo for the whole conversion. An id the stylesheet does not define
+-    /// contributes nothing to a fold, exactly like no id.
++    /// contributes nothing to a fold. The memo keys separately record
++    /// whether pStyle was supplied, because omission selects the default.
+     fn style_key(&self, id: Option<&str>) -> Option<&'d str> {
+         let sheet = self.doc.styles.as_ref()?;
+         sheet.styles.get_key_value(id?).map(|(k, _)| k.as_str())
+@@ -97,12 +101,12 @@
+         };
+         let pkey = self.style_key(paragraph_style_id);
+         let ckey = self.style_key(direct.and_then(|d| d.style_id.as_deref()));
+-        let key = (layer_id, pkey, ckey);
++        let key = (layer_id, paragraph_style_id.is_some(), pkey, ckey);
+         let cached = self.folds.runs.borrow().get(&key).cloned();
+         let base = match cached {
+             Some(b) => b,
+             None => {
+-                let b = Rc::new(sheet.run_style_base(layer, pkey, ckey));
++                let b = Rc::new(sheet.run_style_base(layer, paragraph_style_id, ckey));
+                 self.folds.runs.borrow_mut().insert(key, Rc::clone(&b));
+                 b
+             },
+@@ -131,13 +135,14 @@
+             Some((id, l)) => (id, Some(&l.paragraph)),
+             None => (0, None),
+         };
+-        let pkey = self.style_key(direct.and_then(|d| d.style_id.as_deref()));
+-        let key = (layer_id, pkey);
++        let paragraph_style_id = direct.and_then(|d| d.style_id.as_deref());
++        let pkey = self.style_key(paragraph_style_id);
++        let key = (layer_id, paragraph_style_id.is_some(), pkey);
+         let cached = self.folds.paragraphs.borrow().get(&key).cloned();
+         let base = match cached {
+             Some(b) => b,
+             None => {
+-                let b = Rc::new(sheet.paragraph_style_base(layer, pkey));
++                let b = Rc::new(sheet.paragraph_style_base(layer, paragraph_style_id));
+                 self.folds
+                     .paragraphs
+                     .borrow_mut()
+@@ -407,6 +412,7 @@
+                 .chain(crate::core::core_properties::package_warnings(Some(
+                     &doc.package_properties,
+                 )))
++                .chain(folds.unresolved_font_theme.get().then(|| "DOCX_FONT_THEME_UNRESOLVED".to_string()))
+                 .collect(),
+             ..crate::core::core_properties::ooxml_metadata_extras(
+                 cp,
+@@ -1295,6 +1301,7 @@
+     theme: Option<&'a crate::core::theme::Theme>,
+     cx: &'a Cx<'a, 'd>,
+     paragraph_style_id: Option<&'a str>,
++    normalize_heading_style: bool,
+ }
+ 
+ /// Resolve a hyperlink's target into a URL string. Internal `w:anchor`
+@@ -1316,6 +1323,7 @@
+         theme: doc.theme.as_ref(),
+         cx: doc,
+         paragraph_style_id: p.properties.as_ref().and_then(|pp| pp.style_id.as_deref()),
++        normalize_heading_style: false,
+     }
+ }
+ 
+@@ -1323,15 +1331,14 @@
+     convert_inline_with(p, run_context(p, doc))
+ }
+ 
+-/// A heading's spans, without the formatting its own paragraph style
+-/// supplies. `Heading 1`'s `<w:b/>`/`<w:sz>` *are* the heading — folding
+-/// them into every span rendered `<h1><strong>…</strong></h1>` and
+-/// `# **…**` on every styled heading, which is not what Word shows and
+-/// not what pandoc or python-docx report. Direct formatting and character
+-/// styles still apply.
++/// A heading's spans keep the existing normalization of its paragraph
++/// style's emphasis, avoiding redundant `<h1><strong>` / `# **…**`.
++/// Sizes and colors still need the actual style chain: default body
++/// typography on a heading span otherwise replaces its own typography.
++/// Character styles and direct formatting keep their usual precedence.
+ fn convert_heading_inline(p: &crate::docx::Paragraph, doc: &Cx<'_, '_>) -> Vec<InlineContent> {
+     let ctx = RunContext {
+-        paragraph_style_id: None,
++        normalize_heading_style: true,
+         ..run_context(p, doc)
+     };
+     convert_inline_with(p, ctx)
+@@ -1387,7 +1394,12 @@
+     // none of it.
+     let resolved = ctx
+         .cx
+-        .run_properties(ctx.paragraph_style_id, run_properties);
++        .run_properties(if ctx.normalize_heading_style { None } else { ctx.paragraph_style_id }, run_properties);
++    let heading_typography = if ctx.normalize_heading_style {
++        ctx.cx.run_properties(ctx.paragraph_style_id, run_properties)
++    } else {
++        None
++    };
+     let effective: Option<&crate::docx::RunProperties> = resolved.as_deref();
+     // `<w:vanish/>` — Word never renders this run at all. Excluding it
+     // here (rather than carrying a `hidden` flag into the IR for every
+@@ -1398,13 +1410,10 @@
+     if effective.and_then(|rp| rp.hidden).unwrap_or(false) {
+         return;
+     }
+-    let no_properties;
++    let no_properties = crate::docx::RunProperties::default();
+     let eff: &crate::docx::RunProperties = match effective {
+         Some(rp) => rp,
+-        None => {
+-            no_properties = crate::docx::RunProperties::default();
+-            &no_properties
+-        },
++        None => &no_properties,
+     };
+     // `w:rFonts` names a face per script and complex-script text has its
+     // own size and weight (`w:szCs`, `w:bCs`, `w:iCs`); see
+@@ -1419,15 +1428,14 @@
+         })));
+     let bold = run_face.bold;
+     let italic = run_face.italic;
+-    // A theme reference (`w:asciiTheme`, the default in every Office
+-    // template) supersedes the literal face (ECMA-376 Part 1 §17.3.2.26)
+-    // and names a font in the theme's font scheme; without a theme to
+-    // resolve it, the literal face is the only name there is.
+-    let themed_ascii = eff
+-        .font_theme
+-        .zip(theme)
+-        .and_then(|(t, th)| t.resolve(&th.font_scheme));
+-    let ascii = themed_ascii.as_deref().or(eff.font_name.as_deref());
++    // Preserve a heading's real font and size while retaining the old
++    // heading emphasis normalization used by semantic renderers.
++    let typography = if ctx.normalize_heading_style {
++        heading_typography.as_deref().unwrap_or(&no_properties)
++    } else {
++        eff
++    };
++    let fonts = typography.resolved_fonts(theme, &ctx.cx.theme_font_languages);
+     let strike = eff.strike.or(eff.dstrike).unwrap_or(false);
+     // Propagate `<w:color w:val="RRGGBB"/>` so PDF→DOCX→PDF round-trips
+     // preserve coloured text. Resolve it through the document theme:
+@@ -1435,10 +1443,14 @@
+     // run — and the `w:val` fallback OOXML writes next to `w:themeColor`
+     // was discarded at parse time, so even a document with no theme part
+     // came out colourless.
+-    let text_color = eff
+-        .color
+-        .as_ref()
+-        .and_then(|c| c.resolve_opt(theme))
++    let color_properties = if ctx.normalize_heading_style {
++        heading_typography.as_deref()
++    } else {
++        Some(eff)
++    };
++    let text_color = color_properties
++        .and_then(|properties| properties.color.as_ref())
++        .and_then(|c| c.resolve_word_opt(theme))
+         .map(|rgb| rgb.0);
+     // Remaining `w:rPr` toggles. Half of `TextSpan`'s fields used to be
+     // permanently empty for DOCX because these were parsed and then never
+@@ -1480,7 +1492,14 @@
+     // half-points, the IR's own encoding (see
+     // `crate::core::units::HalfPoint::from_word_sz`).
+     let push_text = |text: &str, content: &mut Vec<InlineContent>| {
+-        eff.for_each_script_segment(text, ascii, |piece, face| {
++        let mut characters = text.chars().filter(|c| !c.is_whitespace()).peekable();
++        let unresolved = if characters.peek().is_none() {
++            !text.is_empty() && fonts.unresolved(typography.script_class_of(' '))
++        } else {
++            characters.any(|c| fonts.unresolved(typography.script_class_of(c)))
++        };
++        if unresolved { ctx.cx.folds.unresolved_font_theme.set(true); }
++        typography.for_each_script_segment(text, &fonts, |piece, face| {
+             content.push(InlineContent::Text(TextSpan {
+                 text: piece.to_string(),
+                 bold,
+@@ -1515,7 +1534,7 @@
+                 // Page/column breaks handled at paragraph level
+             },
+             crate::docx::RunContent::Tab => {
+-                content.push(InlineContent::Text(TextSpan::plain("\t")));
++                push_text("\t", content);
+             },
+             // Text boxes are hoisted to paragraph-sibling `Element::TextBox`
+             // nodes by `collect_paragraph_text_boxes`; the inline-content
+@@ -2136,3 +2155,184 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod heading_typography_tests {
++    use super::*;
++    use crate::core::opc::{OpcWriter, PartName};
++    use crate::core::relationships::rel_types;
++    use std::io::Cursor;
++
++    fn document_ir(body: &str, styles: &str) -> DocumentIR {
++        document_ir_with_theme(body, styles, None)
++    }
++
++    fn document_ir_with_theme(body: &str, styles: &str, theme: Option<&str>) -> DocumentIR {
++        document_ir_with_settings(body, styles, theme, None)
++    }
++
++    fn document_ir_with_settings(body: &str, styles: &str, theme: Option<&str>, settings: Option<&str>) -> DocumentIR {
++        let mut writer = OpcWriter::new(Cursor::new(Vec::new())).unwrap();
++        let document = PartName::new("/word/document.xml").unwrap();
++        let main = format!(r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#);
++        writer.add_part(&document,
++            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
++            main.as_bytes()).unwrap();
++        writer.add_package_rel(rel_types::OFFICE_DOCUMENT, "word/document.xml");
++        writer.add_part(&PartName::new("/word/styles.xml").unwrap(),
++            "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
++            styles.as_bytes()).unwrap();
++        writer.add_part_rel(&document, rel_types::STYLES, "styles.xml");
++        if let Some(theme) = theme {
++            writer.add_part(&PartName::new("/word/theme/theme1.xml").unwrap(),
++                "application/vnd.openxmlformats-officedocument.theme+xml", theme.as_bytes()).unwrap();
++            writer.add_part_rel(&document, rel_types::THEME, "theme/theme1.xml");
++        }
++        if let Some(settings) = settings {
++            writer.add_part(&PartName::new("/word/settings.xml").unwrap(),
++                "application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml", settings.as_bytes()).unwrap();
++            writer.add_part_rel(&document, rel_types::SETTINGS, "settings.xml");
++        }
++        let parsed = DocxDocument::from_reader(Cursor::new(writer.finish().unwrap().into_inner())).unwrap();
++        docx_to_ir(&parsed)
++    }
++
++    fn text_spans(element: &Element) -> Vec<&TextSpan> {
++        let inline = match element {
++            Element::Heading(heading) => &heading.content,
++            Element::Paragraph(paragraph) => &paragraph.content,
++            _ => panic!("expected text block"),
++        };
++        inline.iter().map(|item| match item {
++            InlineContent::Text(span) => span,
++            _ => panic!("expected text span"),
++        }).collect()
++    }
++
++    #[test]
++    fn heading_colors_keep_style_character_and_direct_precedence() {
++        let ir = document_ir(r#"
++          <w:p><w:r><w:t>body</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Chapter"/></w:pPr><w:r><w:t>heading</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Chapter"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Accent"/></w:rPr><w:t>character style</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Chapter"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Accent"/><w:color w:val="ABCDEF"/></w:rPr><w:t>direct color</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Chapter"/></w:pPr><w:r><w:rPr><w:color w:val="auto"/></w:rPr><w:t>automatic</w:t></w:r></w:p>
++          <w:p><w:r><w:t>body after headings</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Unknown"/><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>unknown style</w:t></w:r></w:p>
++        "#, r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
++          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="BodyFont"/></w:rPr></w:rPrDefault></w:docDefaults>
++          <w:style w:type="paragraph" w:default="1" w:styleId="Body"><w:rPr><w:color w:val="112233"/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:styleId="ChapterBase"><w:rPr><w:color w:val="445566"/><w:b/><w:rFonts w:ascii="HeadingFont"/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:styleId="Chapter"><w:basedOn w:val="ChapterBase"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style>
++          <w:style w:type="character" w:styleId="Accent"><w:rPr><w:color w:val="778899"/><w:i/></w:rPr></w:style>
++        </w:styles>"#);
++        let expected = [Some([0x11, 0x22, 0x33]), Some([0x44, 0x55, 0x66]),
++            Some([0x77, 0x88, 0x99]), Some([0xAB, 0xCD, 0xEF]), None,
++            Some([0x11, 0x22, 0x33]), None];
++        let elements = &ir.sections[0].elements;
++        assert_eq!(elements.len(), expected.len());
++        for (index, expected) in expected.into_iter().enumerate() {
++            let spans = text_spans(&elements[index]);
++            assert_eq!(spans.len(), 1);
++            assert_eq!(spans[0].color, expected, "block {index}");
++            assert_eq!(spans[0].font_name.as_deref(), Some(if (1..=4).contains(&index) { "HeadingFont" } else { "BodyFont" }));
++            assert!(!spans[0].bold, "heading emphasis normalization remains unchanged");
++            assert_eq!(spans[0].italic, index == 2 || index == 3);
++        }
++        let unstyled_heading = document_ir(
++            r#"<w:p><w:pPr><w:pStyle w:val="Unknown"/><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>no properties</w:t></w:r></w:p>"#,
++            r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Body"><w:rPr><w:color w:val="112233"/></w:rPr></w:style></w:styles>"#,
++        );
++        assert_eq!(text_spans(&unstyled_heading.sections[0].elements[0])[0].color, None,
++            "absent heading properties must not inherit the normalized default paragraph color");
++    }
++
++    #[test]
++    fn docx_theme_colors_use_word_transforms_and_final_rgb_fallback() {
++        let body = r#"
++          <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>theme heading</w:t></w:r></w:p>
++          <w:p><w:r><w:rPr><w:color w:val="112233" w:themeColor="accent2" w:themeShade="80"/></w:rPr><w:t>theme shade</w:t></w:r></w:p>
++          <w:p><w:r><w:rPr><w:color w:val="auto" w:themeColor="hyperlink"/></w:rPr><w:t>link color</w:t></w:r></w:p>
++          <w:p><w:r><w:rPr><w:color w:val="auto" w:themeColor="accent6"/></w:rPr><w:t>unresolved</w:t></w:r></w:p>
++        "#;
++        let styles = r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
++          <w:style w:type="paragraph" w:styleId="Heading1"><w:rPr><w:color w:val="95B3D7" w:themeColor="accent1" w:themeTint="99" w:themeShade="00"/></w:rPr></w:style>
++        </w:styles>"#;
++        let theme = r#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Test"><a:themeElements><a:clrScheme name="Test">
++          <a:accent1><a:srgbClr val="4F81BD"/></a:accent1>
++          <a:accent2><a:srgbClr val="FF8080"/></a:accent2>
++          <a:hlink><a:srgbClr val="123ABC"/></a:hlink>
++        </a:clrScheme><a:fontScheme name="Test"><a:majorFont><a:latin typeface="Heading"/></a:majorFont><a:minorFont><a:latin typeface="Body"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>"#;
++        for (theme, expected) in [
++            (Some(theme), [Some([0x95, 0xB3, 0xD7]), Some([192, 0, 0]), Some([0x12, 0x3A, 0xBC]), None]),
++            (None, [Some([0x95, 0xB3, 0xD7]), Some([0x11, 0x22, 0x33]), None, None]),
++        ] {
++            let ir = document_ir_with_theme(body, styles, theme);
++            let elements = &ir.sections[0].elements;
++            assert_eq!(elements.len(), expected.len());
++            for (index, expected) in expected.into_iter().enumerate() {
++                assert_eq!(text_spans(&elements[index])[0].color, expected, "block {index}, theme {}", theme.is_some());
++            }
++        }
++    }
++
++    #[test]
++    fn heading_sizes_keep_style_character_direct_and_script_precedence() {
++        let ir = document_ir(r#"
++          <w:p><w:r><w:t>body</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Chapter"/></w:pPr><w:r><w:t>A中文سلام</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Chapter"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Accent"/></w:rPr><w:t>B中文سلام</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Chapter"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Accent"/><w:sz w:val="45"/><w:b/></w:rPr><w:t>C中文سلام</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Chapter"/></w:pPr><w:r><w:rPr><w:rStyle w:val="Accent"/><w:szCs w:val="47"/></w:rPr><w:t>D中文سلام</w:t></w:r></w:p>
++          <w:p><w:r><w:t>body after headings</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Unknown"/><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>unknown style</w:t></w:r></w:p>
++        "#, r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
++          <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="BodyFont"/><w:sz w:val="20"/><w:szCs w:val="21"/></w:rPr></w:rPrDefault></w:docDefaults>
++          <w:style w:type="paragraph" w:default="1" w:styleId="Body"><w:rPr><w:sz w:val="22"/><w:szCs w:val="24"/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:styleId="ChapterBase"><w:rPr><w:sz w:val="30"/><w:szCs w:val="38"/><w:b/><w:i/><w:u w:val="single"/><w:rFonts w:ascii="HeadingFont"/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:styleId="Chapter"><w:basedOn w:val="ChapterBase"/><w:pPr><w:outlineLvl w:val="1"/></w:pPr></w:style>
++          <w:style w:type="character" w:styleId="Accent"><w:rPr><w:sz w:val="35"/><w:szCs w:val="43"/><w:i/></w:rPr></w:style>
++        </w:styles>"#);
++        let elements = &ir.sections[0].elements;
++        assert_eq!(elements.len(), 7);
++        for index in [0, 5] {
++            assert!(matches!(elements[index], Element::Paragraph(_)));
++            assert_eq!(text_spans(&elements[index])[0].font_size_half_pt, Some(22));
++        }
++        for (index, expected) in [(1, [30, 38]), (2, [35, 43]), (3, [45, 43]), (4, [35, 47])] {
++            let Element::Heading(heading) = &elements[index] else { panic!("expected heading") };
++            assert_eq!(heading.level, 2);
++            let spans = text_spans(&elements[index]);
++            assert_eq!(spans.len(), 2);
++            assert_eq!(spans.iter().map(|span| span.font_size_half_pt.unwrap()).collect::<Vec<_>>(), expected);
++            assert_eq!(spans[1].text, "سلام");
++            for span in spans {
++                assert_eq!(span.font_name.as_deref(), Some("HeadingFont"), "heading's effective font is retained");
++                assert_eq!(span.bold, index == 3, "paragraph-style bold stays normalized; direct bold remains");
++                assert_eq!(span.italic, index != 1, "character-style italic remains; heading-style italic does not leak");
++                assert!(span.underline.is_none());
++            }
++        }
++        assert_eq!(text_spans(&elements[6])[0].font_size_half_pt, Some(20),
++            "explicit unknown style must not alias the implicit-default cache entry");
++    }
++
++    #[test]
++    fn heading_script_forcing_selects_size_without_restoring_paragraph_emphasis() {
++        let ir = document_ir(r#"
++          <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Latin</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:rPr><w:cs w:val="0"/></w:rPr><w:t>Latin</w:t></w:r></w:p>
++          <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:rPr><w:sz w:val="35"/><w:szCs w:val="41"/></w:rPr><w:t>Latin</w:t></w:r></w:p>
++        "#, r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
++          <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>
++          <w:style w:type="paragraph" w:styleId="Heading1"><w:rPr><w:sz w:val="30"/><w:szCs w:val="40"/><w:cs/><w:bCs/></w:rPr></w:style>
++        </w:styles>"#);
++        for (index, expected) in [40, 30, 41].into_iter().enumerate() {
++            assert!(matches!(ir.sections[0].elements[index], Element::Heading(_)));
++            let spans = text_spans(&ir.sections[0].elements[index]);
++            assert_eq!(spans.len(), 1);
++            assert_eq!(spans[0].font_size_half_pt, Some(expected));
++            assert!(!spans[0].bold);
++        }
++    }
++}
+--- a/src/core/theme.rs
++++ b/src/core/theme.rs
+@@ -35,6 +35,27 @@
+ }
+ 
+ impl ThemeColorSlot {
++    /// Parse a WordprocessingML `ST_ThemeColor` using the default color mapping.
++    /// Word uses different names from DrawingML (for example `dark1` and
++    /// `hyperlink`). Custom `w:clrSchemeMapping` is not represented here.
++    pub fn from_word_val(s: &str) -> Option<Self> {
++        match s {
++            "dark1" | "text1" => Some(Self::Dk1),
++            "light1" | "background1" => Some(Self::Lt1),
++            "dark2" | "text2" => Some(Self::Dk2),
++            "light2" | "background2" => Some(Self::Lt2),
++            "accent1" => Some(Self::Accent1),
++            "accent2" => Some(Self::Accent2),
++            "accent3" => Some(Self::Accent3),
++            "accent4" => Some(Self::Accent4),
++            "accent5" => Some(Self::Accent5),
++            "accent6" => Some(Self::Accent6),
++            "hyperlink" => Some(Self::Hlink),
++            "followedHyperlink" => Some(Self::FolHlink),
++            _ => None,
++        }
++    }
++
+     /// Parse from a scheme color value string (e.g. "accent1", "dk1", "tx1").
+     pub fn from_scheme_val(s: &str) -> Option<Self> {
+         match s {
+@@ -83,9 +104,9 @@
+     /// # Errors
+     /// Returns an error if `hex` is not exactly 6 hex characters.
+     pub fn from_hex(hex: &str) -> Result<Self> {
+-        if hex.len() != 6 {
++        if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+             return Err(Error::MalformedXml(format!(
+-                "invalid hex color (expected 6 chars): {hex}"
++                "invalid hex color (expected 6 ASCII hex digits): {hex}"
+             )));
+         }
+         let r = u8::from_str_radix(&hex[0..2], 16)?;
+@@ -141,6 +162,10 @@
+     pub major_cs: Option<String>,
+     /// Complex-script typeface for minor font (empty = inherit).
+     pub minor_cs: Option<String>,
++    /// Supplemental ISO 15924 script faces in the major font collection.
++    pub major_scripts: std::collections::BTreeMap<String, String>,
++    /// Supplemental ISO 15924 script faces in the minor font collection.
++    pub minor_scripts: std::collections::BTreeMap<String, String>,
+ }
+ 
+ /// A parsed DrawingML theme (`a:theme`).
+@@ -283,6 +308,8 @@
+     let mut minor_ea: Option<String> = None;
+     let mut major_cs: Option<String> = None;
+     let mut minor_cs: Option<String> = None;
++    let mut major_scripts = std::collections::BTreeMap::new();
++    let mut minor_scripts = std::collections::BTreeMap::new();
+ 
+     enum FontCtx {
+         None,
+@@ -334,6 +361,20 @@
+                             }
+                         }
+                     },
++                    "font" => {
++                        if let (Some(script), Some(typeface)) = (
++                            xml::optional_attr_str(e, "script")?,
++                            xml::optional_attr_str(e, "typeface")?,
++                        ) {
++                            if !script.is_empty() && !typeface.is_empty() {
++                                match ctx {
++                                    FontCtx::Major => { major_scripts.insert(script.into_owned(), typeface.into_owned()); },
++                                    FontCtx::Minor => { minor_scripts.insert(script.into_owned(), typeface.into_owned()); },
++                                    FontCtx::None => {},
++                                }
++                            }
++                        }
++                    },
+                     _ => {},
+                 }
+             },
+@@ -360,6 +401,8 @@
+         minor_ea,
+         major_cs,
+         minor_cs,
++        major_scripts,
++        minor_scripts,
+     })
+ }
+ 
+@@ -376,9 +419,10 @@
+     Theme {
+         /// Theme color slot index.
+         slot: ThemeColorSlot,
+-        /// Tint adjustment (0.0–1.0), lightens the color when positive.
++        /// Format-specific tint adjustment. Word stores the hexadecimal
++        /// fraction (0.0–1.0); resolve it with `resolve_word_opt`.
+         tint: Option<f64>,
+-        /// Shade adjustment (0.0–1.0), darkens the color when positive.
++        /// Shade multiplier (0.0–1.0); Word applies it to HSL luminance.
+         shade: Option<f64>,
+         /// The literal `w:val` / `val` colour written alongside the theme
+         /// reference. OOXML producers emit it as the last-resort value for
+@@ -394,6 +438,23 @@
+ }
+ 
+ impl ColorRef {
++    /// Resolve a Word run color to fixed RGB. Word transforms HSL luminance,
++    /// with tint taking precedence over shade (MS-OI29500, section 2.1.72).
++    /// The literal `w:val` is already the final color, so an unavailable theme
++    /// must not apply its transforms a second time. Automatic colors and
++    /// unresolved themes without a literal fallback stay unspecified.
++    pub fn resolve_word_opt(&self, theme: Option<&Theme>) -> Option<RgbColor> {
++        match self {
++            Self::Theme { slot, tint, shade, fallback } => {
++                match theme.and_then(|theme| theme.resolve_color(*slot)) {
++                    Some(base) => Some(apply_word_tint_shade(base, *tint, *shade)),
++                    None => fallback.clone(),
++                }
++            },
++            _ => self.resolve_opt(theme),
++        }
++    }
++
+     /// Resolve this color reference to an RGB value using the given theme.
+     pub fn resolve(&self, theme: &Theme) -> RgbColor {
+         match self {
+@@ -451,6 +512,34 @@
+             Self::Auto => None,
+         }
+     }
++}
++
++/// Word's hexadecimal tint/shade values are fractions of 255. Preserve hue
++/// and saturation while changing HSL luminance: shade L'=L*s; tint
++/// L'=L*t+(1-t). Keep the generic resolver separate for other formats.
++fn apply_word_tint_shade(base: &RgbColor, tint: Option<f64>, shade: Option<f64>) -> RgbColor {
++    if tint.is_none() && shade.is_none() {
++        return base.clone();
++    }
++    let rgb = base.0.map(|component| f64::from(component) / 255.0);
++    let min = rgb.into_iter().fold(f64::INFINITY, f64::min);
++    let max = rgb.into_iter().fold(f64::NEG_INFINITY, f64::max);
++    let luminance = (min + max) / 2.0;
++    let adjusted = match tint {
++        Some(tint) => luminance * tint + (1.0 - tint),
++        None => luminance * shade.unwrap_or(1.0),
++    }.clamp(0.0, 1.0);
++    let delta = max - min;
++    let transformed = if delta == 0.0 {
++        [adjusted; 3]
++    } else {
++        let saturation = delta / (1.0 - (2.0 * luminance - 1.0).abs());
++        let chroma = (1.0 - (2.0 * adjusted - 1.0).abs()) * saturation;
++        // Positions within the original RGB extrema encode the unchanged
++        // hue; rescale that chroma around the new luminance.
++        rgb.map(|component| adjusted + ((component - min) / delta - 0.5) * chroma)
++    };
++    RgbColor(transformed.map(|component| (component * 255.0).round().clamp(0.0, 255.0) as u8))
+ }
+ 
+ /// Apply tint and shade transformations to a base color.
+@@ -607,6 +696,51 @@
+     }
+ 
+     #[test]
++    fn rgb_hex_rejects_non_ascii_without_slicing_inside_utf8() {
++        for invalid in ["中ABC", "A中BC", "ABC中", "GG0000", "12345", "1234567", "+12345"] {
++            assert!(RgbColor::from_hex(invalid).is_err(), "{invalid}");
++        }
++        assert_eq!(RgbColor::from_hex("aBcD09").unwrap(), RgbColor([0xAB, 0xCD, 0x09]));
++    }
++
++    #[test]
++    fn word_tint_and_shade_change_hsl_luminance_with_tint_precedence() {
++        // MS-OI29500 2.1.72: 4F81BD with themeTint="99" becomes 95B3D7.
++        let blue = RgbColor([0x4F, 0x81, 0xBD]);
++        assert_eq!(apply_word_tint_shade(&blue, Some(153.0 / 255.0), None), RgbColor([0x95, 0xB3, 0xD7]));
++        // RGB-channel multiplication would give [128, 64, 64]; HSL shade
++        // preserves the saturated red hue as luminance crosses 0.5.
++        assert_eq!(apply_word_tint_shade(&RgbColor([255, 128, 128]), None, Some(0.5)), RgbColor([192, 0, 0]));
++        assert_eq!(apply_word_tint_shade(&RgbColor([255, 0, 0]), Some(0.5), None), RgbColor([255, 128, 128]));
++        assert_eq!(apply_word_tint_shade(&blue, Some(1.0), Some(0.0)), blue);
++        assert_eq!(apply_word_tint_shade(&blue, Some(0.0), None), RgbColor([255, 255, 255]));
++        assert_eq!(apply_word_tint_shade(&blue, None, Some(0.0)), RgbColor([0, 0, 0]));
++        assert_eq!(apply_word_tint_shade(&blue, None, Some(1.0)), blue);
++        assert_eq!(apply_word_tint_shade(&RgbColor([0, 0, 0]), Some(0.6), None), RgbColor([102, 102, 102]));
++    }
++
++    #[test]
++    fn word_theme_resolution_does_not_transform_literal_fallback_again() {
++        let mut theme = Theme::parse(SAMPLE_THEME).unwrap();
++        theme.color_scheme.colors.insert(ThemeColorSlot::Accent1, RgbColor([0x4F, 0x81, 0xBD]));
++        let color = ColorRef::Theme {
++            slot: ThemeColorSlot::Accent1,
++            tint: Some(153.0 / 255.0),
++            shade: Some(0.0),
++            fallback: Some(RgbColor([1, 2, 3])),
++        };
++        assert_eq!(color.resolve_word_opt(Some(&theme)), Some(RgbColor([0x95, 0xB3, 0xD7])));
++        assert_eq!(color.resolve_word_opt(None), Some(RgbColor([1, 2, 3])));
++        theme.color_scheme.colors.remove(&ThemeColorSlot::Accent1);
++        assert_eq!(color.resolve_word_opt(Some(&theme)), Some(RgbColor([1, 2, 3])));
++        let unresolved = ColorRef::Theme { slot: ThemeColorSlot::Accent1, tint: None, shade: None, fallback: None };
++        assert_eq!(unresolved.resolve_word_opt(Some(&theme)), None);
++        assert_eq!(unresolved.resolve_word_opt(None), None);
++        assert_eq!(ColorRef::Auto.resolve_word_opt(Some(&theme)), None);
++        assert_eq!(ColorRef::Rgb(RgbColor([1, 2, 3])).resolve_word_opt(None), Some(RgbColor([1, 2, 3])));
++    }
++
++    #[test]
+     fn test_theme_color_slot_from_scheme_val() {
+         assert_eq!(ThemeColorSlot::from_scheme_val("accent1"), Some(ThemeColorSlot::Accent1));
+         assert_eq!(ThemeColorSlot::from_scheme_val("dk1"), Some(ThemeColorSlot::Dk1));
+--- a/src/docx/formatting.rs
++++ b/src/docx/formatting.rs
+@@ -48,8 +48,7 @@
+     /// absent from most runs, and a run is the most numerous struct in a
+     /// document.
+     pub script: Option<Box<ScriptRunProperties>>,
+-    /// Theme font the ASCII slot refers to (`w:rFonts/@w:asciiTheme`, or
+-    /// `@w:hAnsiTheme` when that is the only theme reference). Per
++    /// Theme font the ASCII slot refers to (`w:rFonts/@w:asciiTheme`). Per
+     /// ECMA-376 Part 1 §17.3.2.26 a theme reference supersedes the
+     /// literal `w:ascii` face; resolve it with [`ThemeFont::resolve`].
+     pub font_theme: Option<ThemeFont>,
+@@ -67,6 +66,12 @@
+     pub font_east_asia: Option<String>,
+     /// `w:rFonts/@w:cs` — complex-script characters.
+     pub font_cs: Option<String>,
++    /// Theme reference for the high ANSI font slot.
++    pub font_h_ansi_theme: Option<ThemeFont>,
++    /// Theme reference for the East Asian font slot.
++    pub font_east_asia_theme: Option<ThemeFont>,
++    /// Theme reference for the complex-script font slot.
++    pub font_cs_theme: Option<ThemeFont>,
+     /// `w:rFonts/@w:hint` = `eastAsia`: characters shared between the
+     /// Latin and East Asian ranges use the East Asian face.
+     pub east_asia_hint: Option<bool>,
+@@ -90,9 +95,6 @@
+             )*};
+         }
+         take!(
+-            font_h_ansi,
+-            font_east_asia,
+-            font_cs,
+             east_asia_hint,
+             font_size_cs,
+             bold_cs,
+@@ -100,6 +102,19 @@
+             complex_script,
+             rtl,
+         );
++        // A more specific literal or theme replaces the inherited pair for
++        // that slot; an unrelated slot must not clear its neighbours.
++        macro_rules! font_pair {
++            ($literal:ident, $theme:ident) => {
++                if src.$literal.is_some() || src.$theme.is_some() {
++                    self.$literal = src.$literal.clone();
++                    self.$theme = src.$theme;
++                }
++            };
++        }
++        font_pair!(font_h_ansi, font_h_ansi_theme);
++        font_pair!(font_east_asia, font_east_asia_theme);
++        font_pair!(font_cs, font_cs_theme);
+     }
+ }
+ 
+@@ -163,14 +178,17 @@
+     }
+     match local {
+         "rFonts" => {
+-            props.font_theme = parse_rfonts_theme(e);
+             for attr in xml::attrs(e) {
+-                let Ok((key, value)) = attr else { break };
++                let (key, value) = attr?;
+                 match key {
+                     "w:ascii" => props.font_name = Some(value.into_owned()),
+                     "w:hAnsi" => script(props).font_h_ansi = Some(value.into_owned()),
+                     "w:eastAsia" => script(props).font_east_asia = Some(value.into_owned()),
+                     "w:cs" => script(props).font_cs = Some(value.into_owned()),
++                    "w:asciiTheme" => props.font_theme = Some(ThemeFont::parse(&value).unwrap_or(ThemeFont::Unresolved)),
++                    "w:hAnsiTheme" => script(props).font_h_ansi_theme = Some(ThemeFont::parse(&value).unwrap_or(ThemeFont::Unresolved)),
++                    "w:eastAsiaTheme" => script(props).font_east_asia_theme = Some(ThemeFont::parse(&value).unwrap_or(ThemeFont::Unresolved)),
++                    "w:cstheme" | "w:csTheme" => script(props).font_cs_theme = Some(ThemeFont::parse(&value).unwrap_or(ThemeFont::Unresolved)),
+                     "w:hint" => script(props).east_asia_hint = Some(value == "eastAsia"),
+                     _ => {},
+                 }
+@@ -249,11 +267,11 @@
+     /// calling `emit` with each piece and its face. Whitespace joins the
+     /// piece before it (or after it, at the start) rather than splitting
+     /// a phrase into alternating faces. One piece in the common case.
+-    /// `ascii` is the run's ASCII face (see [`Self::face_with_ascii`]).
++    /// Resolve the four font slots independently before splitting.
+     pub(crate) fn for_each_script_segment<'s>(
+         &'s self,
+         text: &str,
+-        ascii: Option<&'s str>,
++        fonts: &ResolvedFonts<'s>,
+         mut emit: impl FnMut(&str, &ScriptFace<'s>),
+     ) {
+         let key = |f: &ScriptFace<'s>| (f.font_name, f.font_size);
+@@ -263,7 +281,9 @@
+             if c.is_whitespace() {
+                 continue;
+             }
+-            let face = self.face_with_ascii(self.script_class_of(c), ascii);
++            let class = self.script_class_of(c);
++            let mut face = self.face_for(class);
++            face.font_name = fonts.face(class);
+             match &current {
+                 Some(cur) if key(cur) == key(&face) => {},
+                 Some(cur) => {
+@@ -274,8 +294,42 @@
+                 None => current = Some(face),
+             }
+         }
+-        let face = current.unwrap_or_else(|| self.face_with_ascii(ScriptClass::Ascii, ascii));
++        let face = current.unwrap_or_else(|| {
++            let class = self.script_class_of(' ');
++            let mut face = self.face_for(class);
++            face.font_name = fonts.face(class);
++            face
++        });
+         emit(&text[start..], &face);
++    }
++
++    /// A theme reference supersedes its same-layer literal, including
++    /// when it cannot be resolved. Do not freeze that stale literal (or
++    /// an unrelated ASCII face) as the font of EA/complex-script text.
++    pub(crate) fn resolved_fonts<'s>(
++        &'s self,
++        theme: Option<&'s crate::core::theme::Theme>,
++        languages: &ThemeFontLanguages,
++    ) -> ResolvedFonts<'s> {
++        let resolve = |literal: Option<&'s str>, reference: Option<ThemeFont>, fallback| {
++            match reference {
++                Some(reference) => {
++                    let name = theme.and_then(|theme| reference.resolve_with_languages(&theme.font_scheme, languages));
++                    (name, name.is_none())
++                },
++                None => (literal.filter(|name| !name.is_empty()).or(fallback), false),
++            }
++        };
++        let ascii = resolve(self.font_name.as_deref(), self.font_theme, None);
++        let script = self.script.as_deref();
++        let mut h_ansi = resolve(script.and_then(|s| s.font_h_ansi.as_deref()), script.and_then(|s| s.font_h_ansi_theme), ascii.0);
++        let mut east_asia = resolve(script.and_then(|s| s.font_east_asia.as_deref()), script.and_then(|s| s.font_east_asia_theme), ascii.0);
++        let mut complex = resolve(script.and_then(|s| s.font_cs.as_deref()), script.and_then(|s| s.font_cs_theme), ascii.0);
++        // An omitted slot inherits the unresolved ASCII fallback too.
++        for slot in [&mut h_ansi, &mut east_asia, &mut complex] {
++            if slot.0.is_none() && ascii.1 { slot.1 = true; }
++        }
++        ResolvedFonts { slots: [ascii, h_ansi, east_asia, complex] }
+     }
+ 
+     /// Face, size and weight for text of `class`. A face the run does not
+@@ -326,10 +380,64 @@
+     }
+ }
+ 
++pub(crate) struct ResolvedFonts<'a> {
++    slots: [(Option<&'a str>, bool); 4],
++}
++
++impl<'a> ResolvedFonts<'a> {
++    fn index(class: ScriptClass) -> usize {
++        match class { ScriptClass::Ascii => 0, ScriptClass::HAnsi => 1, ScriptClass::EastAsia => 2, ScriptClass::Complex => 3 }
++    }
++
++    fn face(&self, class: ScriptClass) -> Option<&'a str> {
++        self.slots[Self::index(class)].0
++    }
++
++    pub(crate) fn unresolved(&self, class: ScriptClass) -> bool {
++        self.slots[Self::index(class)].1
++    }
++}
++
++/// Document settings that map theme references onto supplemental script
++/// fonts. These are distinct from a run's proofing language (`w:lang`).
++#[derive(Debug, Clone, Default)]
++pub struct ThemeFontLanguages {
++    /// Language used to select the theme's Latin font.
++    pub latin: Option<String>,
++    /// Language used to select the theme's East Asian font.
++    pub east_asia: Option<String>,
++    /// Language used to select the theme's complex-script font.
++    pub complex: Option<String>,
++    /// A malformed settings part must not silently imply default fonts.
++    pub unreadable: bool,
++}
++
++impl ThemeFontLanguages {
++    pub(crate) fn parse(data: &[u8]) -> crate::core::Result<Self> {
++        xml::check_root_closed(data, "word/settings.xml", "settings")?;
++        let mut reader = quick_xml::Reader::from_reader(data);
++        let mut out = Self::default();
++        loop {
++            match reader.read_event()? {
++                Event::Start(ref e) | Event::Empty(ref e) if e.local_name().as_ref() == "themeFontLang" => {
++                    out.latin = xml::optional_attr_str(e, "w:val")?.map(|v| v.into_owned());
++                    out.east_asia = xml::optional_attr_str(e, "w:eastAsia")?.map(|v| v.into_owned());
++                    out.complex = xml::optional_attr_str(e, "w:bidi")?.map(|v| v.into_owned());
++                },
++                Event::Eof => break,
++                _ => {},
++            }
++        }
++        Ok(out)
++    }
++}
++
+ /// A theme font reference (`ST_Theme`, ECMA-376 Part 1 §17.18.96): which
+ /// of the theme's major (heading) or minor (body) fonts, for which script.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum ThemeFont {
++    /// An explicit but unsupported reference must not reveal a stale literal.
++    Unresolved,
+     /// `majorAscii` / `majorHAnsi`: the major Latin font.
+     MajorLatin,
+     /// `majorEastAsia`: the major East Asian font.
+@@ -362,6 +470,7 @@
+     /// the scheme leaves that script's font empty (inherit).
+     pub fn resolve(self, scheme: &crate::core::theme::FontScheme) -> Option<String> {
+         let face = match self {
++            Self::Unresolved => None,
+             Self::MajorLatin => Some(&scheme.major_latin),
+             Self::MinorLatin => Some(&scheme.minor_latin),
+             Self::MajorEastAsia => scheme.major_ea.as_ref(),
+@@ -371,19 +480,67 @@
+         }?;
+         (!face.is_empty()).then(|| face.clone())
+     }
+-}
+-
+-/// The theme font a `w:rFonts` element's ASCII slot refers to:
+-/// `w:asciiTheme`, else `w:hAnsiTheme`.
+-fn parse_rfonts_theme(e: &BytesStart) -> Option<ThemeFont> {
+-    ["w:asciiTheme", "w:hAnsiTheme"]
+-        .into_iter()
+-        .find_map(|key| {
+-            xml::optional_attr_str(e, key)
+-                .ok()
+-                .flatten()
+-                .and_then(|v| ThemeFont::parse(&v))
+-        })
++
++    fn resolve_with_languages<'s>(
++        self,
++        scheme: &'s crate::core::theme::FontScheme,
++        languages: &ThemeFontLanguages,
++    ) -> Option<&'s str> {
++        if languages.unreadable { return None; }
++        let (default, language, scripts) = match self {
++            Self::MajorLatin => (Some(scheme.major_latin.as_str()), &languages.latin, &scheme.major_scripts),
++            Self::MinorLatin => (Some(scheme.minor_latin.as_str()), &languages.latin, &scheme.minor_scripts),
++            Self::MajorEastAsia => (scheme.major_ea.as_deref(), &languages.east_asia, &scheme.major_scripts),
++            Self::MinorEastAsia => (scheme.minor_ea.as_deref(), &languages.east_asia, &scheme.minor_scripts),
++            Self::MajorBidi => (scheme.major_cs.as_deref(), &languages.complex, &scheme.major_scripts),
++            Self::MinorBidi => (scheme.minor_cs.as_deref(), &languages.complex, &scheme.minor_scripts),
++            Self::Unresolved => return None,
++        };
++        let default = default.filter(|name| !name.is_empty());
++        let Some(language) = language.as_deref() else { return default; };
++        let script = language_script(language)?;
++        // Latin languages normally use the collection's latin element;
++        // non-Latin mappings need the named supplemental font. In
++        // particular an empty ea/cs element is not the Latin typeface.
++        scripts.get(script).map(String::as_str).or_else(|| (script == "Latn").then_some(default).flatten())
++    }
++}
++
++/// Common BCP 47 languages and explicit script subtags used by Office
++/// themeFontLang. Ambiguous/unknown languages remain unresolved instead
++/// of assigning a font from a different script.
++fn language_script(language: &str) -> Option<&'static str> {
++    let language = language.to_ascii_lowercase();
++    let mut parts = language.split('-');
++    let primary = parts.next()?;
++    let subtags: Vec<_> = parts.collect();
++    for subtag in &subtags {
++        let script = match *subtag {
++            "latn" => "Latn", "cyrl" => "Cyrl", "grek" => "Grek", "hans" => "Hans", "hant" => "Hant",
++            "jpan" => "Jpan", "hang" | "kore" => "Hang", "arab" => "Arab", "hebr" => "Hebr",
++            "syrc" => "Syrc", "thaa" => "Thaa", "deva" => "Deva", "beng" => "Beng", "guru" => "Guru",
++            "gujr" => "Gujr", "orya" => "Orya", "taml" => "Taml", "telu" => "Telu", "knda" => "Knda",
++            "mlym" => "Mlym", "sinh" => "Sinh", "thai" => "Thai", "laoo" => "Laoo", "tibt" => "Tibt",
++            "mymr" => "Mymr", "khmr" => "Khmr", "mong" => "Mong", "ethi" => "Ethi", "armn" => "Armn",
++            "geor" => "Geor", "cans" => "Cans", "cher" => "Cher", "yiii" => "Yiii", _ => continue,
++        };
++        return Some(script);
++    }
++    Some(match primary {
++        "zh" if subtags.iter().any(|s| matches!(*s, "tw" | "hk" | "mo")) => "Hant",
++        "zh" if subtags.iter().any(|s| matches!(*s, "cn" | "sg")) => "Hans",
++        "ja" => "Jpan", "ko" => "Hang", "ar" | "fa" | "ur" | "ps" | "ug" => "Arab",
++        "he" | "iw" | "yi" => "Hebr", "syr" => "Syrc", "dv" => "Thaa",
++        "hi" | "mr" | "ne" | "sa" => "Deva", "bn" | "as" => "Beng", "gu" => "Gujr", "or" => "Orya",
++        "ta" => "Taml", "te" => "Telu", "kn" => "Knda", "ml" => "Mlym", "si" => "Sinh",
++        "th" => "Thai", "lo" => "Laoo", "bo" | "dz" => "Tibt", "my" => "Mymr", "km" => "Khmr",
++        "am" | "ti" => "Ethi", "hy" => "Armn", "ka" => "Geor", "iu" => "Cans", "chr" => "Cher", "ii" => "Yiii",
++        "el" => "Grek", "ru" | "uk" | "bg" | "be" | "mk" | "kk" | "ky" | "tg" => "Cyrl",
++        "en" | "fr" | "de" | "es" | "it" | "pt" | "nl" | "sv" | "no" | "nb" | "nn" | "da" | "fi"
++        | "is" | "ga" | "cy" | "gd" | "pl" | "cs" | "sk" | "sl" | "hr" | "hu" | "ro" | "tr" | "vi"
++        | "id" | "ms" | "sw" | "af" | "sq" | "et" | "lv" | "lt" | "eu" | "ca" | "gl" | "mt" | "fil" => "Latn",
++        _ => return None,
++    })
+ }
+ 
+ /// Paragraph-level formatting properties (`w:pPr`).
+@@ -1473,12 +1630,69 @@
+ 
+ fn parse_half_point_val(e: &BytesStart) -> crate::core::Result<Option<HalfPoint>> {
+     match xml::optional_attr_str(e, "w:val")? {
+-        Some(ref val) => {
+-            let v: u32 = parse_numeric(val)?;
+-            Ok(Some(HalfPoint(v)))
+-        },
++        Some(ref val) => parse_half_point_measure(val).map(Some),
+         None => Ok(None),
+     }
++}
++
++/// ST_HpsMeasure is an unsigned integer in half-points, or a positive
++/// universal measurement (ECMA-376 Part 1 17.18.42 / 22.9.2.12). A suffix
++/// changes the unit: `13.5pt` is 27 half-points, never 14. Keep conversion
++/// exact so an unsupported fractional half-point cannot silently change
++/// the font size. Other measurement types (twips, signed offsets, etc.)
++/// must not use this unsigned half-point parser.
++fn parse_half_point_measure(value: &str) -> crate::core::Result<HalfPoint> {
++    use crate::core::Error;
++    let invalid = || Error::MalformedXml("invalid DOCX half-point measurement".into());
++    let out_of_range = || Error::Unsupported(
++        "DOCX half-point measurement exceeds the supported integer range or precision".into()
++    );
++    let value = value.trim_matches([' ', '\t', '\r', '\n']);
++    let digits = value.strip_prefix('+').unwrap_or(value);
++    if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
++        return digits.parse::<u32>().map(HalfPoint).map_err(|_| out_of_range());
++    }
++
++    // Rational multipliers in half-points per unit. pc and pi both mean
++    // picas (12 points); 1 inch = 2.54 cm = 25.4 mm = 72 points.
++    let (number, multiplier, unit_divisor) = [
++        ("pt", 2u128, 1u128),
++        ("in", 144, 1),
++        ("cm", 7200, 127),
++        ("mm", 720, 127),
++        ("pc", 24, 1),
++        ("pi", 24, 1),
++    ].into_iter().find_map(|(unit, multiplier, divisor)| {
++        value.strip_suffix(unit).map(|number| (number, multiplier, divisor))
++    }).ok_or_else(invalid)?;
++    let (whole, fraction) = match number.split_once('.') {
++        Some((whole, fraction)) if !fraction.is_empty() => (whole, fraction),
++        Some(_) => return Err(invalid()),
++        None => (number, ""),
++    };
++    if whole.is_empty() || !whole.bytes().all(|b| b.is_ascii_digit())
++        || !fraction.bytes().all(|b| b.is_ascii_digit()) {
++        return Err(invalid());
++    }
++    // Trailing zeroes do not consume precision, even if a producer writes
++    // a long decimal representation of an exact half-point measurement.
++    let fraction = fraction.trim_end_matches('0');
++    let scale = u32::try_from(fraction.len()).ok()
++        .and_then(|length| 10u128.checked_pow(length)).ok_or_else(out_of_range)?;
++    let whole = whole.parse::<u128>().map_err(|_| out_of_range())?;
++    let fraction = if fraction.is_empty() { 0 } else {
++        fraction.parse::<u128>().map_err(|_| out_of_range())?
++    };
++    let numerator = whole.checked_mul(scale)
++        .and_then(|n| n.checked_add(fraction))
++        .and_then(|n| n.checked_mul(multiplier)).ok_or_else(out_of_range)?;
++    let denominator = scale.checked_mul(unit_divisor).ok_or_else(out_of_range)?;
++    if numerator % denominator != 0 {
++        return Err(Error::Unsupported(
++            "DOCX measurement is not exactly representable in integer half-points".into()
++        ));
++    }
++    u32::try_from(numerator / denominator).map(HalfPoint).map_err(|_| out_of_range())
+ }
+ 
+ fn parse_color_ref(e: &BytesStart) -> crate::core::Result<Option<ColorRef>> {
+@@ -1490,39 +1704,34 @@
+     // The literal `w:val` doubles as the fallback for consumers that
+     // cannot resolve the theme, so parse it before branching on
+     // `w:themeColor` and carry it into the theme reference.
+-    let literal = val
+-        .as_deref()
+-        .filter(|v| v.len() == 6)
+-        .and_then(|v| RgbColor::from_hex(v).ok());
+-
+-    if let Some(ref tc) = theme_color {
+-        if let Some(slot) = ThemeColorSlot::from_scheme_val(tc) {
+-            let tint = xml::optional_attr_str(e, "w:themeTint")?
+-                .and_then(|v| u8::from_str_radix(&v, 16).ok())
+-                .map(|v| v as f64 / 255.0);
+-            let shade = xml::optional_attr_str(e, "w:themeShade")?
+-                .and_then(|v| u8::from_str_radix(&v, 16).ok())
+-                .map(|v| v as f64 / 255.0);
+-            return Ok(Some(ColorRef::Theme {
+-                slot,
+-                tint,
+-                shade,
+-                fallback: literal,
+-            }));
+-        }
+-    }
+-
+-    if let Some(ref v) = val {
+-        if v.as_ref() == "auto" {
+-            return Ok(Some(ColorRef::Auto));
+-        }
+-        if v.len() == 6 {
+-            if let Ok(rgb) = RgbColor::from_hex(v) {
+-                return Ok(Some(ColorRef::Rgb(rgb)));
+-            }
+-        }
+-    }
+-    Ok(None)
++    let literal = match val.as_deref() {
++        None | Some("auto") => None,
++        Some(value) => Some(RgbColor::from_hex(value)?),
++    };
++    let tint = parse_theme_color_fraction(e, "w:themeTint")?;
++    let shade = parse_theme_color_fraction(e, "w:themeShade")?;
++
++    if let Some(tc) = theme_color.as_deref().filter(|tc| *tc != "none") {
++        let slot = ThemeColorSlot::from_word_val(tc).ok_or_else(|| {
++            crate::core::Error::MalformedXml("invalid DOCX w:themeColor".into())
++        })?;
++        return Ok(Some(ColorRef::Theme { slot, tint, shade, fallback: literal }));
++    }
++
++    if val.as_deref() == Some("auto") {
++        return Ok(Some(ColorRef::Auto));
++    }
++    Ok(literal.map(ColorRef::Rgb))
++}
++
++fn parse_theme_color_fraction(e: &BytesStart, attr: &str) -> crate::core::Result<Option<f64>> {
++    let Some(value) = xml::optional_attr_str(e, attr)? else { return Ok(None) };
++    // CT_Color's ST_UcharHexNumber accepts one or two ASCII hex digits.
++    // Do not silently discard malformed transforms or accept signs/Unicode.
++    if !(1..=2).contains(&value.len()) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
++        return Err(crate::core::Error::MalformedXml(format!("invalid DOCX {attr}")));
++    }
++    Ok(Some(f64::from(u8::from_str_radix(&value, 16)?) / 255.0))
+ }
+ 
+ pub(crate) fn parse_indent(e: &BytesStart) -> crate::core::Result<ParagraphIndent> {
+@@ -1644,6 +1853,76 @@
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn word_color_parser_accepts_word_slots_and_validates_transforms() {
++        use crate::core::theme::{RgbColor, ThemeColorSlot};
++        for (name, expected) in [
++            ("dark1", ThemeColorSlot::Dk1), ("text1", ThemeColorSlot::Dk1),
++            ("light1", ThemeColorSlot::Lt1), ("background1", ThemeColorSlot::Lt1),
++            ("dark2", ThemeColorSlot::Dk2), ("text2", ThemeColorSlot::Dk2),
++            ("light2", ThemeColorSlot::Lt2), ("background2", ThemeColorSlot::Lt2),
++            ("accent1", ThemeColorSlot::Accent1), ("accent2", ThemeColorSlot::Accent2),
++            ("accent3", ThemeColorSlot::Accent3), ("accent4", ThemeColorSlot::Accent4),
++            ("accent5", ThemeColorSlot::Accent5), ("accent6", ThemeColorSlot::Accent6),
++            ("hyperlink", ThemeColorSlot::Hlink), ("followedHyperlink", ThemeColorSlot::FolHlink),
++        ] {
++            let mut element = BytesStart::new("w:color");
++            element.push_attribute(("w:val", "aBcD09"));
++            element.push_attribute(("w:themeColor", name));
++            element.push_attribute(("w:themeTint", "f"));
++            element.push_attribute(("w:themeShade", "FF"));
++            let Some(ColorRef::Theme { slot, tint, shade, fallback }) = parse_color_ref(&element).unwrap() else {
++                panic!("expected Word theme color: {name}");
++            };
++            assert_eq!(slot, expected);
++            assert_eq!(tint, Some(15.0 / 255.0));
++            assert_eq!(shade, Some(1.0));
++            assert_eq!(fallback, Some(RgbColor([0xAB, 0xCD, 0x09])));
++        }
++        let mut element = BytesStart::new("w:color");
++        element.push_attribute(("w:themeColor", "none"));
++        element.push_attribute(("w:val", "auto"));
++        assert!(matches!(parse_color_ref(&element).unwrap(), Some(ColorRef::Auto)));
++    }
++
++    #[test]
++    fn word_color_is_strict_in_both_run_readers_and_element_forms() {
++        for empty_element in [false, true] {
++            for (attrs, valid) in [
++                (r#"w:val="aBcD09""#, true),
++                (r#"w:val="auto""#, true),
++                (r#"w:val="123456" w:themeColor="none" w:themeTint="99""#, true),
++                (r#"w:val="auto" w:themeColor="text1" w:themeShade="0""#, true),
++                (r#"w:themeColor="accent1" w:themeTint="99""#, true),
++                (r#"w:val="中ABC""#, false),
++                (r#"w:val="GG0000""#, false),
++                (r#"w:val="12345""#, false),
++                (r#"w:val="AUTO""#, false),
++                (r#"w:val="112233" w:themeColor="dk1""#, false),
++                (r#"w:val="112233" w:themeColor="hlink""#, false),
++                (r#"w:val="112233" w:themeColor="unknown""#, false),
++                (r#"w:val="112233" w:themeTint="+F""#, false),
++                (r#"w:val="112233" w:themeTint="000""#, false),
++                (r#"w:val="112233" w:themeTint="""#, false),
++                (r#"w:val="112233" w:themeShade="GG""#, false),
++                (r#"w:val="112233" w:themeShade="é""#, false),
++            ] {
++                let child = if empty_element { format!("<w:color {attrs}/>") } else {
++                    format!("<w:color {attrs}></w:color>")
++                };
++                let document = format!(r#"<w:rPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{child}</w:rPr>"#);
++                let mut fast = xml::make_fast_reader(document.as_bytes());
++                assert!(matches!(fast.read_event().unwrap(), Event::Start(_)));
++                let mut resolved = xml::make_reader(document.as_bytes());
++                assert!(matches!(resolved.read_resolved_event().unwrap(), (_, Event::Start(_))));
++                for result in [parse_run_properties_fast(&mut fast), parse_run_properties(&mut resolved)] {
++                    assert_eq!(result.is_ok(), valid, "{child}");
++                    if valid { assert!(result.unwrap().color.is_some(), "{child}"); }
++                }
++            }
++        }
++    }
++
+     /// Regression: `ParagraphProperties`'s rarely-populated
+     /// sub-structs must stay boxed, not silently regress back to
+     /// `Option<T>` (which reserves `size_of(T)` even when `None`).
+@@ -1724,6 +2003,66 @@
+     }
+ 
+     #[test]
++    fn half_point_measure_preserves_integers_and_converts_units_exactly() {
++        for (value, expected) in [
++            ("27", 27), ("+27", 27), (" 0027\t", 27), ("0", 0),
++            ("13.5pt", 27), ("13.500000000000000000000000pt", 27),
++            ("0.1875in", 27), ("0.47625cm", 27), ("4.7625mm", 27),
++            ("1.125pc", 27), ("1.125pi", 27), ("1in", 144),
++            ("2.54cm", 144), ("25.4mm", 144), ("0pt", 0),
++            ("4294967295", u32::MAX), ("2147483647.5pt", u32::MAX),
++        ] {
++            assert_eq!(parse_half_point_measure(value).unwrap(), HalfPoint(expected), "{value}");
++        }
++    }
++
++    #[test]
++    fn half_point_measure_rejects_invalid_or_unrepresentable_values_without_rounding() {
++        for value in [
++            "", "27.5", "27.0", "13.25pt", "13.5000000000000001pt", "12.95pt", "1mm", "1cm",
++            "12px", "12%", "12PT", "12ptpt", "12garbage", "1e2pt",
++            "NaNpt", "infpt", "-12pt", "+12pt", ".5pt", "12.pt",
++            "12.5.0pt", "12 pt", "１２pt", "-27", "4294967296",
++            "2147483648pt", "9999999999999999999999999999999999999999pt",
++            "0.0000000000000000000000000000000000000001pt",
++        ] {
++            assert!(parse_half_point_measure(value).is_err(), "must not round or strip arbitrary suffixes: {value}");
++        }
++    }
++
++    #[test]
++    fn half_point_measure_is_strict_in_both_run_readers_and_complex_script_sizes() {
++        for empty_element in [false, true] {
++            for (value, expected) in [("13.5pt", Some(27)), ("27", Some(27)),
++                ("27.5", None), ("13.25pt", None), ("13px", None)] {
++                for tag in ["sz", "szCs"] {
++                    let child = if empty_element {
++                        format!(r#"<w:{tag} w:val="{value}"/>"#)
++                    } else {
++                        format!(r#"<w:{tag} w:val="{value}"></w:{tag}>"#)
++                    };
++                    let document = format!(r#"<w:rPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{child}</w:rPr>"#);
++                    let mut fast = xml::make_fast_reader(document.as_bytes());
++                    assert!(matches!(fast.read_event().unwrap(), Event::Start(_)));
++                    let mut resolved = xml::make_reader(document.as_bytes());
++                    assert!(matches!(resolved.read_resolved_event().unwrap(), (_, Event::Start(_))));
++                    for result in [parse_run_properties_fast(&mut fast), parse_run_properties(&mut resolved)] {
++                        if let Some(expected) = expected {
++                            let properties = result.unwrap();
++                            let actual = if tag == "sz" { properties.font_size } else {
++                                properties.script.as_ref().and_then(|script| script.font_size_cs)
++                            };
++                            assert_eq!(actual, Some(HalfPoint(expected)), "{tag} {value}");
++                        } else {
++                            assert!(result.is_err(), "{tag} {value} must be rejected by both readers");
++                        }
++                    }
++                }
++            }
++        }
++    }
++
++    #[test]
+     fn test_parse_paragraph_props_style_justification() {
+         let xml =
+             br#"<w:pPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+--- a/src/docx/mod.rs
++++ b/src/docx/mod.rs
+@@ -105,6 +105,8 @@
+     pub numbering: Option<NumberingDefinitions>,
+     /// Theme from the document.
+     pub theme: Option<Theme>,
++    /// Settings language mappings for major/minor supplemental fonts.
++    pub theme_font_languages: formatting::ThemeFontLanguages,
+     /// Section properties (from the last `w:sectPr` in the body).
+     pub sections: Vec<SectionProperties>,
+     /// Parsed headers and footers.
+@@ -232,6 +234,17 @@
+                     None
+                 },
+             });
++
++        let theme_font_languages = match doc_rels.first_by_type(rel_types::SETTINGS) {
++            None => formatting::ThemeFontLanguages::default(),
++            Some(rel) => main_part.resolve_relative(&rel.target)
++                .and_then(|part| opc.read_part(&part))
++                .and_then(|data| formatting::ThemeFontLanguages::parse(&data))
++                .unwrap_or_else(|_| formatting::ThemeFontLanguages {
++                    unreadable: true,
++                    ..Default::default()
++                }),
++        };
+ 
+         // Parse styles
+         let styles = if let Some(rel) = doc_rels.first_by_type(rel_types::STYLES) {
+@@ -574,6 +587,7 @@
+             styles,
+             numbering,
+             theme,
++            theme_font_languages,
+             sections,
+             headers_footers,
+             unreadable_parts: unreadable_parts.into_inner(),
+--- a/src/docx/styles.rs
++++ b/src/docx/styles.rs
+@@ -17,6 +17,9 @@
+     pub doc_defaults: Option<DocDefaults>,
+     /// Map from style ID to style definition.
+     pub styles: HashMap<String, Style>,
++    /// Last paragraph style explicitly marked `w:default` in XML order.
++    /// A style's identifier or display name never makes it the default.
++    pub default_paragraph_style_id: Option<String>,
+ }
+ 
+ /// Document-wide default properties.
+@@ -35,6 +38,8 @@
+     pub style_id: String,
+     /// Kind of style (paragraph, character, table, or numbering).
+     pub style_type: StyleType,
++    /// Whether `w:default` is explicitly enabled for this style's type.
++    pub is_default: bool,
+     /// Human-readable style name.
+     pub name: Option<String>,
+     /// ID of the parent style this style inherits from.
+@@ -93,17 +98,49 @@
+                         sheet.doc_defaults = Some(parse_doc_defaults(&mut reader)?);
+                     },
+                     "style" => {
+-                        if let Some(style) = parse_style(&mut reader, e)? {
+-                            sheet.styles.insert(style.style_id.clone(), style);
++                        if let Some(style) = parse_style(&mut reader, e, false)? {
++                            sheet.add_style(style)?;
+                         }
+                     },
+                     _ => {},
++                },
++                Event::Empty(ref e) if e.local_name().as_ref() == "style" => {
++                    if let Some(style) = parse_style(&mut reader, e, true)? {
++                        sheet.add_style(style)?;
++                    }
+                 },
+                 Event::Eof => break,
+                 _ => {},
+             }
+         }
+         Ok(sheet)
++    }
++
++    fn add_style(&mut self, style: Style) -> crate::core::Result<()> {
++        // Duplicate identifiers cannot preserve an unambiguous basedOn/default
++        // reference in this map. Reject instead of accidentally applying the
++        // formatting of a different definition or style type.
++        if self.styles.contains_key(&style.style_id) {
++            return Err(crate::core::Error::MalformedXml(format!(
++                "duplicate DOCX style identifier: {}", style.style_id
++            )));
++        }
++        // ECMA-376 17.7.4.17: when several styles of a type have the
++        // default attribute enabled, the last in document order wins.
++        if style.style_type == StyleType::Paragraph && style.is_default {
++            self.default_paragraph_style_id = Some(style.style_id.clone());
++        }
++        self.styles.insert(style.style_id.clone(), style);
++        Ok(())
++    }
++
++    /// Resolve the implicit paragraph style only when pStyle is absent.
++    /// An explicit unknown or non-paragraph reference contributes no style.
++    fn paragraph_style_id(&self, explicit: Option<&str>) -> Option<&str> {
++        let id = explicit.or(self.default_paragraph_style_id.as_deref())?;
++        self.styles.get_key_value(id)
++            .filter(|(_, style)| style.style_type == StyleType::Paragraph)
++            .map(|(key, _)| key.as_str())
+     }
+ 
+     /// Return the inheritance chain for `style_id`, **root ancestor first**,
+@@ -182,7 +219,7 @@
+         if let Some(t) = table {
+             out.overlay(t);
+         }
+-        if let Some(pid) = paragraph_style_id {
++        if let Some(pid) = self.paragraph_style_id(paragraph_style_id) {
+             for style in self.chain(pid) {
+                 if let Some(rp) = style.run_properties.as_ref() {
+                     out.overlay(rp);
+@@ -235,7 +272,7 @@
+                 .rev()
+                 .find_map(|style| style.run_properties.as_ref().and_then(|rp| rp.hidden))
+         };
+-        if let Some(h) = paragraph_style_id.and_then(chain_hidden) {
++        if let Some(h) = self.paragraph_style_id(paragraph_style_id).and_then(chain_hidden) {
+             hidden = Some(h);
+         }
+         if let Some(h) = direct
+@@ -289,7 +326,7 @@
+         if let Some(t) = table {
+             out.overlay(t);
+         }
+-        if let Some(pid) = paragraph_style_id {
++        if let Some(pid) = self.paragraph_style_id(paragraph_style_id) {
+             for style in self.chain(pid) {
+                 if let Some(pp) = style.paragraph_properties.as_ref() {
+                     out.overlay(pp);
+@@ -401,9 +438,20 @@
+ fn parse_style(
+     reader: &mut quick_xml::Reader<&[u8]>,
+     start: &quick_xml::events::BytesStart,
++    empty: bool,
+ ) -> crate::core::Result<Option<Style>> {
++    let is_default = match xml::optional_attr_str(start, "w:default")?.as_deref() {
++        None | Some("0" | "false" | "off") => false,
++        Some("1" | "true" | "on") => true,
++        Some(value) => return Err(crate::core::Error::MalformedXml(format!(
++            "invalid DOCX style default value: {value}"
++        ))),
++    };
+     let style_id = match xml::optional_attr_str(start, "w:styleId")? {
+         Some(id) => id.into_owned(),
++        None if is_default => return Err(crate::core::Error::MalformedXml(
++            "default DOCX style has no identifier".into()
++        )),
+         None => return Ok(None),
+     };
+     let style_type = match xml::optional_attr_str(start, "w:type")? {
+@@ -412,7 +460,9 @@
+             "character" => StyleType::Character,
+             "table" => StyleType::Table,
+             "numbering" => StyleType::Numbering,
+-            _ => StyleType::Paragraph,
++            _ => return Err(crate::core::Error::MalformedXml(format!(
++                "invalid DOCX style type: {t}"
++            ))),
+         },
+         None => StyleType::Paragraph,
+     };
+@@ -424,64 +474,67 @@
+     let mut table_properties = None;
+     let mut table_conditionals = Vec::new();
+ 
+-    loop {
+-        match reader.read_event()? {
+-            Event::Start(ref e) => match e.local_name().as_ref() {
+-                "name" => {
+-                    if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+-                        name = Some(val.into_owned());
+-                    }
+-                    xml::skip_element_fast(reader)?;
++    if !empty {
++        loop {
++            match reader.read_event()? {
++                Event::Start(ref e) => match e.local_name().as_ref() {
++                    "name" => {
++                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
++                            name = Some(val.into_owned());
++                        }
++                        xml::skip_element_fast(reader)?;
++                    },
++                    "basedOn" => {
++                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
++                            based_on = Some(val.into_owned());
++                        }
++                        xml::skip_element_fast(reader)?;
++                    },
++                    "rPr" => {
++                        run_properties = Some(parse_run_properties_fast(reader)?);
++                    },
++                    "pPr" => {
++                        paragraph_properties = Some(parse_paragraph_properties_fast(reader)?);
++                    },
++                    "tblPr" => {
++                        table_properties = Some(super::parse_table_properties(reader)?);
++                    },
++                    "tblStylePr" => {
++                        let kind = xml::optional_attr_str(e, "w:type")?
++                            .map(|v| v.into_owned())
++                            .unwrap_or_default();
++                        table_conditionals.push(parse_table_style_conditional(reader, kind)?);
++                    },
++                    _ => {
++                        xml::skip_element_fast(reader)?;
++                    },
+                 },
+-                "basedOn" => {
+-                    if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+-                        based_on = Some(val.into_owned());
+-                    }
+-                    xml::skip_element_fast(reader)?;
++                Event::Empty(ref e) => match e.local_name().as_ref() {
++                    "name" => {
++                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
++                            name = Some(val.into_owned());
++                        }
++                    },
++                    "basedOn" => {
++                        if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
++                            based_on = Some(val.into_owned());
++                        }
++                    },
++                    _ => {},
+                 },
+-                "rPr" => {
+-                    run_properties = Some(parse_run_properties_fast(reader)?);
++                Event::End(ref e) if e.local_name().as_ref() == "style" => {
++                    break;
+                 },
+-                "pPr" => {
+-                    paragraph_properties = Some(parse_paragraph_properties_fast(reader)?);
+-                },
+-                "tblPr" => {
+-                    table_properties = Some(super::parse_table_properties(reader)?);
+-                },
+-                "tblStylePr" => {
+-                    let kind = xml::optional_attr_str(e, "w:type")?
+-                        .map(|v| v.into_owned())
+-                        .unwrap_or_default();
+-                    table_conditionals.push(parse_table_style_conditional(reader, kind)?);
+-                },
+-                _ => {
+-                    xml::skip_element_fast(reader)?;
+-                },
+-            },
+-            Event::Empty(ref e) => match e.local_name().as_ref() {
+-                "name" => {
+-                    if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+-                        name = Some(val.into_owned());
+-                    }
+-                },
+-                "basedOn" => {
+-                    if let Ok(Some(val)) = xml::optional_attr_str(e, "w:val") {
+-                        based_on = Some(val.into_owned());
+-                    }
+-                },
++                Event::Eof => break,
+                 _ => {},
+-            },
+-            Event::End(ref e) if e.local_name().as_ref() == "style" => {
+-                break;
+-            },
+-            Event::Eof => break,
+-            _ => {},
++            }
+         }
+     }
+ 
+     Ok(Some(Style {
+         style_id,
+         style_type,
++        is_default,
+         name,
+         based_on,
+         run_properties,
+@@ -677,4 +730,182 @@
+         assert_eq!(sheet.resolve_outline_level("Heading1"), Some(0));
+         assert_eq!(sheet.resolve_outline_level("Normal"), None);
+     }
+-}
++
++    fn default_style_sheet(body: &str) -> StyleSheet {
++        StyleSheet::parse(format!(
++            r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{body}</w:styles>"#
++        ).as_bytes()).unwrap()
++    }
++
++    #[test]
++    fn default_paragraph_style_supplies_run_paragraph_and_hidden_properties() {
++        use crate::core::units::HalfPoint;
++        let sheet = default_style_sheet(r#"
++          <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults>
++          <w:style w:type="paragraph" w:styleId="Normal"><w:rPr><w:sz w:val="90"/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:default="1" w:styleId="BodyInAnyLanguage">
++            <w:pPr><w:jc w:val="center"/></w:pPr>
++            <w:rPr><w:sz w:val="28"/><w:vanish/></w:rPr>
++          </w:style>"#);
++        assert_eq!(sheet.default_paragraph_style_id.as_deref(), Some("BodyInAnyLanguage"));
++        assert_eq!(sheet.effective_run_properties(None, None).font_size, Some(HalfPoint(28)));
++        assert!(sheet.effective_hidden(None, None));
++        assert_eq!(sheet.effective_paragraph_properties(None).justification,
++            Some(super::super::Justification::Center));
++        let direct = RunProperties { hidden: Some(false), ..Default::default() };
++        assert!(!sheet.effective_hidden(None, Some(&direct)));
++        // A pPr with direct formatting but no pStyle still inherits the default.
++        let direct = ParagraphProperties { keep_next: Some(true), ..Default::default() };
++        let effective = sheet.effective_paragraph_properties(Some(&direct));
++        assert_eq!(effective.justification, Some(super::super::Justification::Center));
++        assert_eq!(effective.keep_next, Some(true));
++    }
++
++    #[test]
++    fn default_paragraph_style_respects_based_on_and_explicit_style_selection() {
++        use crate::core::units::HalfPoint;
++        let sheet = default_style_sheet(r#"
++          <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults>
++          <w:style w:type="paragraph" w:styleId="Ancestor"><w:rPr><w:sz w:val="24"/><w:i/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:default="true" w:styleId="Body"><w:basedOn w:val="Ancestor"/><w:rPr><w:b/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:styleId="Independent"><w:rPr><w:sz w:val="36"/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:styleId="Derived"><w:basedOn w:val="Body"/><w:rPr><w:sz w:val="32"/></w:rPr></w:style>"#);
++        let table = RunProperties { font_size: Some(HalfPoint(22)), ..Default::default() };
++        let inherited = sheet.effective_run_properties_in(Some(&table), None, None);
++        assert_eq!(inherited.font_size, Some(HalfPoint(24)));
++        assert_eq!((inherited.bold, inherited.italic), (Some(true), Some(true)));
++        let explicit = sheet.effective_run_properties(Some("Independent"), None);
++        assert_eq!(explicit.font_size, Some(HalfPoint(36)));
++        assert_eq!((explicit.bold, explicit.italic), (None, None), "default is not a base for every style");
++        let derived = sheet.effective_run_properties(Some("Derived"), None);
++        assert_eq!(derived.font_size, Some(HalfPoint(32)));
++        assert_eq!((derived.bold, derived.italic), (Some(true), Some(true)));
++        assert_eq!(sheet.effective_run_properties(Some("Missing"), None).font_size, Some(HalfPoint(20)));
++    }
++
++    #[test]
++    fn default_paragraph_font_size_keeps_character_direct_and_script_precedence() {
++        use crate::core::units::HalfPoint;
++        use super::super::formatting::ScriptClass;
++        let sheet = default_style_sheet(r#"
++          <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>
++          <w:style w:type="paragraph" w:default="on" w:styleId="Body"><w:rPr><w:sz w:val="28"/><w:szCs w:val="30"/></w:rPr></w:style>
++          <w:style w:type="character" w:styleId="CharacterBase"><w:rPr><w:szCs w:val="34"/></w:rPr></w:style>
++          <w:style w:type="character" w:styleId="Emphasis"><w:basedOn w:val="CharacterBase"/><w:rPr><w:sz w:val="32"/></w:rPr></w:style>"#);
++        let inherited = sheet.effective_run_properties(None, None);
++        assert_eq!(inherited.face_for(ScriptClass::EastAsia).font_size, Some(HalfPoint(28)));
++        assert_eq!(inherited.face_for(ScriptClass::Complex).font_size, Some(HalfPoint(30)));
++        let mut direct = RunProperties { style_id: Some("Emphasis".into()), ..Default::default() };
++        let character = sheet.effective_run_properties(None, Some(&direct));
++        assert_eq!(character.face_for(ScriptClass::Ascii).font_size, Some(HalfPoint(32)));
++        assert_eq!(character.face_for(ScriptClass::Complex).font_size, Some(HalfPoint(34)));
++        direct.font_size = Some(HalfPoint(40));
++        let direct_size = sheet.effective_run_properties(None, Some(&direct));
++        assert_eq!(direct_size.face_for(ScriptClass::Ascii).font_size, Some(HalfPoint(40)));
++        assert_eq!(direct_size.face_for(ScriptClass::Complex).font_size, Some(HalfPoint(34)), "direct sz does not erase inherited szCs");
++        direct.script = Some(Box::new(super::super::formatting::ScriptRunProperties {
++            font_size_cs: Some(HalfPoint(42)), ..Default::default()
++        }));
++        let direct_both = sheet.effective_run_properties(None, Some(&direct));
++        assert_eq!(direct_both.face_for(ScriptClass::Complex).font_size, Some(HalfPoint(42)));
++    }
++
++    #[test]
++    fn default_paragraph_style_does_not_infer_default_from_name_or_false_attribute() {
++        use crate::core::units::HalfPoint;
++        for attribute in ["", r#"w:default="0""#, r#"w:default="false""#, r#"w:default="off""#] {
++            let sheet = default_style_sheet(&format!(r#"
++              <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults>
++              <w:style w:type="paragraph" w:styleId="Normal" {attribute}><w:name w:val="Normal"/><w:rPr><w:sz w:val="48"/></w:rPr></w:style>"#));
++            assert_eq!(sheet.default_paragraph_style_id, None, "{attribute}");
++            assert_eq!(sheet.effective_run_properties(None, None).font_size, Some(HalfPoint(20)));
++            assert_eq!(sheet.effective_run_properties(Some("Normal"), None).font_size, Some(HalfPoint(48)));
++        }
++    }
++
++    #[test]
++    fn default_paragraph_style_uses_last_enabled_of_its_own_type() {
++        use crate::core::units::HalfPoint;
++        let sheet = default_style_sheet(r#"
++          <w:style w:type="paragraph" w:default="1" w:styleId="First"><w:rPr><w:sz w:val="24"/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:default="true" w:styleId="Last"><w:rPr><w:sz w:val="28"/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:default="false" w:styleId="Disabled"><w:rPr><w:sz w:val="30"/></w:rPr></w:style>
++          <w:style w:type="character" w:default="1" w:styleId="Character"><w:rPr><w:sz w:val="40"/></w:rPr></w:style>
++          <w:style w:type="table" w:default="1" w:styleId="Table"><w:rPr><w:sz w:val="50"/></w:rPr></w:style>
++          <w:style w:type="numbering" w:default="1" w:styleId="Numbering"><w:rPr><w:sz w:val="60"/></w:rPr></w:style>"#);
++        assert_eq!(sheet.default_paragraph_style_id.as_deref(), Some("Last"));
++        assert_eq!(sheet.effective_run_properties(None, None).font_size, Some(HalfPoint(28)));
++        assert_eq!(sheet.effective_run_properties(Some("Character"), None).font_size, None,
++            "a character style is not a paragraph style even when referenced by pStyle");
++    }
++
++    #[test]
++    fn default_paragraph_style_accepts_empty_last_definition() {
++        use crate::core::units::HalfPoint;
++        let sheet = default_style_sheet(r#"
++          <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults>
++          <w:style w:type="paragraph" w:default="1" w:styleId="First"><w:rPr><w:sz w:val="24"/></w:rPr></w:style>
++          <w:style w:type="paragraph" w:default="1" w:styleId="Empty"/>"#);
++        assert_eq!(sheet.default_paragraph_style_id.as_deref(), Some("Empty"));
++        assert_eq!(sheet.effective_run_properties(None, None).font_size, Some(HalfPoint(20)));
++    }
++
++    #[test]
++    fn default_paragraph_style_rejects_ambiguous_or_invalid_definitions() {
++        for body in [
++            r#"<w:style w:type="paragraph" w:default="1" w:styleId="Same"/><w:style w:type="character" w:styleId="Same"/>"#,
++            r#"<w:style w:type="unknown" w:default="1" w:styleId="Bad"/>"#,
++            r#"<w:style w:type="paragraph" w:default="yes" w:styleId="Bad"/>"#,
++            r#"<w:style w:type="paragraph" w:default="1"/>"#,
++        ] {
++            let xml = format!(r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">{body}</w:styles>"#);
++            assert!(StyleSheet::parse(xml.as_bytes()).is_err(), "{body}");
++        }
++    }
++
++    #[test]
++    fn default_paragraph_style_reaches_ir_without_aliasing_unknown_style_cache_entries() {
++        use crate::core::opc::{OpcWriter, PartName};
++        use crate::core::relationships::rel_types;
++        use crate::ir::{Element, InlineContent, ParagraphAlignment};
++        use std::io::Cursor;
++
++        let styles = br#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
++          <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="20"/></w:rPr></w:rPrDefault></w:docDefaults>
++          <w:style w:type="paragraph" w:default="1" w:styleId="Body">
++            <w:pPr><w:jc w:val="center"/></w:pPr><w:rPr><w:sz w:val="28"/></w:rPr>
++          </w:style>
++        </w:styles>"#;
++        // The omitted and explicit-unknown pStyle used to intern to the same
++        // cache key. Exercise both insertion orders and repeated cache hits.
++        for first_unknown in [false, true] {
++            let mut body = String::new();
++            for index in 0..4 {
++                let unknown = (index % 2 == 0) == first_unknown;
++                let ppr = if unknown { r#"<w:pPr><w:pStyle w:val="Missing"/></w:pPr>"# } else { "" };
++                body.push_str(&format!("<w:p>{ppr}<w:r><w:t>正文{index}</w:t></w:r></w:p>"));
++            }
++            let document_xml = format!(r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>"#);
++            let mut writer = OpcWriter::new(Cursor::new(Vec::new())).unwrap();
++            let doc_part = PartName::new("/word/document.xml").unwrap();
++            writer.add_part(&doc_part,
++                "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
++                document_xml.as_bytes()).unwrap();
++            writer.add_package_rel(rel_types::OFFICE_DOCUMENT, "word/document.xml");
++            writer.add_part(&PartName::new("/word/styles.xml").unwrap(),
++                "application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml", styles).unwrap();
++            writer.add_part_rel(&doc_part, rel_types::STYLES, "styles.xml");
++            let doc = super::super::DocxDocument::from_reader(Cursor::new(writer.finish().unwrap().into_inner())).unwrap();
++            let ir = crate::convert_docx::docx_to_ir(&doc);
++            assert_eq!(ir.sections[0].elements.len(), 4);
++            for (index, element) in ir.sections[0].elements.iter().enumerate() {
++                let Element::Paragraph(paragraph) = element else { panic!("expected paragraph") };
++                let unknown = (index % 2 == 0) == first_unknown;
++                assert_eq!(paragraph.alignment, if unknown { None } else { Some(ParagraphAlignment::Center) });
++                let InlineContent::Text(span) = &paragraph.content[0] else { panic!("expected text") };
++                assert_eq!(span.text, format!("正文{index}"));
++                assert_eq!(span.font_size_half_pt, Some(if unknown { 20 } else { 28 }));
++            }
++        }
++    }
++}

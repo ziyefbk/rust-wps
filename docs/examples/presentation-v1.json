@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "size_emu": [10972800, 6172200],
+  "slides": [
+    {"text_boxes": [{"bounds_emu": [914400, 914400, 7315200, 1828800], "text": "简文演示\n从 Rust 模型创建 PPTX", "font_size_hundredths_pt": 2400, "bold": true, "italic": false, "color_rgb": [39, 94, 168]}]},
+    {"text_boxes": []}
+  ]
+}
