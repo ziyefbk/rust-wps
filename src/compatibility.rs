@@ -456,6 +456,7 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
 
 pub(crate) struct DocxGeometryAudit {
     pub empty_fonts: crate::empty_paragraph_fonts::Audit,
+    pub cell_colors: crate::table_cell_colors::Audit,
     pub compatibility: CompatibilityReport,
     pub tables: Vec<crate::table_widths::TableGeometry>,
     pub vertical_tables: crate::table_vertical::VerticalAudit,
@@ -967,7 +968,14 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         crate::empty_paragraph_fonts::Audit::default()
     };
     report.risks.extend(empty_fonts.warnings.iter().cloned());
+    let cell_colors = if parts_have_content_types(bytes)? {
+        crate::table_cell_colors::analyze(bytes)
+    } else {
+        crate::table_cell_colors::Audit::default()
+    };
+    report.risks.extend(cell_colors.warnings.iter().cloned());
     Ok(DocxGeometryAudit {
+        cell_colors,
         empty_fonts,
         compatibility: report,
         tables: table_widths,

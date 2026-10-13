@@ -175,3 +175,19 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
 #empty-paragraph-font-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
 #empty-paragraph-font-controls[hidden] { display:none; }
 #edit-empty-paragraph-font-state { color:#52677f; font-size:12px; }
+
+#table-cell-color-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#table-cell-color-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+#edit-cell-fill { width:7.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
+#edit-cell-fill-picker { width:32px; height:32px; padding:3px; border:1px solid var(--line); border-radius:4px; background:white; cursor:pointer; }
+#edit-cell-fill-picker:disabled { opacity:.4; cursor:default; }
+#edit-cell-color-state { color:#61738a; font-size:11px; }
+/* Preview approximation only: the model and DOCX retain auto. CSS variables
+   prevent clipboard parsing from converting the derived color to a text mark.
+   Inherited color on structural/code elements keeps explicit RGB spans
+   authoritative regardless of nesting. Both selectors cover the print clone. */
+.tiptap [data-cell-text-color-mode="auto"] { color:var(--word-cell-auto-preview); }
+.tiptap [data-cell-text-color-mode="auto"] :is(p,h1,h2,h3,code),
+#print-document .tiptap [data-cell-text-color-mode="auto"] :is(p,h1,h2,h3,code) { color:inherit; }
+/* A selection must remain visible without replacing the authored fill. */
+.tiptap [data-cell-fill-rgb].selectedCell { outline:2px solid #477fc6; outline-offset:-2px; }

@@ -1,5 +1,51 @@
 # 当前跨格式回归记录
 
+## 本轮：直接单元格底色与局部自动文字色（2026-10-13）
+
+基于 `ca151b28eaaf285fae2e5d1f395c614320d9623d`，新增独立可选的逐格 `cellFillRgb` 与 `cellTextColorMode: "auto"`。底色 / 模式分别重置、严格混合状态、精确选区、原子候选 / 撤销、草稿、表格结构维护和可信 DOCX 重开贯通。局部自动色只作用于普通无显式 RGB 的文字；链接保留原颜色。未改变全局样式，不写死白字。范围和消费者 / CSS 差异见 [TABLE_CELL_COLORS.md](TABLE_CELL_COLORS.md)。
+
+### 源审计与安全边界
+
+同一源包快照的实际 OPC 主文档 / 样式 / 主题经独立审计。严格直接 clear + RGB 底色，附带主题时只接受实际唯一 accent1–6 的单一未转换 srgbClr 且与 fallback 相等，导出固定 RGB 并警告丢失主题联动。活动表格 / 段落 / 字符样式与缺省颜色逐层核对；主题、图案、条件、包装或复杂内容的未证明路径保留明确提示的旧规范化，未把 vendor 混合色或缺少文字 mark 当作来源证据。
+
+审查发现列表转换可能让新颜色身份核验失败并拒绝旧可接受源，已修复为整个颜色附加原子撤回、保留旧规范化并提示。新增真实编号 / 项目符号单元格和后部身份不一致对照，防止早期格属性泄漏。活动默认颜色缓存、样式链与累计预算、逐字符流式比较限制了重复扫描与分配；未使用模板不会触发新普遍拒绝。
+
+### 完整门禁
+
+- Rust **1.99 / 1.88 各 480 项通过**：原 460 +16 集成 +4 审计内部检查；两个版本不重复累计。日志 `tmp/cell-colors-core-stable-final.log`、`tmp/cell-colors-core-msrv-final.log`
+- **446 项无浏览器前端检查通过**：原 424 +22。覆盖候选 / 实际控件回调、光标 / 正反向 / 多格 / 行列 / 表格节点选区、混合 / 缺省、分别重置、原子历史、锁定 / composing、迟到色盘事件、结构增删与表头转换、非法元数据粘贴、预算与不可变打印声明。精确命令 `tmp/cell-colors-ui-command.json`，最终日志 `tmp/cell-colors-ui-aggregate-final.log`
+- `npm run build` / TypeScript、Python / Node 语法与 `git diff --check` 通过，构建日志 `tmp/cell-colors-ui-build-final.log`；保留既有 bundle 大小提示。六个新浏览器规格仅发现，未执行（`tmp/cell-colors-browser-discovery-final.log`）；不把无 DOM 事务或 LibreOffice 视作浏览器 / WebView2 / 原生打印验收
+- 原始严格 all-targets Clippy 各仍仅旧跨格式单项：1.99 XLS `chunks_exact_to_as_chunks` 与1.88 PPT `uninlined_format_args`。仅分别排除该已知单项后通过：`tmp/cell-colors-clippy-{stable,msrv}-scoped.log`。新增 type-complexity 通过类型别名修复，早期失败日志保留，没有增加豁免
+- `vendor/`、锁文件及桌面后端未改，本轮未重新跑解析库 1,264 项或真实桌面；旧计数不算新验证。没有重试已确认的 Chromium EPERM、云 localhost、Linux glib / WebKit 或离线 Windows 路径
+
+冻结 CLI `tmp/cell-colors-final-cli` SHA-256 `ae22f9aaf5ee6f7015d521ef1d6960452969da2ee459071aab4df0bb81c3e516`；前轮 `tmp/empty-font-final-cli` 保持 `ed77eea6ce7d6f26eede7ee33af3655f42e1eeebbc9060ac086bb57c6a6d9430`。沿用两份既有 target、`CARGO_INCREMENTAL=0` 和相同工具链环境，前端沿用 `USERPROFILE=tmp/linux-home`，未建立重复 Rust target。
+
+### 独立产品与消费者证据
+
+最终独立报告 `tmp/table-cell-colors-independent/run-hpy1jhpc/report.json`，SHA-256 `aaa8c34cc88dd88bc122988a2e5889c9f84bf2192deabc7860e0a1ee138d674d`；脚本 `scripts/check-table-cell-colors.py` SHA-256 `969c0d1b9272349a870107146f9408b171a32b73115642770f55dd40dc759f51`。结果汇总 `acceptance-summary.json` SHA-256 `d379b824fae309ee7068b45fe67f1c628d075f3e4d99bc97b3aec7e4b088b32a`。
+
+- **43 个来源**：42 份独立 python-docx / OOXML 定向样本及 1 份未改造 POI `table-alignment.docx`；25 个来源有被证明的填色，12 个有被证明的自动文字色。其余支持有提示的原有规范化，包括活动条件 / 默认字符色、图案、主题 mismatch / 缺关系、直接 / 继承底纹高亮、重复 / 包装文字色及普通列表绑定；主题改名目标与无关旧主题单独核对
+- **101 次产品导出及完整可信模型重开、144 次 Rust 原件 / 输出禁止覆盖**；43 个剥除仅新增颜色字段的模型与旧冻结 CLI 导出全包字节相等，其他全局部件不变；另一次 helper 已存在输出目录拒绝单列。源包、原件及旧 CLI 散列保持不变
+- **14 个真实编辑器候选 / 历史结果**：分别基于独立实色源与真实原件导入，执行首次 / 编辑 / undo / redo / 只重置底色 / 只重置模式 / 两项重置。每份输出独立核对 OOXML、文字和显式 RGB，再完整可信重开；另有独立模型编辑与非产品生成的参考，未把产品输出当期望来源
+- **32 个非法模型、4 个包篡改拒绝**：含底色 / 自动色 XML 改动后修复哈希仍与模型重编码不符；不把任意命令失败当作成功拒绝
+- **41 份本轮新 LibreOfficeDev PDF /21 组比较**：每文件独立新 profile / 进程。19 组受控源→输出 / 编辑参考→输出的文字基线 x/y 最大差 **0.0 pt**；文字与实际 RGB 顺序、底色 RGB 及数量一致。两组真实原件 / 实际编辑原件的 y 最大差也为 **0.0 pt**，但 x 最大差 **145.85 pt** 明确仍为既有宽度规范化，不声称整页相等
+- 最终原件与输出 PNG、八格受控联系图实际查看，位置 `final-original-{source,product}.png` 和 `final-controlled-contact-sheet.png`。六条橙色表头带及白色自动文字恢复；明确黑 / 绿文字、第一格改蓝、分别重置均可见，没有可见缺字或裁切。浏览器亮度近似可能把同一橙底显示为黑字，仍不是 DOCX 消费者像素对照
+
+
+独立补充 `scripts/check-table-cell-color-geometry.py`（SHA-256 `4bea54f066e1392d3bd3af1b8d04eca749413683fa8cb8c85265aadd0e3e4866`）重新打开并校验**同一41份最终PDF**，未新渲染。21组的页码 / 文字 / RGB / 字体 / 字号完全相同，填色矩形上下边缘也完全相同；19组受控比较的四条填色边缘及文字原点**精确相等，不使用容差**。两组原件比较的填色左边缘最大差145.90pt、右边缘145.40pt、文字x145.85pt分别登记，不隐藏原自动宽度改变。补充报告 `geometry-supplement.json` SHA-256 `ac0b5840db242d21f82a24ecc249734fcdc9eebb3c8b3cbb282f8b94579cdfd7`；主报告保持原样。
+
+早期三次失败运行均保留：直接段落 / run 底纹控制最初误以为仍保留填色，后按实际保守范围更正独立预期；helper 比较遇到 ProseMirror mark 属性的空原型与普通对象差别，改为仅规范对象原型而保留全部字段并补回归；混合色新样本的前导空格漏写 `xml:space="preserve"`，消费者正确丢弃源空格，严格比较失败。最后只修复新独立样本作者错误并从冻结产品全量重跑；没有改产品迎合样本、放宽阈值、覆盖失败文件，或把那 41 份失败批次 PDF 混入最终计数。另两份 no-op tint / shade 控制独立保留，不加入主 43 来源 /41 PDF 计数。
+
+### 历史响应与全包字节
+
+最终严格重放 `tmp/contextual-legacy/run-oegw_f99/report.json` SHA-256 `e3bf6e82f37fd0c23a054150bb52a8502767c95f1a6b1903905c98e0fa23bdee`：**1,520 条旧响应、302 份完整 DOCX 字节金样、604 次可信重开和604次禁止覆盖**完成。源文件、旧报告、冻结 CLI 与325份保留 PDF 身份均不变；保留 PDF 只核对散列，**没有本轮重新渲染**。
+
+相对最近发布的空段字体 / Backspace 核心基线 `run-6fm253ps`，**1,514 条响应精确相等 /6 条有意变化，没有新拒绝**。其中4个旧隐式表头底纹导入仅增加未证明底色规范化提示；原件审计增加主题转固定 RGB 提示；原件导入增加18个直接底色与18个独立自动模式及两条对应提示。仅移除经独立原始 XML 核对的这些新属性和明确诊断后，全部完整响应再次精确相同。分类报告 `tmp/cell-colors-legacy-acceptance.json` SHA-256 `4b47f509b5de0e1a1b742f5e46a4773ef662b2d4f66bd134d8ece98d3f77fb29`。
+
+更早上下文间距基线的原始严格报告仍如实保留 `REVIEW_REQUIRED`（1,488 精确 /32 差异），包含此前已发布的有意字体 / 几何 / 诊断变化；没有把它覆盖成“全响应逐字相同”。本轮功能源码 / 依赖84文件身份另记录于 `tmp/cell-colors-final-code-identity.json`。
+
+
+
 ## 当前：空标题 Backspace 保留段落格式（2026-10-13）
 
 基于 `243a95b905529e299dd57c5c44867f89d50f894e`，修复已有真正空标题在首文字位置退回正文时，上游 `clearNodes` 清除七个段落字段及空行字体的问题。应用键位分支保留 `undoInputRule` 优先，复用经过完整校验的逐段类型事务，转换一次撤销；同一隔离单段单元格也原位处理，其他合段 / 列表 / 选区分支保持原行为。明确范围和剩余整文档删除重置见 [BLOCK_TYPE_CONVERSION.md](BLOCK_TYPE_CONVERSION.md)。没有修改 Rust、vendor、依赖或 node_modules。

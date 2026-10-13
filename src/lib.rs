@@ -4,6 +4,7 @@ mod page_geometry;
 mod paragraph_contextual_spacing;
 mod paragraph_indentation;
 mod presentation_vertical;
+mod table_cell_colors;
 mod table_vertical;
 mod table_widths;
 use anyhow::{Context, Result, bail};

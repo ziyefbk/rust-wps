@@ -633,6 +633,38 @@ pub fn cell_vertical_align(node: &Node) -> Result<Option<&str>> {
         })
         .transpose()
 }
+/// Direct cell fill and local automatic foreground are independent. Omission
+/// keeps the historical profile/header defaults and byte representation.
+pub fn cell_fill_rgb(node: &Node) -> Result<Option<&str>> {
+    node.attrs
+        .get("cellFillRgb")
+        .map(|value| {
+            let value = value
+                .as_str()
+                .context("Cell fill must be an uppercase RGB string")?;
+            ensure!(
+                value.len() == 6
+                    && value
+                        .bytes()
+                        .all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c)),
+                "Cell fill must be six uppercase RGB digits"
+            );
+            Ok(value)
+        })
+        .transpose()
+}
+pub fn cell_text_auto(node: &Node) -> Result<bool> {
+    match node.attrs.get("cellTextColorMode") {
+        None => Ok(false),
+        Some(Value::String(value)) if value == "auto" => Ok(true),
+        _ => bail!("Cell text color mode must be omitted or auto"),
+    }
+}
+fn has_table_colors(node: &Node) -> bool {
+    node.attrs.contains_key("cellFillRgb")
+        || node.attrs.contains_key("cellTextColorMode")
+        || node.content.iter().any(has_table_colors)
+}
 fn has_table_vertical(node: &Node) -> bool {
     node.attrs.contains_key("rowMinHeightTwips")
         || node.attrs.contains_key("cellVerticalAlign")
@@ -940,6 +972,8 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "colwidth",
                 "align",
                 "cellVerticalAlign",
+                "cellFillRgb",
+                "cellTextColorMode",
             ],
             "tableRow" => &["rowMinHeightTwips"],
             "image" => &[
@@ -1200,6 +1234,8 @@ pub fn validate(doc: &Node) -> Result<()> {
         }
         if matches!(node.kind.as_str(), "tableCell" | "tableHeader") {
             cell_vertical_align(node)?;
+            cell_fill_rgb(node)?;
+            cell_text_auto(node)?;
             ensure!(
                 integer(node, "colspan", 1)? == 1 && integer(node, "rowspan", 1)? == 1,
                 "Merged table cells are not supported yet"
@@ -1227,8 +1263,17 @@ pub fn validate(doc: &Node) -> Result<()> {
             !vertical || depth == 1,
             "Vertical table geometry requires a top-level table"
         );
+        let colors = node.kind == "table" && has_table_colors(node);
+        ensure!(
+            !colors || depth == 1,
+            "Cell colors require a top-level table"
+        );
         let fixed = node.kind == "table"
-            && (table_column_widths(node)?.is_some() || positioned || explicit_margins || vertical);
+            && (table_column_widths(node)?.is_some()
+                || positioned
+                || explicit_margins
+                || vertical
+                || colors);
         if node.kind == "table" {
             ensure!(
                 !(fixed_ancestor || fixed && table_depth > 0),
@@ -1308,6 +1353,7 @@ struct Writer {
     nums: Vec<String>,
     has_spacing: bool,
     image_bytes: usize,
+    cell_text_auto: bool,
 }
 impl Writer {
     fn paragraph(&mut self, node: &Node, number: Option<(usize, usize)>) -> Result<String> {
@@ -1390,6 +1436,9 @@ impl Writer {
             let link = child.marks.iter().find(|m| m.kind == "link");
             let has_text_color = child.marks.iter().any(|mark| mark.kind == "textColor");
             let has_font_family = child.marks.iter().any(|mark| mark.kind == "fontFamily");
+            if self.cell_text_auto && !has_text_color && link.is_none() {
+                marks.push_str("<w:color w:val=\"auto\"/>");
+            }
             if let Some(link) = link {
                 let id = self.link_rels.len() + 1;
                 let href = link.attrs["href"].as_str().expect("validated link");
@@ -1554,19 +1603,26 @@ impl Writer {
                     for (cell, width) in row.content.iter().zip(&widths) {
                         table.push_str(&format!(
                             "<w:tc><w:tcPr><w:tcW w:w=\"{width}\" w:type=\"dxa\"/>{}</w:tcPr>",
-                            if cell.kind == "tableHeader" {
-                                "<w:shd w:fill=\"E8EEF7\"/>"
+                            if let Some(fill) = cell_fill_rgb(cell)? {
+                                format!(
+                                    "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{fill}\"/>"
+                                )
+                            } else if cell.kind == "tableHeader" {
+                                "<w:shd w:fill=\"E8EEF7\"/>".to_owned()
                             } else {
-                                ""
+                                String::new()
                             }
                         ));
                         if let Some(alignment) = cell_vertical_align(cell)? {
                             let end = table.len() - "</w:tcPr>".len();
                             table.insert_str(end, &format!("<w:vAlign w:val=\"{alignment}\"/>"));
                         }
+                        let previous_auto = self.cell_text_auto;
+                        self.cell_text_auto = cell_text_auto(cell)?;
                         for block in &cell.content {
                             table.push_str(&self.block(block, level)?);
                         }
+                        self.cell_text_auto = previous_auto;
                         // OOXML requires each table cell to end with a paragraph.
                         if cell.content.last().is_some_and(|b| b.kind == "table") {
                             table.push_str("<w:p/>");

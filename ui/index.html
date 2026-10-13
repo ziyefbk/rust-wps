@@ -90,6 +90,14 @@
         <button id="edit-cell-vertical-align-reset" title="仅移除选中单元格的显式垂直对齐">默认垂直对齐</button>
         <span id="edit-table-vertical-state" aria-live="polite"></span>
       </span>
+      <span id="table-cell-color-controls" role="group" aria-label="单元格底色与自动文字色">
+        <label>单元格底色 <input id="edit-cell-fill" type="text" aria-label="单元格底色（RGB）" placeholder="默认" title="六位 RGB，例如 #C03030；Enter 或应用按钮提交，清空后应用恢复默认" autocomplete="off" spellcheck="false"><input id="edit-cell-fill-picker" type="color" value="#ffffff" aria-label="选择单元格底色"></label>
+        <button id="edit-cell-fill-apply" title="仅修改选中单元格底色；可一次撤销">应用底色</button>
+        <button id="edit-cell-fill-reset" title="仅移除选中单元格的显式底色，保留文字色模式">默认底色</button>
+        <label>单元格文字色<select id="edit-cell-text-color-mode" aria-label="单元格文字色模式"><option value="">默认（跟随样式）</option><option value="auto">自动</option><option value="mixed" disabled>混合</option></select></label>
+        <button id="edit-cell-text-color-mode-reset" title="仅移除自动文字色模式，保留底色与显式文字颜色">默认文字色模式</button>
+        <span id="edit-cell-color-state" aria-live="polite"></span>
+      </span>
       <span id="table-cell-margins-controls" role="group" aria-label="表格单元格左右边距">
         <label>当前表格左内边距 <input id="edit-table-cell-margin-left" type="number" min="0" max="1584" step="0.05" aria-label="单元格左边距（pt）" placeholder="先选表格" title="0–1584 pt，0.05 pt 递增；须同时填写左右边距；显式 0 与默认不同"> pt</label>
         <label>右边距 <input id="edit-table-cell-margin-right" type="number" min="0" max="1584" step="0.05" aria-label="单元格右边距（pt）" placeholder="先选表格" title="作用于当前整张表格；左右边距之和须小于每列宽度"> pt</label>

@@ -184,7 +184,30 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     }
     let ir = parsed.to_ir();
     crate::table_vertical::verify_ir(&audit.vertical_tables, &ir)?;
+    let color_identity_matches =
+        crate::table_cell_colors::verify_ir(&audit.cell_colors, &ir).is_ok();
     let mut report = convert_ir(ir, compatibility, true)?;
+    if !color_identity_matches
+        || crate::table_cell_colors::attach(
+            &audit.cell_colors,
+            &mut report.document,
+            &mut report.compatibility.risks,
+        )
+        .is_err()
+    {
+        report
+            .compatibility
+            .risks
+            .remove(crate::table_cell_colors::THEME_FIXED);
+        report
+            .compatibility
+            .risks
+            .remove(crate::table_cell_colors::AUTO_PRESERVED);
+        report
+            .compatibility
+            .risks
+            .insert(crate::table_cell_colors::BINDING_NORMALIZED.into());
+    }
     if let Some(page) = audit.page {
         report
             .document

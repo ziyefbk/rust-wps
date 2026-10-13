@@ -1,5 +1,6 @@
 import {EmptyParagraphFont, preflightEmptyParagraphFontHTML, validateEmptyParagraphFontDocument} from './word-empty-paragraph-font';
 import {WordEmptyParagraphFontControls} from './word-empty-paragraph-font-controls';
+import {WordTableCellColorControls} from './word-table-cell-color-controls';
 import {WordTableVerticalControls} from './word-table-vertical-controls';
 import {createWordBlockTypeTransaction} from './word-block-type';
 import {withWordBlockTypeInteractions} from './word-block-type-interactions';
@@ -96,6 +97,7 @@ let fontFamilyInputEditing = false;
 let paragraphSpacingInputEditing = false;
 let tableWidthInputEditing = false;
 let pageControls: WordPageControls | null = null;
+let tableCellColorControls: WordTableCellColorControls | null = null;
 let tableVerticalControls: WordTableVerticalControls | null = null;
 let tableCellMarginsControls: WordTableCellMarginsControls | null = null;
 let paragraphIndentControls: WordParagraphIndentControls | null = null;
@@ -348,6 +350,7 @@ function updateToolbar() {
   emptyParagraphFontControls?.update();
   paragraphIndentControls?.update();
   tableCellMarginsControls?.update();
+  tableCellColorControls?.update();
   tableVerticalControls?.update();
   imageControls?.update();
   imageParagraphControls?.update();
@@ -482,6 +485,7 @@ export function closeAuthoring() {
   emptyParagraphFontControls?.reset();
   paragraphIndentControls?.reset();
   tableCellMarginsControls?.reset();
+  tableCellColorControls?.reset();
   tableVerticalControls?.reset();
   imageControls?.reset();
   imageParagraphControls?.reset();
@@ -549,7 +553,7 @@ async function create(content?: JSONContent, ask = true) {
       draftTimer = setTimeout(() => { draftTimer = null; if (owner === editor) queueDraft(snapshotDocument(owner)); }, 700);
       updateToolbar();
     },
-    onFocus: () => { tableVerticalControls?.cancelEditing(); tableCellMarginsControls?.cancelEditing(); paragraphIndentControls?.cancelEditing(); tableIndentInputEditing = false; tableWidthInputEditing = false; paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
+    onFocus: () => { tableCellColorControls?.cancelEditing(); tableVerticalControls?.cancelEditing(); tableCellMarginsControls?.cancelEditing(); paragraphIndentControls?.cancelEditing(); tableIndentInputEditing = false; tableWidthInputEditing = false; paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
     onSelectionUpdate: updateToolbar,
   });
   dirty = !!content; version++;
@@ -561,6 +565,7 @@ async function create(content?: JSONContent, ask = true) {
 
 export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof showNotice, beforeLeave: () => Promise<boolean> = async () => true) {
   emptyParagraphFontControls = new WordEmptyParagraphFontControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
+  tableCellColorControls = new WordTableCellColorControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   tableVerticalControls = new WordTableVerticalControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   tableCellMarginsControls = new WordTableCellMarginsControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   paragraphIndentControls = new WordParagraphIndentControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
