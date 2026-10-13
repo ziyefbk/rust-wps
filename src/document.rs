@@ -286,6 +286,49 @@ pub fn table_column_widths(node: &Node) -> Result<Option<Vec<u64>>> {
     Ok(Some(widths))
 }
 
+/// Optional positioning is separate from paragraph alignment. Omission retains
+/// legacy encoding; explicit zero is retained rather than treated as absent.
+pub fn table_position(node: &Node) -> Result<(Option<&str>, Option<u64>)> {
+    let alignment = node
+        .attrs
+        .get("tableAlign")
+        .map(|value| {
+            let value = value.as_str().context("Table alignment must be a string")?;
+            ensure!(
+                matches!(value, "left" | "center" | "right"),
+                "Unsupported table alignment"
+            );
+            Ok::<_, anyhow::Error>(value)
+        })
+        .transpose()?;
+    let indent = node
+        .attrs
+        .get("tableIndentTwips")
+        .map(|value| {
+            let value = value
+                .as_u64()
+                .context("Table indent must be integer twips")?;
+            ensure!(
+                value <= MAX_TABLE_WIDTH_TWIPS,
+                "Table indent exceeds limits"
+            );
+            Ok::<_, anyhow::Error>(value)
+        })
+        .transpose()?;
+    ensure!(
+        indent.unwrap_or(0) == 0 || alignment.is_none_or(|a| a == "left"),
+        "Positive table indentation requires left alignment"
+    );
+    if indent.is_some() {
+        let total = table_column_widths(node)?.map_or(9000, |widths| widths.iter().sum());
+        ensure!(
+            total + indent.unwrap_or(0) <= MAX_TABLE_WIDTH_TWIPS,
+            "Table width and indentation exceed limits"
+        );
+    }
+    Ok((alignment, indent))
+}
+
 pub fn validate(doc: &Node) -> Result<()> {
     ensure!(doc.kind == "doc", "Root must be doc");
     style_profile(doc)?;
@@ -315,7 +358,7 @@ pub fn validate(doc: &Node) -> Result<()> {
             ],
             "paragraph" => &["textAlign", "spaceBefore", "spaceAfter", "lineSpacing"],
             "orderedList" => &["start", "type"],
-            "table" => &["columnWidthsTwips"],
+            "table" => &["columnWidthsTwips", "tableAlign", "tableIndentTwips"],
             "tableCell" | "tableHeader" => &["colspan", "rowspan", "colwidth", "align"],
             "image" => &["src", "alt", "title", "width", "height"],
             "doc" | "text" | "hardBreak" | "pageBreak" | "bulletList" | "listItem" | "tableRow" => {
@@ -555,11 +598,15 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "Custom cell alignment is not supported yet"
             );
         }
-        let fixed = node.kind == "table" && table_column_widths(node)?.is_some();
+        let positioned = node.kind == "table" && {
+            let (alignment, indent) = table_position(node)?;
+            alignment.is_some() || indent.is_some()
+        };
+        let fixed = node.kind == "table" && (table_column_widths(node)?.is_some() || positioned);
         if node.kind == "table" {
             ensure!(
                 !(fixed_ancestor || fixed && table_depth > 0),
-                "Fixed column widths do not support nested tables"
+                "Explicit table geometry does not support nested tables"
             );
             let columns = node.content[0].content.len();
             ensure!(
@@ -761,12 +808,25 @@ impl Writer {
                 } else {
                     ""
                 };
+                let (alignment, indent) = table_position(node)?;
+                let mut position = String::new();
+                if let Some(alignment) = alignment {
+                    position.push_str(&format!("<w:jc w:val=\"{alignment}\"/>"));
+                }
+                if let Some(indent) = indent {
+                    position.push_str(&format!("<w:tblInd w:w=\"{indent}\" w:type=\"dxa\"/>"));
+                }
+                let margins = if alignment.is_some() || indent.is_some() {
+                    "<w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar>"
+                } else {
+                    ""
+                };
                 let grid: String = widths
                     .iter()
                     .map(|width| format!("<w:gridCol w:w=\"{width}\"/>"))
                     .collect();
                 let mut table = format!(
-                    "<w:tbl><w:tblPr><w:tblW w:w=\"{total}\" w:type=\"dxa\"/><w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders>{layout}</w:tblPr><w:tblGrid>{grid}</w:tblGrid>"
+                    "<w:tbl><w:tblPr><w:tblW w:w=\"{total}\" w:type=\"dxa\"/>{position}<w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders>{layout}{margins}</w:tblPr><w:tblGrid>{grid}</w:tblGrid>"
                 );
                 for row in &node.content {
                     table.push_str("<w:tr>");

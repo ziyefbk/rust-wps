@@ -181,6 +181,14 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
                     .eq(width.row_cells.iter().copied()),
                 "Table metadata does not match imported rows and cells"
             );
+            if let Some(alignment) = &width.alignment {
+                node.attrs
+                    .insert("tableAlign".into(), serde_json::json!(alignment));
+            }
+            if let Some(indent) = width.indent {
+                node.attrs
+                    .insert("tableIndentTwips".into(), serde_json::json!(indent));
+            }
             if let Some(width) = &width.widths {
                 node.attrs
                     .insert("columnWidthsTwips".into(), serde_json::json!(width));
@@ -494,11 +502,6 @@ fn blocks(
                 } else {
                     "Table widths, borders and cell formatting normalized".into()
                 });
-                if spacing {
-                    report
-                        .risks
-                        .insert("Table alignment normalized to editor defaults".into());
-                }
                 node("table", rows)
             }
             Element::Image(image) => {

@@ -525,8 +525,28 @@ pub(crate) fn audit_docx_bytes_with_tables(
             .get(rel_types::STYLES)
             .map(Vec::as_slice)
             .unwrap_or(empty_styles);
-        let table_audit =
-            crate::table_widths::analyze(normalized_main.as_deref().expect("main read"), styles)?;
+        let settings_relationships = relationships
+            .all()
+            .iter()
+            .filter(|r| r.rel_type == rel_types::SETTINGS)
+            .count();
+        // Ambiguous settings affect the new indentation proof only; do not
+        // tighten unrelated legacy table imports as a side effect.
+        let ambiguous_settings = b"<ambiguous-settings/>";
+        let table_settings = if settings_relationships > 1
+            || relationships.all().iter().any(|r| {
+                r.rel_type == rel_types::SETTINGS
+                    && r.target_mode == office_oxide::core::relationships::TargetMode::External
+            }) {
+            Some(ambiguous_settings.as_slice())
+        } else {
+            spacing_parts.get(rel_types::SETTINGS).map(Vec::as_slice)
+        };
+        let table_audit = crate::table_widths::analyze(
+            normalized_main.as_deref().expect("main read"),
+            styles,
+            table_settings,
+        )?;
         table_widths = table_audit.tables;
         report.risks.extend(table_audit.risks);
         let (used, numbers) =
@@ -556,6 +576,7 @@ pub(crate) fn audit_docx_bytes_with_tables(
                 .get("word/styles.xml")
                 .map(Vec::as_slice)
                 .unwrap_or(empty_styles),
+            parts.get("word/settings.xml").map(Vec::as_slice),
         )?;
         table_widths = table_audit.tables;
         report.risks.extend(table_audit.risks);

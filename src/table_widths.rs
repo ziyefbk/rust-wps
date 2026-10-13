@@ -8,6 +8,8 @@ pub(crate) const TABLE_GEOMETRY_RISK: &str =
     "Unsupported table geometry cannot be preserved in an editable copy";
 pub(crate) const AUTOFIT_WIDTHS_RISK: &str =
     "Autofit table widths normalized; fixed column widths were not inferred";
+pub(crate) const INHERITED_POSITION_RISK: &str =
+    "Inherited table indentation normalized; automatic table geometry not preserved";
 pub(crate) const TABLE_FORMATTING_RISK: &str = "Table borders and cell formatting normalized";
 
 #[derive(Default)]
@@ -19,6 +21,8 @@ pub(crate) struct TableAudit {
 pub(crate) struct TableGeometry {
     pub widths: Option<Vec<u64>>,
     pub row_cells: Vec<usize>,
+    pub alignment: Option<String>,
+    pub indent: Option<u64>,
 }
 
 #[derive(Default)]
@@ -163,7 +167,11 @@ fn width(node: &Xml, allow_auto: bool) -> Result<Option<u64>> {
 }
 fn neutral_indent(node: &Xml) -> Result<()> {
     ensure!(
-        node.wml && node.attr("type")? == Some("dxa") && number(node.attr("w")?, true)? == 0,
+        node.wml
+            && node.children.is_empty()
+            && node.attrs.len() == 2
+            && node.attr("type")? == Some("dxa")
+            && number(node.attr("w")?, true)? == 0,
         "Table indentation is unsupported"
     );
     Ok(())
@@ -197,22 +205,35 @@ fn check_tree(node: &Xml) -> Result<()> {
         "Unsupported table declaration: {}",
         node.tag
     );
-    if node.tag == "tblInd" {
-        neutral_indent(node)?;
-    }
     if node.tag == "tblCellSpacing" {
         ensure!(
             node.wml && node.attr("type")? == Some("dxa") && number(node.attr("w")?, true)? == 0,
             "Table cell spacing is unsupported"
         );
     }
+    node.one("tblInd")?;
+    node.one("tblCellMar")?;
+    node.one("tcMar")?;
+    node.one("tblPr")?;
     for child in &node.children {
+        ensure!(
+            child.tag != "tblInd" || node.tag == "tblPr",
+            "Non-direct table indentation"
+        );
+        ensure!(
+            child.tag != "tblPr" || matches!(node.tag.as_str(), "tbl" | "style" | "tblStylePr"),
+            "Non-direct table properties"
+        );
+        ensure!(
+            child.tag != "jc" || matches!(node.tag.as_str(), "pPr" | "tblPr"),
+            "Non-direct alignment declaration"
+        );
         check_tree(child)?;
     }
     Ok(())
 }
 
-fn check_styles(table: &Xml, styles: &Xml) -> Result<()> {
+fn check_styles<'a>(table: &Xml, styles: &'a Xml) -> Result<Vec<&'a Xml>> {
     let mut all = Vec::new();
     styles.descendants("style", &mut all);
     let explicit = table
@@ -251,6 +272,7 @@ fn check_styles(table: &Xml, styles: &Xml) -> Result<()> {
         ensure!(pending.len() <= 1, "Ambiguous default table styles");
     }
     let mut visited = BTreeSet::new();
+    let mut active = Vec::new();
     while let Some(id) = pending.pop() {
         ensure!(visited.insert(id.clone()), "Cyclic table style inheritance");
         let matching: Vec<_> = all
@@ -269,7 +291,25 @@ fn check_styles(table: &Xml, styles: &Xml) -> Result<()> {
             "Unsupported table style identity"
         );
         style.attr("default")?;
+        active.push(*style);
         check_tree(style)?;
+        let mut indents = Vec::new();
+        style.descendants("tblInd", &mut indents);
+        for indent in indents {
+            neutral_indent(indent)?;
+        }
+        let mut properties = Vec::new();
+        style.descendants("tblPr", &mut properties);
+        for properties in properties {
+            if let Some(alignment) = properties.one("jc")? {
+                ensure!(
+                    alignment.children.is_empty()
+                        && alignment.attrs.len() == 1
+                        && matches!(alignment.attr("val")?, Some("left" | "start")),
+                    "Inherited table alignment is unsupported"
+                );
+            }
+        }
         // Do not infer inherited/conditional layout. Even direct overrides of
         // these declarations are intentionally outside this first subset.
         for tag in ["tblLayout", "tblW", "tcW", "tblGrid", "gridCol"] {
@@ -288,7 +328,212 @@ fn check_styles(table: &Xml, styles: &Xml) -> Result<()> {
             );
         }
     }
+    Ok(active)
+}
+
+fn indent_compatibility(settings: Option<&[u8]>) -> Result<()> {
+    let Some(data) = settings else {
+        return Ok(());
+    };
+    let settings = xml(data)?;
+    ensure!(
+        settings.children.len() == 1
+            && settings.children[0].tag == "settings"
+            && settings.children[0].wml,
+        "Unsupported settings identity"
+    );
+    let root = &settings.children[0];
+    let compat = root.one("compat")?;
+    let mut containers = Vec::new();
+    root.descendants("compat", &mut containers);
+    ensure!(
+        containers.len() == usize::from(compat.is_some()),
+        "Non-direct compatibility container"
+    );
+    let mut modes = Vec::new();
+    root.descendants("compatSetting", &mut modes);
+    let direct_modes: Vec<_> = compat
+        .into_iter()
+        .flat_map(|c| c.children.iter())
+        .filter(|c| c.tag == "compatSetting")
+        .collect();
+    ensure!(
+        modes.len() == direct_modes.len(),
+        "Non-direct compatibility setting"
+    );
+    let mut count = 0;
+    for mode in direct_modes {
+        if mode.attr("name")? == Some("compatibilityMode") {
+            count += 1;
+            ensure!(
+                mode.wml
+                    && mode.children.is_empty()
+                    && mode.attrs.len() == 3
+                    && mode.attr("uri")? == Some("http://schemas.microsoft.com/office/word")
+                    && matches!(mode.attr("val")?, Some("11" | "12" | "14")),
+                "Table indentation requires supported legacy compatibility semantics"
+            );
+        }
+    }
+    ensure!(count <= 1, "Ambiguous compatibility mode");
     Ok(())
+}
+
+fn indent_margins(node: &Xml) -> Result<()> {
+    // Indentation measures the leading text edge in our compatibility baseline.
+    // Horizontal margins alter the border position, so unlike general cell
+    // formatting these cannot be normalized silently on this path.
+    fn paths(node: &Xml) -> Result<()> {
+        for child in &node.children {
+            ensure!(
+                child.tag != "tblCellMar" || node.tag == "tblPr",
+                "Non-direct table margins"
+            );
+            ensure!(
+                child.tag != "tcMar" || node.tag == "tcPr",
+                "Non-direct cell margins"
+            );
+            paths(child)?;
+        }
+        Ok(())
+    }
+    paths(node)?;
+    let mut margins = Vec::new();
+    for tag in ["tblCellMar", "tcMar"] {
+        node.descendants(tag, &mut margins);
+    }
+    for margin in margins {
+        ensure!(
+            margin.wml && margin.attrs.is_empty(),
+            "Unsupported table margin namespace or attributes"
+        );
+        ensure!(
+            margin.children.iter().all(|child| child.wml
+                && child.children.is_empty()
+                && matches!(
+                    child.tag.as_str(),
+                    "left" | "right" | "start" | "end" | "top" | "bottom"
+                )),
+            "Unsupported or non-direct table margin declaration"
+        );
+        for side in ["left", "right", "start", "end"] {
+            if let Some(value) = margin.one(side)? {
+                ensure!(
+                    value.attrs.len() == 2 && width(value, false)? == Some(108),
+                    "Indented tables require 108-twip horizontal cell margins"
+                );
+            }
+        }
+        ensure!(
+            !(margin.one("left")?.is_some() && margin.one("start")?.is_some()
+                || margin.one("right")?.is_some() && margin.one("end")?.is_some()),
+            "Ambiguous horizontal table margins"
+        );
+    }
+    Ok(())
+}
+
+fn position(
+    table: &Xml,
+    styles: &Xml,
+    settings: Option<&[u8]>,
+    fixed: bool,
+) -> Result<(Option<String>, Option<u64>, bool)> {
+    let properties = table.one("tblPr")?;
+    let alignment_node = properties.map(|p| p.one("jc")).transpose()?.flatten();
+    let alignment = alignment_node
+        .map(|node| {
+            ensure!(
+                node.children.is_empty() && node.attrs.len() == 1,
+                "Unsupported table alignment declaration"
+            );
+            // bidiVisual is rejected in both the table and its active style chain.
+            // With that LTR proof, start/end have physical left/right semantics.
+            match node.attr("val")? {
+                Some("left" | "start") => Ok("left".to_owned()),
+                Some("center") => Ok("center".to_owned()),
+                Some("right" | "end") => Ok("right".to_owned()),
+                _ => anyhow::bail!("Unsupported table alignment"),
+            }
+        })
+        .transpose()?;
+    let indent_node = properties.map(|p| p.one("tblInd")).transpose()?.flatten();
+    let mut indent = indent_node
+        .map(|node| {
+            indent_compatibility(settings)?;
+            indent_margins(table)?;
+            for style in check_styles(table, styles)? {
+                indent_margins(style)?;
+            }
+            ensure!(
+                node.wml
+                    && node.children.is_empty()
+                    && node.attrs.len() == 2
+                    && node.attr("type")? == Some("dxa"),
+                "Table indent requires direct dxa units"
+            );
+            number(node.attr("w")?, true)
+        })
+        .transpose()?;
+    ensure!(
+        indent.unwrap_or(0) == 0 || alignment.as_deref().is_none_or(|a| a == "left"),
+        "Non-left table indentation differs between consumers"
+    );
+    let mut declarations = Vec::new();
+    table.descendants("tblInd", &mut declarations);
+    ensure!(
+        declarations.len() == usize::from(indent_node.is_some()),
+        "Non-direct table indentation"
+    );
+    let active = check_styles(table, styles)?;
+    // Conditional indentation is not an unconditional table property. Do not
+    // promote it merely because its numerical value happens to be zero.
+    for style in &active {
+        let mut conditional = Vec::new();
+        style.descendants("tblStylePr", &mut conditional);
+        for condition in conditional {
+            let mut indents = Vec::new();
+            condition.descendants("tblInd", &mut indents);
+            ensure!(
+                indents.is_empty(),
+                "Conditional table indentation is unsupported"
+            );
+        }
+    }
+    let selected_style = properties
+        .map(|p| p.one("tblStyle"))
+        .transpose()?
+        .flatten()
+        .is_some();
+    let inherited_zero = selected_style
+        && active.iter().any(|style| {
+            style
+                .children
+                .iter()
+                .filter(|n| n.tag == "tblPr")
+                .any(|p| p.children.iter().any(|n| n.tag == "tblInd"))
+        });
+    let mut normalized = false;
+    if indent.is_none() && inherited_zero {
+        let proof = (|| -> Result<()> {
+            indent_compatibility(settings)?;
+            indent_margins(table)?;
+            for style in active {
+                indent_margins(style)?;
+            }
+            Ok(())
+        })();
+        if proof.is_ok() {
+            indent = Some(0);
+        } else if !fixed {
+            normalized = true;
+        } else {
+            proof?;
+        }
+    }
+    // An implicit default-style zero differs from explicit selected-style zero
+    // in the independently checked legacy consumer; keep omission in that case.
+    Ok((alignment, indent, normalized))
 }
 
 fn table_widths(table: &Xml, styles: &Xml) -> Result<Option<Vec<u64>>> {
@@ -428,7 +673,7 @@ fn table_widths(table: &Xml, styles: &Xml) -> Result<Option<Vec<u64>>> {
     Ok(Some(widths))
 }
 
-pub(crate) fn analyze(main: &[u8], styles: &[u8]) -> Result<TableAudit> {
+pub(crate) fn analyze(main: &[u8], styles: &[u8], settings: Option<&[u8]>) -> Result<TableAudit> {
     let main = xml(main)?;
     let mut tables = Vec::new();
     main.descendants("tbl", &mut tables);
@@ -446,15 +691,42 @@ pub(crate) fn analyze(main: &[u8], styles: &[u8]) -> Result<TableAudit> {
             .collect();
         match table_widths(table, &styles) {
             Ok(widths) => {
+                let positioning = position(table, &styles, settings, widths.is_some()).and_then(
+                    |(alignment, indent, normalized)| {
+                        let total = widths.as_ref().map_or(9000, |values| values.iter().sum());
+                        ensure!(
+                            total + indent.unwrap_or(0) <= crate::document::MAX_TABLE_WIDTH_TWIPS,
+                            "Table width and indentation exceed limits"
+                        );
+                        Ok((alignment, indent, normalized))
+                    },
+                );
+                let (alignment, indent, normalized) = match positioning {
+                    Ok(position) => position,
+                    Err(_) => {
+                        audit.risks.insert(TABLE_GEOMETRY_RISK.into());
+                        (None, None, false)
+                    }
+                };
+                if normalized {
+                    audit.risks.insert(INHERITED_POSITION_RISK.into());
+                }
                 if widths.is_none() {
                     audit.risks.insert(AUTOFIT_WIDTHS_RISK.into());
                 }
-                audit.tables.push(TableGeometry { widths, row_cells });
+                audit.tables.push(TableGeometry {
+                    widths,
+                    row_cells,
+                    alignment,
+                    indent,
+                });
             }
             Err(_) => {
                 audit.risks.insert(TABLE_GEOMETRY_RISK.into());
                 audit.tables.push(TableGeometry {
                     widths: None,
+                    alignment: None,
+                    indent: None,
                     row_cells,
                 });
             }

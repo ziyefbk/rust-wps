@@ -7,7 +7,8 @@ import {STANDARD_WORD_STYLE_PROFILE, documentStyleProfile, editorStyleProfile, s
 import {ParagraphSpacing, createParagraphSpacingTransaction, formatLineSpacingLines, omitDefaultParagraphSpacing, paragraphSpacingFields, parseLineSpacingLines, parseParagraphSpacePoints, selectedParagraphSpacing, validateParagraphSpacingDocument, type ParagraphSpacingField, type ParagraphSpacingPatch} from './word-paragraph-spacing';
 import { Editor, Extension, Mark as TiptapMark, Node as TiptapNode, type JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import {WordTable, createTableColumnWidthTransaction, createTableStructureTransaction, omitDefaultTableWidths, parseTableColumnWidthPoints, selectedTableColumn, validateTableWidthsDocument, type TableStructureAction} from './word-table-widths';
+import {WordTable, createTableColumnWidthTransaction, createTablePositionTransaction, createTableStructureTransaction, omitDefaultTableWidths, parseTableColumnWidthPoints, selectedTableColumn, validateTableWidthsDocument, type TableStructureAction} from './word-table-widths';
+import {isTableAlignment, parseTableIndentPoints, selectedTablePosition, type TablePositionPatch} from './word-table-position';
 import { TableKit } from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
 import {AllSelection,TextSelection} from '@tiptap/pm/state';
@@ -77,6 +78,8 @@ let fontFamilyInputChanged = false;
 let fontFamilyInputEditing = false;
 let paragraphSpacingInputEditing = false;
 let tableWidthInputEditing = false;
+let tableIndentInputEditing = false;
+let tableIndentInputChanged = false;
 const paragraphSpacingInputChanged = new Set<ParagraphSpacingField>();
 const paragraphSpacingIds: Record<ParagraphSpacingField, string> = {
   spaceBefore: 'edit-space-before', spaceAfter: 'edit-space-after', lineSpacing: 'edit-line-spacing',
@@ -287,6 +290,29 @@ function changeTableStructure(action: TableStructureAction) {
   } catch (error) { showNotice(String(error), true); return; }
   editor.view.focus(); updateToolbar();
 }
+function applyTablePosition(patch?: TablePositionPatch) {
+  if (!editor || leaving || paused || printing || saving) return;
+  if (!patch) {
+    const input = el<HTMLInputElement>('edit-table-indent'), value = input.value.trim();
+    if (!value && input.dataset.tableIndentState === 'mixed' && !tableIndentInputChanged) return;
+    const indent = value ? parseTableIndentPoints(value) : null;
+    if (input.validity.badInput || value !== '' && indent === null) {
+      showNotice('左缩进须为 0–1584 pt（0.05 pt 递增）；清空后应用恢复默认，0 表示显式零缩进。', true); return;
+    }
+    patch = {tableIndentTwips: indent};
+  }
+  syncDomTextSelection();
+  try {
+    const transaction = createTablePositionTransaction(editor.state, patch);
+    if (transaction) {
+      editor.view.dispatch(closeHistory(transaction));
+      editor.view.dispatch(closeHistory(editor.state.tr));
+    }
+  } catch (error) {showNotice(String(error), true); updateToolbar(); return;}
+  tableIndentInputEditing = false;
+  tableIndentInputChanged = false;
+  editor.view.focus(); updateToolbar();
+}
 function updateToolbar() {
   el('authoring-sheet').dataset.styleProfile = editor ? editorStyleProfile(editor) ?? 'legacy-v1' : 'legacy-v1';
   const locked = leaving || paused || printing;
@@ -324,6 +350,23 @@ function updateToolbar() {
     columnWidth.dataset.columnWidthState = column?.widths ? 'fixed' : 'auto';
   }
   el('edit-column-width-state').textContent = column ? `第 ${column.column + 1} 列${column.widths ? ` · 总宽 ${column.widths.reduce((sum, width) => sum + width, 0) / 20} pt` : ''}` : '';
+  const position = editor ? selectedTablePosition(editor.state) : null;
+  const positionLocked = locked || saving || !position?.supported;
+  const tableAlign = el<HTMLSelectElement>('edit-table-align'), tableIndent = el<HTMLInputElement>('edit-table-indent');
+  tableAlign.disabled = positionLocked;
+  tableAlign.value = position?.tableAlign.mixed ? 'mixed' : position?.tableAlign.value ?? '';
+  tableAlign.dataset.tableAlignState = position?.tableAlign.mixed ? 'mixed' : position?.tableAlign.value == null ? 'default' : 'explicit';
+  tableIndent.disabled = positionLocked;
+  el<HTMLButtonElement>('edit-table-indent-apply').disabled = positionLocked;
+  el<HTMLButtonElement>('edit-table-position-reset').disabled = positionLocked || !position?.hasExplicit;
+  if (!tableIndentInputEditing && document.activeElement !== tableIndent) {
+    tableIndent.value = position?.tableIndentTwips.value == null ? '' : String(position.tableIndentTwips.value / 20);
+    tableIndent.placeholder = !position?.count ? '先选表格' : position.tableIndentTwips.mixed ? '混合' : '默认';
+    tableIndent.dataset.tableIndentState = position?.tableIndentTwips.mixed ? 'mixed' : position?.tableIndentTwips.value == null ? 'default' : 'explicit';
+    tableIndentInputChanged = false;
+  }
+  el('edit-table-position-state').textContent = !position?.count ? '' : !position.supported ? '仅限无合并、无嵌套的矩形表格'
+    : position.count > 1 ? `${position.count} 张表格` : '当前表格';
   const selectedSpacing = editor ? selectedParagraphSpacing(editor.state) : null;
   for (const field of paragraphSpacingFields) {
     const input = el<HTMLInputElement>(paragraphSpacingIds[field]);
@@ -404,6 +447,8 @@ function queueDraft(doc: JSONContent) {
 }
 export function closeAuthoring() {
   tableWidthInputEditing = false;
+  tableIndentInputEditing = false;
+  tableIndentInputChanged = false;
   paragraphSpacingInputEditing = false;
   paragraphSpacingInputChanged.clear();
   fontFamilyInputEditing = false;
@@ -460,7 +505,7 @@ async function create(content?: JSONContent, ask = true) {
       draftTimer = setTimeout(() => { draftTimer = null; if (owner === editor) queueDraft(snapshotDocument(owner)); }, 700);
       updateToolbar();
     },
-    onFocus: () => { tableWidthInputEditing = false; paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
+    onFocus: () => { tableIndentInputEditing = false; tableWidthInputEditing = false; paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
     onSelectionUpdate: updateToolbar,
   });
   dirty = !!content; version++;
@@ -649,7 +694,8 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
   el('edit-table').addEventListener('click', () => {
     if (!editor || leaving || paused || printing || saving) return;
     syncDomTextSelection();
-    if (selectedTableColumn(editor.state)?.widths) { showNotice('固定列宽表格中暂不支持嵌套表格，请将光标移到表格外再插入。', true); return; }
+    const current = selectedTableColumn(editor.state);
+    if (current && (current.widths || current.table.attrs.tableAlign != null || current.table.attrs.tableIndentTwips != null)) { showNotice('已设置固定列宽或位置的表格中不支持嵌套表格，请将光标移到表格外再插入。', true); return; }
     editor.chain().insertTable({rows: 3, cols: 3, withHeaderRow: true}).run(); editor.view.focus();
   });
   for (const [id, action] of Object.entries({row: 'addRowAfter', column: 'addColumnAfter',
@@ -669,6 +715,25 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
   });
   el('edit-column-width-apply').addEventListener('click', () => applyTableColumnWidth());
   el('edit-column-width-reset').addEventListener('click', () => applyTableColumnWidth(true));
+  el('table-position-controls').addEventListener('focusout', event => {
+    if (event.relatedTarget instanceof HTMLElement && el('table-position-controls').contains(event.relatedTarget)) return;
+    tableIndentInputEditing = false; updateToolbar();
+  });
+  el('edit-table-align').addEventListener('pointerdown', syncDomTextSelection);
+  el('edit-table-align').addEventListener('change', () => {
+    const align = el<HTMLSelectElement>('edit-table-align').value;
+    if (align === '' || isTableAlignment(align)) applyTablePosition({tableAlign: align || null});
+  });
+  el('edit-table-indent').addEventListener('pointerdown', syncDomTextSelection);
+  el('edit-table-indent').addEventListener('focus', () => {tableIndentInputEditing = true;});
+  el('edit-table-indent').addEventListener('input', () => {tableIndentInputChanged = true;});
+  el('edit-table-indent').addEventListener('keydown', event => {
+    if (event.isComposing || event.keyCode === 229) return;
+    if (event.key === 'Enter') {event.preventDefault(); applyTablePosition();}
+    if (event.key === 'Escape') {event.preventDefault(); tableIndentInputEditing = false; tableIndentInputChanged = false; editor?.view.focus(); updateToolbar();}
+  });
+  el('edit-table-indent-apply').addEventListener('click', () => applyTablePosition());
+  el('edit-table-position-reset').addEventListener('click', () => applyTablePosition({tableAlign: null, tableIndentTwips: null}));
   el('edit-image').addEventListener('click', () => el<HTMLInputElement>('image-file').click());
   el('image-file').addEventListener('change', async () => {
     const input = el<HTMLInputElement>('image-file'); const file = input.files?.[0]; input.value = '';

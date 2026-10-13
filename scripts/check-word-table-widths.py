@@ -292,7 +292,7 @@ def make_fixtures(directory):
     unsupported("automatic-cell", lambda d, t: t.cell(0, 0)._tc.tcPr.find("w:tcW", NS).set(qn("w:type"), "auto"), "automatic cell width under fixed layout")
     unsupported("merged", lambda d, t: t.cell(0, 0).merge(t.cell(0, 1)), "merged cells")
     unsupported("ragged", lambda d, t: t.rows[1]._tr.remove(t.rows[1]._tr.tc_lst[-1]), "ragged rows")
-    unsupported("indented", lambda d, t: child(t._tbl.tblPr, "tblInd", w=240, type="dxa"), "table indentation")
+    unsupported("negative-indent", lambda d, t: child(t._tbl.tblPr, "tblInd", w=-240, type="dxa"), "negative table indentation")
     unsupported("floating", lambda d, t: child(t._tbl.tblPr, "tblpPr", vertAnchor="text", horzAnchor="margin", tblpX=0, tblpY=0), "floating table")
     unsupported("nested", lambda d, t: t.cell(0, 0).add_table(rows=1, cols=1), "nested source table")
     doc = fresh_document()

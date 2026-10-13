@@ -5,6 +5,9 @@ import {EditorState, NodeSelection, Plugin, Selection, TextSelection, type Trans
 import {CellSelection, TableMap, addColumnAfter, addColumnBefore, addRowAfter, addRowBefore,
   deleteColumn, deleteRow, deleteTable, isInTable, selectedRect} from '@tiptap/pm/tables';
 import {parseParagraphSpacePoints} from './word-paragraph-spacing';
+import {isTableAlignment, isTableIndent, parseTableAlignMetadata, parseTableIndentMetadata, selectedPositionTables,
+  selectedTablePosition, tablePositionDOM, tablePositionError, tablePositionFields, tablePositionMargins,
+  validateTablePositionAttributes, type TablePositionPatch} from './word-table-position';
 
 export const MAX_TABLE_WIDTH_TWIPS = 31680;
 export const DEFAULT_TABLE_WIDTH_TWIPS = 9000;
@@ -34,25 +37,31 @@ export function parseTableColumnWidthsMetadata(value: string | null): number[] |
 }
 
 export function validateTableWidthsDocument(document: JSONContent): void {
-  const visit = (node: JSONContent, tableDepth: number, fixedAncestor: boolean) => {
+  const visit = (node: JSONContent, tableDepth: number, geometryAncestor: string | null) => {
     if (cellTypes.has(node.type ?? '') && node.attrs?.colwidth != null) throw new Error('不支持单元格像素 colwidth；请使用整表 columnWidthsTwips 固定列宽。');
     const hasWidth = !!node.attrs && Object.prototype.hasOwnProperty.call(node.attrs, widthAttribute);
     if (hasWidth && (node.type !== 'table' || !isTableColumnWidths(node.attrs![widthAttribute]))) throw new Error(widthError);
+    const positioned = validateTablePositionAttributes(node);
     const fixed = node.type === 'table' && hasWidth;
-    if (node.type === 'table' && (fixed && tableDepth > 0 || fixedAncestor)) throw new Error(widthError);
-    if (fixed) {
-      const widths = node.attrs![widthAttribute] as number[];
-      if (!node.content?.length || node.content.length > 500) throw new Error(widthError);
+    const geometry = fixed || positioned;
+    const error = positioned ? tablePositionError : widthError;
+    if (node.type === 'table' && (geometry && tableDepth > 0 || geometryAncestor)) throw new Error(geometryAncestor ?? error);
+    if (geometry) {
+      const widths = fixed ? node.attrs![widthAttribute] as number[] : null;
+      const columns = widths?.length ?? node.content?.[0]?.content?.length ?? 0;
+      if (!node.content?.length || node.content.length > 500 || !columns || columns > 50) throw new Error(error);
+      if (positioned && (widths?.reduce((sum, width) => sum + width, 0) ?? DEFAULT_TABLE_WIDTH_TWIPS)
+        + (node.attrs!.tableIndentTwips ?? 0) > MAX_TABLE_WIDTH_TWIPS) throw new Error(tablePositionError);
       for (const row of node.content) {
-        if (row.type !== 'tableRow' || row.content?.length !== widths.length) throw new Error(widthError);
+        if (row.type !== 'tableRow' || row.content?.length !== columns) throw new Error(error);
         for (const cell of row.content) {
-          if (!cellTypes.has(cell.type ?? '') || (cell.attrs?.colspan ?? 1) !== 1 || (cell.attrs?.rowspan ?? 1) !== 1) throw new Error(widthError);
+          if (!cellTypes.has(cell.type ?? '') || (cell.attrs?.colspan ?? 1) !== 1 || (cell.attrs?.rowspan ?? 1) !== 1) throw new Error(error);
         }
       }
     }
-    for (const child of node.content ?? []) visit(child, tableDepth + Number(node.type === 'table'), fixedAncestor || fixed);
+    for (const child of node.content ?? []) visit(child, tableDepth + Number(node.type === 'table'), geometryAncestor ?? (geometry ? error : null));
   };
-  visit(document, 0, false);
+  visit(document, 0, null);
 }
 
 // Default null is an editor-only attribute. Fixed cells carry no second width
@@ -63,6 +72,7 @@ export function omitDefaultTableWidths(document: JSONContent, inFixedTable = fal
   if (result.attrs) {
     result.attrs = {...result.attrs};
     if (result.type === 'table' && result.attrs[widthAttribute] === null) delete result.attrs[widthAttribute];
+    if (result.type === 'table') for (const field of tablePositionFields) if (result.attrs[field] === null) delete result.attrs[field];
     if (fixed && cellTypes.has(result.type ?? '') && result.attrs.colwidth === null) delete result.attrs.colwidth;
     if (Object.keys(result.attrs).length === 0) delete result.attrs;
   }
@@ -82,7 +92,7 @@ export function fixedTableDOM(widths: number[], attributes: Record<string, unkno
 // row's pixel colwidth attributes. Override both mount and update for canonical
 // tables, and retain the original renderer for tables without fixed geometry.
 export class FixedTableView extends TableView {
-  constructor(...args: ConstructorParameters<typeof TableView>) { super(...args); this.syncFixedWidths(); }
+  constructor(...args: ConstructorParameters<typeof TableView>) { super(...args); this.syncFixedWidths(); this.syncPosition(); }
   private syncFixedWidths() {
     const widths: unknown = this.node.attrs[widthAttribute];
     if (!isTableColumnWidths(widths)) { this.table.removeAttribute(widthDataAttribute); return; }
@@ -96,6 +106,21 @@ export class FixedTableView extends TableView {
       return col;
     }));
   }
+  private syncPosition() {
+    const attrs = this.node.attrs, margins = tablePositionMargins(attrs);
+    for (const name of ['data-table-position', 'data-table-align', 'data-table-indent-twips']) this.table.removeAttribute(name);
+    this.table.style.marginLeft = margins?.left ?? '';
+    this.table.style.marginRight = margins?.right ?? '';
+    if (!margins) {if (!isTableColumnWidths(attrs[widthAttribute])) this.table.style.tableLayout = ''; return;}
+    this.table.setAttribute('data-table-position', '');
+    if (isTableAlignment(attrs.tableAlign)) this.table.setAttribute('data-table-align', attrs.tableAlign);
+    if (isTableIndent(attrs.tableIndentTwips)) this.table.setAttribute('data-table-indent-twips', String(attrs.tableIndentTwips));
+    if (!isTableColumnWidths(attrs[widthAttribute])) {
+      this.table.style.tableLayout = 'auto';
+      this.table.style.width = `${DEFAULT_TABLE_WIDTH_TWIPS / 15}px`;
+      this.table.style.minWidth = '0';
+    }
+  }
   update(node: Node) {
     if (node.type !== this.node.type) return false;
     if (isTableColumnWidths(this.node.attrs[widthAttribute]) && !isTableColumnWidths(node.attrs[widthAttribute])) {
@@ -107,6 +132,7 @@ export class FixedTableView extends TableView {
     }
     if (!super.update(node)) return false;
     this.syncFixedWidths();
+    this.syncPosition();
     return true;
   }
 }
@@ -163,6 +189,37 @@ export function createTableColumnWidthTransaction(state: EditorState, width: num
   if (JSON.stringify(widths) === JSON.stringify(selected.widths)) return null;
   const transaction = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks}).tr.setNodeMarkup(pos, undefined, {...table.attrs, [widthAttribute]: widths}, table.marks);
   validateProspectiveDocument(transaction.doc);
+  if (state.storedMarks) transaction.setStoredMarks(state.storedMarks);
+  return transaction;
+}
+
+// Position changes affect entire selected tables. Construct an isolated
+// transaction so rejected multi-table edits cannot leak into a Tiptap chain.
+export function createTablePositionTransaction(state: EditorState, patch: TablePositionPatch): Transaction | null {
+  const fields = Object.keys(patch) as (keyof TablePositionPatch)[];
+  for (const field of fields) {
+    if (!tablePositionFields.includes(field) || patch[field] !== null
+      && !(field === 'tableAlign' ? isTableAlignment(patch[field]) : isTableIndent(patch[field]))) throw new Error(tablePositionError);
+  }
+  const selected = selectedTablePosition(state);
+  if (!selected.count || !fields.length) return null;
+  if (!selected.supported) throw new Error(tablePositionError);
+  const transaction = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks}).tr;
+  for (const {table, pos} of selectedPositionTables(state)) {
+    const attrs = {...table.attrs, ...patch};
+    // Selecting center/right discards only incompatible positive indentation.
+    // Preserve explicit zero as distinct metadata from omitted indentation.
+    if ((patch.tableAlign === 'center' || patch.tableAlign === 'right') && (attrs.tableIndentTwips ?? 0) > 0) {
+      if (Object.prototype.hasOwnProperty.call(patch, 'tableIndentTwips')) throw new Error(tablePositionError);
+      attrs.tableIndentTwips = null;
+    }
+    if (tablePositionFields.some(field => table.attrs[field] !== attrs[field])) transaction.setNodeMarkup(pos, undefined, attrs, table.marks);
+  }
+  if (!transaction.docChanged) return null;
+  validateProspectiveDocument(transaction.doc);
+  // setNodeMarkup replaces the table node and maps a table NodeSelection to
+  // text by default. Position edits never change sizes, so keep its exact kind.
+  transaction.setSelection(Selection.fromJSON(transaction.doc, state.selection.toJSON()));
   if (state.storedMarks) transaction.setStoredMarks(state.storedMarks);
   return transaction;
 }
@@ -231,15 +288,30 @@ export const WordTable = Table.extend<TableOptions & {onWidthError: (message: st
     return {...this.parent?.(), [widthAttribute]: {
       default: null, rendered: false,
       parseHTML: element => parseTableColumnWidthsMetadata(element.getAttribute(widthDataAttribute)),
-    }};
+    }, tableAlign: {default: null, rendered: false, parseHTML: element => parseTableAlignMetadata(element.getAttribute('data-table-align'))},
+    tableIndentTwips: {default: null, rendered: false, parseHTML: element => parseTableIndentMetadata(element.getAttribute('data-table-indent-twips'))}};
   },
   renderHTML({node, HTMLAttributes}) {
     const widths: unknown = node.attrs[widthAttribute];
-    return isTableColumnWidths(widths) ? fixedTableDOM(widths, mergeAttributes(this.options.HTMLAttributes, HTMLAttributes))
-      : this.parent!({node, HTMLAttributes});
+    const attributes = mergeAttributes(HTMLAttributes, tablePositionDOM(node.attrs, !isTableColumnWidths(widths)));
+    return isTableColumnWidths(widths) ? fixedTableDOM(widths, mergeAttributes(this.options.HTMLAttributes, attributes))
+      : this.parent!({node, HTMLAttributes: attributes});
   },
   addCommands() {
-    return {...this.parent?.(), ...Object.fromEntries(Object.keys(structuralCommands).map(action => [action, () =>
+    const positionCommand = (patch: TablePositionPatch) => ({state, dispatch, tr}: CommandProps) => {
+      try {
+        const transaction = createTablePositionTransaction(state, patch);
+        if (!transaction) return false;
+        if (dispatch) {
+          for (const step of transaction.steps) tr.step(step);
+          tr.setSelection(Selection.fromJSON(tr.doc, transaction.selection.toJSON()));
+          if (transaction.storedMarksSet) tr.setStoredMarks(transaction.storedMarks);
+        }
+        return true;
+      } catch (error) {if (dispatch) this.options.onWidthError(String(error)); return false;}
+    };
+    return {...this.parent?.(), setTablePosition: positionCommand, resetTablePosition: () => positionCommand({tableAlign: null, tableIndentTwips: null}),
+      ...Object.fromEntries(Object.keys(structuralCommands).map(action => [action, () =>
       ({state, dispatch, tr}: CommandProps) => {
         try {
           const transaction = createTableStructureTransaction(state, action as TableStructureAction);

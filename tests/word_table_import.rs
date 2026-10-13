@@ -194,7 +194,7 @@ fn percentage_floating_indentation_merges_nesting_and_ragged_tables_refused() {
     for declaration in [
         r#"<w:tblW w:type="pct" w:w="5000"/>"#,
         r#"<w:tblpPr w:leftFromText="100"/>"#,
-        r#"<w:tblInd w:type="dxa" w:w="100"/>"#,
+        r#"<w:tblInd w:type="dxa" w:w="-100"/>"#,
         r#"<w:tblCellSpacing w:type="dxa" w:w="20"/>"#,
         "<w:gridSpan w:val=\"2\"/>",
         "<w:vMerge/>",
@@ -415,7 +415,7 @@ fn unresolved_and_ambiguous_style_identity_cannot_supply_fixed_geometry() {
 }
 
 #[test]
-fn explicit_table_alignment_has_a_normalization_warning() {
+fn explicit_table_alignment_is_preserved_without_normalization_warning() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("aligned.docx");
     write(
@@ -430,8 +430,12 @@ fn explicit_table_alignment_has_a_normalization_warning() {
         report.document.content[0].attrs["columnWidthsTwips"],
         json!([1200, 2400])
     );
+    assert_eq!(
+        report.document.content[0].attrs["tableAlign"],
+        json!("right")
+    );
     assert!(
-        report
+        !report
             .compatibility
             .risks
             .contains("Table alignment normalized to editor defaults")

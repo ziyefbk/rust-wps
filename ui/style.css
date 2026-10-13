@@ -8,6 +8,10 @@
 #table-width-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
 #edit-column-width { width:6.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
 #edit-column-width-state { color:#61738a; font-size:11px; }
+#table-position-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#table-position-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+#edit-table-indent { width:6.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
+#edit-table-position-state { color:#61738a; font-size:11px; }
 #paragraph-spacing-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
 #paragraph-spacing-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
 #paragraph-spacing-controls input { width:5.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
@@ -33,6 +37,9 @@
 .tiptap table { width:100%; border-collapse:collapse; margin:16px 0; table-layout:fixed; }
 .tiptap td,.tiptap th { border:1px solid #b7c4d5; padding:8px; vertical-align:top; min-width:40px; position:relative; }
 .tiptap table[data-column-widths-twips] td,.tiptap table[data-column-widths-twips] th { min-width:0; }
+/* Shared by the editor and immutable .tiptap print snapshot. Matches the
+   explicit 108-twip cell margins exported for positioned DOCX tables only. */
+.tiptap table[data-table-position] td,.tiptap table[data-table-position] th { padding-left:5.4pt; padding-right:5.4pt; min-width:0; }
 .tiptap th { background:#e8eef7; font-weight:600; }
 .tiptap td p,.tiptap th p { margin:0; }.tiptap .selectedCell { background:#dae8fb; }
 .ProseMirror-selectednode { outline:2px solid #477fc6; }

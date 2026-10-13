@@ -49,6 +49,13 @@
         <button id="edit-column-width-reset" title="移除整表固定列宽，恢复默认布局">自动列宽</button>
         <span id="edit-column-width-state" aria-live="polite"></span>
       </span>
+      <span id="table-position-controls" role="group" aria-label="表格位置">
+        <label>表格对齐 <select id="edit-table-align" aria-label="表格对齐" title="作用于当前表格或选中的表格；居中或右对齐会清除正缩进，可一次撤销。自动表宽设为 450 pt 基础宽度，内容仍可能撑宽或超出页面"><option value="">默认（左）</option><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option><option value="mixed" disabled>混合</option></select></label>
+        <label>左缩进 <input id="edit-table-indent" type="number" min="0" max="1584" step="0.05" aria-label="表格左缩进（pt）" placeholder="先选表格" title="以表格首列文字边缘计算，不是边框位移；仅左对齐支持正缩进。0 为显式零缩进（边框比默认位置向左 5.4 pt），留空应用恢复默认；表宽加缩进最多 1584 pt，自动表宽按 450 pt 计"> pt</label>
+        <button id="edit-table-indent-apply" title="应用整表缩进；混合值留空则不变，可一次撤销">应用缩进</button>
+        <button id="edit-table-position-reset" title="移除表格对齐和缩进，保留固定列宽">默认位置</button>
+        <span id="edit-table-position-state" aria-live="polite"></span>
+      </span>
       <button id="edit-page-break">插入分页符</button><button id="edit-link">编辑链接</button><button id="edit-image">插入图片</button><input id="image-file" type="file" accept="image/png,image/jpeg" hidden>
       <button id="edit-undo">撤销</button><button id="edit-redo">重做</button>
       <button id="edit-save" class="primary">另存 DOCX</button>
