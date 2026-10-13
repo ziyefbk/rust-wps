@@ -275,6 +275,8 @@ el('import-document').addEventListener('click', () => operation('正在准备编
     'Table borders and cell formatting normalized': '受支持的固定列宽会保留；表格边框和单元格格式改为默认样式，请核对换行和分页',
     'Table widths, borders and cell formatting normalized': '表格宽度、边框和单元格格式改为默认样式',
     'Unsupported image geometry cannot be preserved in an editable copy': '图片包含尚不支持的几何布局，暂时只能只读查看，避免改变原始显示效果',
+    'Image-only paragraph spacing and alignment preserved; other page and paragraph layout may be normalized': '已保留单图段落的间距和对齐；其他页面和段落版式可能规范化，请核对换行和分页',
+    'Image paragraph baseline font is unspecified; editor defaults may change its line box': '图片段落的基线字体未能确定，编辑器默认字体可能改变行框和后续正文位置，请核对原文',
     'Image paragraph placement and formatting normalized; original layout not preserved': '受支持的图片显示尺寸会保留；图片所在段落的位置和格式会规范化，不保留原始页面布局，请核对换行和分页',
     'Image position and display dimensions normalized': '图片位置和显示尺寸会改变',
     'Page and column breaks converted to paragraph boundaries': '分页和分栏改为段落分隔',

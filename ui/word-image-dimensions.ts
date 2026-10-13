@@ -1,5 +1,6 @@
 import {mergeAttributes, type JSONContent} from '@tiptap/core';
 import {inspectWordImageMedia, supportedImagePixelDimensions, validateImageDisplayMedia} from './word-image-media';
+import {imageParagraphDOM, imageParagraphFontStyle, imageParagraphHtmlImage, imageParagraphError, isImageParagraph, parseImageParagraphMetadata, validateImageParagraphDocument, IMAGE_PARAGRAPH_METADATA, type ImageParagraph} from './word-image-paragraph';
 import Image, {type ImageOptions} from '@tiptap/extension-image';
 import type {Node} from '@tiptap/pm/model';
 import {EditorState, NodeSelection, Plugin, Selection, type Transaction} from '@tiptap/pm/state';
@@ -57,6 +58,7 @@ export function parseImageDimensionsMetadata(width: string | null, height: strin
 // Run BEFORE nodeFromJSON: schema defaults would erase the difference between
 // an omitted pair and explicit null input. Geometry on any other node rejects.
 export function validateImageDimensionsDocument(document: JSONContent): void {
+  validateImageParagraphDocument(document);
   const stack = [{node: document, depth: 0}];
   let mediaBytes = 0, imageCount = 0;
   while (stack.length) {
@@ -71,7 +73,7 @@ export function validateImageDimensionsDocument(document: JSONContent): void {
       && (node.type !== 'image' || depth !== 1 || !imageDimensionFields.every(field => own(attrs, field)) || !isImageDimensions(attrs))) {
       throw new Error(imageDimensionsError);
     }
-    if (node.type === 'image' && attrs && isImageDimensions(attrs)) validateImageDisplayMedia(node.attrs!.src);
+    if (node.type === 'image' && attrs && (isImageDimensions(attrs) || isImageParagraph(attrs.imageParagraph))) validateImageDisplayMedia(node.attrs!.src);
     for (const child of node.content ?? []) stack.push({node: child, depth: depth + 1});
   }
 }
@@ -80,6 +82,10 @@ export function validateImageDimensionsDocument(document: JSONContent): void {
 // visible to validation instead of accidentally turning them into legacy data.
 export function omitDefaultImageDimensions(document: JSONContent): JSONContent {
   const result = {...document};
+  if (result.type === 'image' && result.attrs?.imageParagraph === null) {
+    result.attrs = {...result.attrs}; delete result.attrs.imageParagraph;
+    if (!Object.keys(result.attrs).length) delete result.attrs;
+  }
   if (result.type === 'image' && result.attrs?.displayWidthEmu === null && result.attrs?.displayHeightEmu === null) {
     result.attrs = {...result.attrs};
     for (const field of imageDimensionFields) delete result.attrs[field];
@@ -174,21 +180,63 @@ export function imageDimensionsGuard(onRejected: (message: string) => void = () 
   }});
 }
 
+export function createImageParagraphTransaction(state: EditorState, paragraph: ImageParagraph | null, token?: ImageSelectionToken): Transaction | null {
+  if (paragraph !== null && !isImageParagraph(paragraph)) throw new Error(imageParagraphError);
+  if (token && !matchesImageSelection(state, token)) return null;
+  const image = selectedWordImage(state);
+  if (!image) return null;
+  if (!image.supported) throw new Error(imageParagraphError);
+  // Compare canonical field values rather than caller JSON key order.
+  const attrs = {...image.node.attrs, imageParagraph: paragraph};
+  const next = image.node.type.create(attrs, image.node.content, image.node.marks);
+  if (next.eq(image.node)) return null;
+  const transaction = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks}).tr
+    .setNodeMarkup(image.pos, undefined, attrs, image.node.marks);
+  validateProspectiveImageDocument(transaction.doc);
+  transaction.setSelection(Selection.fromJSON(transaction.doc, state.selection.toJSON()));
+  if (state.storedMarks) transaction.setStoredMarks(state.storedMarks);
+  return transaction;
+}
+
 export const WordImage = Image.extend<ImageOptions & {onDimensionError: (message: string) => void}>({
   addOptions() {return {...this.parent!(), onDimensionError: () => {}};},
+  parseHTML() {
+    return [{tag: `[${IMAGE_PARAGRAPH_METADATA}]`, priority: 100, getAttrs: (element: HTMLElement) => {
+      const image = imageParagraphHtmlImage(element);
+      return image ? Object.fromEntries(['src', 'alt', 'title'].map(field => [field, image.getAttribute(field)])) : {};
+    }}, ...(this.parent?.() ?? [])];
+  },
   addAttributes() {
     const parent: Record<string, Record<string, unknown>> = this.parent?.() ?? {};
-    return {...parent, width: {...parent.width, parseHTML: () => null}, height: {...parent.height, parseHTML: () => null}, ...Object.fromEntries(imageDimensionFields.map(field => [field, {
-      default: null, rendered: false,
-      parseHTML: (element: HTMLElement) => {
-        try {return parseImageDimensionsMetadata(element.getAttribute(metadataNames[0]), element.getAttribute(metadataNames[1]))?.[field] ?? null;}
-        // Carry invalid owned metadata to the transaction guard. Do not silently
-        // paste a differently sized image by discarding a malformed pair.
-        catch {return 'invalid-image-dimensions';}
-      },
-    }]))};
+    return {...parent,
+      width: {...parent.width, parseHTML: () => null}, height: {...parent.height, parseHTML: () => null},
+      imageParagraph: {default: null, rendered: false, parseHTML: (element: HTMLElement) => {
+        try {
+          const value = element.getAttribute(IMAGE_PARAGRAPH_METADATA);
+          if (value !== null && !imageParagraphHtmlImage(element)) throw new Error(imageParagraphError);
+          return parseImageParagraphMetadata(value);
+        } catch {return 'invalid-image-paragraph';}
+      }},
+      ...Object.fromEntries(imageDimensionFields.map(field => [field, {
+        default: null, rendered: false,
+        parseHTML: (element: HTMLElement) => {
+          try {
+            const image = element.tagName?.toLowerCase() === 'div' ? imageParagraphHtmlImage(element) : element;
+            return parseImageDimensionsMetadata(image?.getAttribute(metadataNames[0]) ?? null, image?.getAttribute(metadataNames[1]) ?? null)?.[field] ?? null;
+          }
+          // Carry invalid owned metadata to the transaction guard. Do not silently
+          // paste a differently sized image by discarding a malformed pair.
+          catch {return 'invalid-image-dimensions';}
+        },
+      }]))};
   },
   renderHTML({node, HTMLAttributes}) {
+    const paragraph: unknown = node.attrs.imageParagraph;
+    if (isImageParagraph(paragraph)) {
+      const image = this.parent!({node, HTMLAttributes: mergeAttributes(HTMLAttributes, imageDimensionsDOM(node.attrs),
+        {style: 'display: inline; vertical-align: baseline; margin: 0'})});
+      return ['div', imageParagraphDOM(paragraph), ['span', {style: paragraph.runFont ? imageParagraphFontStyle(paragraph.runFont) : ''}, image]];
+    }
     return this.parent!({node, HTMLAttributes: mergeAttributes(HTMLAttributes, imageDimensionsDOM(node.attrs))});
   },
   addProseMirrorPlugins() {return [...(this.parent?.() ?? []), imageDimensionsGuard(this.options.onDimensionError)];},

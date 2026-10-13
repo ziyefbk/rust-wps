@@ -3,7 +3,7 @@ use crate::{
     compatibility::{CompatibilityReport, audit_docx_bytes_with_geometry},
     document::{Mark, Node},
 };
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use base64::Engine;
 use office_oxide::ir::{Element, ImageFormat, InlineContent, List, UnderlineStyle, VerticalAlign};
 use serde::{Deserialize, Serialize};
@@ -214,6 +214,16 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
             .risks
             .insert(crate::image_dimensions::IMAGE_FORMATTING_RISK.into());
     }
+    if audit
+        .images
+        .iter()
+        .any(|image| image.paragraph.paragraph_font.is_none())
+    {
+        report
+            .compatibility
+            .risks
+            .insert(crate::image_dimensions::IMAGE_BASELINE_RISK.into());
+    }
     // Missing effective DOCX spacing means OOXML's zero paragraph gaps and
     // single line spacing, not the editable profile's 6 pt / 1.5 defaults.
     // Trusted authored models bypass external conversion and retain omission.
@@ -266,6 +276,10 @@ fn verify_image_conversion(
                     == Some((source.width_emu, source.height_emu)),
                 "Imported image dimensions differ from audited source"
             );
+            node.attrs.insert(
+                "imageParagraph".into(),
+                serde_json::to_value(&source.paragraph)?,
+            );
         }
         for child in &mut node.content {
             visit(child, images)?;
@@ -293,6 +307,33 @@ fn verify_image_conversion(
                 ) && previous.content.is_empty()
                     && previous.text.is_none()),
                 "Image paragraph does not match the audited converter structure"
+            );
+            let previous = content.last().expect("checked placeholder");
+            let paragraph = crate::document::image_paragraph(&child)?
+                .context("Missing audited image paragraph")?;
+            for (key, expected, default) in [
+                ("spaceBefore", paragraph.space_before, 0),
+                ("spaceAfter", paragraph.space_after, 0),
+                ("lineSpacing", paragraph.line_spacing, 240),
+            ] {
+                ensure!(
+                    previous
+                        .attrs
+                        .get(key)
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(default)
+                        == expected,
+                    "Image paragraph {key} differs from audited source"
+                );
+            }
+            ensure!(
+                previous
+                    .attrs
+                    .get("textAlign")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("left")
+                    == paragraph.text_align,
+                "Image paragraph alignment differs from audited source"
             );
             content.pop();
         }
@@ -767,6 +808,7 @@ mod image_conversion_tests {
             height_emu: 95250,
             mime: "image/png".into(),
             sha256: Sha256::digest(&bytes).into(),
+            paragraph: serde_json::from_value(serde_json::json!({"spaceBefore":0,"spaceAfter":0,"lineSpacing":240,"textAlign":"left"})).unwrap(),
         };
         let original = node("doc", vec![node("paragraph", vec![]), picture.clone()]);
         let mut supported = original.clone();

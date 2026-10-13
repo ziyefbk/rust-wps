@@ -12,6 +12,7 @@ import {isTableAlignment, parseTableIndentPoints, selectedTablePosition, type Ta
 import { TableKit } from '@tiptap/extension-table';
 import {WordImage, omitDefaultImageDimensions, validateImageDimensionsDocument} from './word-image-dimensions';
 import {WordImageControls} from './word-image-controls';
+import {WordImageParagraphControls} from './word-image-paragraph-controls';
 import {AllSelection,TextSelection} from '@tiptap/pm/state';
 import {closeHistory} from '@tiptap/pm/history';
 import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -80,6 +81,7 @@ let fontFamilyInputEditing = false;
 let paragraphSpacingInputEditing = false;
 let tableWidthInputEditing = false;
 let imageControls: WordImageControls | null = null;
+let imageParagraphControls: WordImageParagraphControls | null = null;
 let tableIndentInputEditing = false;
 let tableIndentInputChanged = false;
 const paragraphSpacingInputChanged = new Set<ParagraphSpacingField>();
@@ -323,6 +325,7 @@ function updateToolbar() {
   for (const button of document.querySelectorAll<HTMLButtonElement>('#editor-toolbar button')) button.disabled = locked;
   // Image-specific selection/saving locks must follow the toolbar defaults.
   imageControls?.update();
+  imageParagraphControls?.update();
   for (const mark of ['bold', 'italic', 'underline', 'strike', 'superscript', 'subscript', 'bulletList', 'orderedList']) {
     el(`edit-${mark}`).classList.toggle('active', !!editor?.isActive(mark));
     el(`edit-${mark}`).setAttribute('aria-pressed', String(!!editor?.isActive(mark)));
@@ -451,6 +454,7 @@ function queueDraft(doc: JSONContent) {
 }
 export function closeAuthoring() {
   imageControls?.reset();
+  imageParagraphControls?.reset();
   tableWidthInputEditing = false;
   tableIndentInputEditing = false;
   tableIndentInputChanged = false;
@@ -522,6 +526,7 @@ async function create(content?: JSONContent, ask = true) {
 }
 
 export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof showNotice, beforeLeave: () => Promise<boolean> = async () => true) {
+  imageParagraphControls = new WordImageParagraphControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
   imageControls = new WordImageControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
   canLeaveOther = beforeLeave;
   onChangeMode = onMode; showNotice = notice;

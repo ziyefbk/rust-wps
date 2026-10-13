@@ -111,3 +111,8 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
 #image-dimension-controls label { white-space:nowrap; }
 #edit-image-width,#edit-image-height { width:8em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
 #edit-image-dimension-state { color:#788493; font-size:10px; }
+
+#image-paragraph-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#image-paragraph-controls label { white-space:nowrap; }
+#image-paragraph-controls input { width:72px; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
+#edit-image-paragraph-state { font-size:11px; color:#61738a; }

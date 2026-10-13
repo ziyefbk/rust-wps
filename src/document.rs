@@ -284,6 +284,54 @@ pub fn image_display_dimensions(node: &Node) -> Result<Option<(u64, u64)>> {
     }
 }
 
+/// Complete optional paragraph metadata. Omission keeps the historic image
+/// encoding path; explicit null and partial font pairs are never defaults.
+pub(crate) fn image_paragraph(
+    node: &Node,
+) -> Result<Option<crate::image_dimensions::ImageParagraph>> {
+    let Some(value) = node.attrs.get("imageParagraph") else {
+        return Ok(None);
+    };
+    let object = value
+        .as_object()
+        .context("Image paragraph must be an object; omit it for the default")?;
+    for key in ["paragraphFont", "runFont"] {
+        ensure!(
+            object.get(key).is_none_or(|value| value.is_object()),
+            "Image paragraph fonts must be objects, not null"
+        );
+    }
+    ensure!(
+        object.contains_key("paragraphFont") == object.contains_key("runFont"),
+        "Image paragraph fonts must be supplied together"
+    );
+    let paragraph: crate::image_dimensions::ImageParagraph =
+        serde_json::from_value(value.clone()).context("Invalid image paragraph metadata")?;
+    ensure!(
+        paragraph.space_before <= 31680
+            && paragraph.space_after <= 31680
+            && (120..=2400).contains(&paragraph.line_spacing),
+        "Image paragraph spacing exceeds supported bounds"
+    );
+    ensure!(
+        matches!(
+            paragraph.text_align.as_str(),
+            "left" | "center" | "right" | "justify"
+        ),
+        "Unsupported image paragraph alignment"
+    );
+    for font in [&paragraph.paragraph_font, &paragraph.run_font]
+        .into_iter()
+        .flatten()
+    {
+        ensure!(
+            supported_font_family(&font.family) && (2..=3276).contains(&font.half_points),
+            "Invalid image paragraph font metrics"
+        );
+    }
+    Ok(Some(paragraph))
+}
+
 /// The new display-size subset excludes orientation/animation metadata whose
 /// interpretation differs between browser and Office consumers. We keep bytes
 /// intact, so stripping such metadata is not an acceptable silent fallback.
@@ -501,6 +549,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "height",
                 "displayWidthEmu",
                 "displayHeightEmu",
+                "imageParagraph",
             ],
             "doc" | "text" | "hardBreak" | "pageBreak" | "bulletList" | "listItem" | "tableRow" => {
                 &[]
@@ -694,6 +743,11 @@ pub fn validate(doc: &Node) -> Result<()> {
         }
         if node.kind == "image" {
             let dimensions = image_display_dimensions(node)?;
+            let paragraph = image_paragraph(node)?;
+            ensure!(
+                paragraph.is_none() || depth == 1,
+                "Image paragraph requires a top-level body image"
+            );
             ensure!(
                 dimensions.is_none() || depth == 1,
                 "Explicit image dimensions require a top-level body image"
@@ -709,7 +763,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                     && src.len() <= 12 * 1024 * 1024,
                 "Only embedded PNG/JPEG images within limits are supported"
             );
-            if dimensions.is_some() {
+            if dimensions.is_some() || paragraph.is_some() {
                 let (header, encoded) = src.split_once(',').context("Invalid embedded image")?;
                 let mime = header
                     .strip_prefix("data:")
@@ -799,10 +853,9 @@ pub fn validate(doc: &Node) -> Result<()> {
         }
         stack.extend(&node.content);
     }
-    if images
-        .iter()
-        .any(|node| node.attrs.contains_key("displayWidthEmu"))
-    {
+    if images.iter().any(|node| {
+        node.attrs.contains_key("displayWidthEmu") || node.attrs.contains_key("imageParagraph")
+    }) {
         ensure!(images.len() <= 100, "Image count exceeds 100");
         let mut total = 0usize;
         for image in images {
@@ -826,6 +879,7 @@ struct Writer {
     profile: StyleProfile,
     media: Vec<(String, Vec<u8>)>,
     image_rels: Vec<String>,
+    image_styles: Vec<String>,
     link_rels: Vec<String>,
     nums: Vec<String>,
     has_spacing: bool,
@@ -1108,7 +1162,8 @@ impl Writer {
             .min(1.0)
             .min(800.0 / f64::from(height));
         let dimensions = image_display_dimensions(node)?;
-        let inline_attributes = if dimensions.is_some() {
+        let paragraph = image_paragraph(node)?;
+        let inline_attributes = if dimensions.is_some() || paragraph.is_some() {
             r#" distT="0" distB="0" distL="0" distR="0""#
         } else {
             ""
@@ -1126,12 +1181,40 @@ impl Writer {
             .and_then(Value::as_str)
             .unwrap_or("");
         ensure!(xml_text(alt) && xml_text(title), "Invalid image metadata");
+        let mut paragraph_properties = String::new();
+        let mut run_properties = String::new();
+        if let Some(paragraph) = paragraph {
+            self.has_spacing = true;
+            let align = if paragraph.text_align == "justify" {
+                "both"
+            } else {
+                &paragraph.text_align
+            };
+            if let (Some(base), Some(run)) = (&paragraph.paragraph_font, &paragraph.run_font) {
+                let base = image_font_xml(base);
+                run_properties = format!("<w:rPr>{}</w:rPr>", image_font_xml(run));
+                self.image_styles.push(format!("<w:style w:type=\"paragraph\" w:styleId=\"ImageParagraph{id}\"><w:name w:val=\"Image Paragraph {id}\"/><w:basedOn w:val=\"Normal\"/><w:rPr>{base}</w:rPr></w:style>"));
+                paragraph_properties.push_str(&format!("<w:pStyle w:val=\"ImageParagraph{id}\"/>"));
+            }
+            paragraph_properties.push_str(&format!("<w:spacing w:before=\"{}\" w:after=\"{}\" w:line=\"{}\" w:lineRule=\"auto\"/><w:jc w:val=\"{align}\"/>", paragraph.space_before, paragraph.space_after, paragraph.line_spacing));
+            paragraph_properties = format!("<w:pPr>{paragraph_properties}</w:pPr>");
+        }
         Ok(format!(
-            r#"<w:p><w:r><w:drawing><wp:inline{inline_attributes}><wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{id}" name="image{id}" descr="{}" title="{}"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="image{id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
+            r#"<w:p>{paragraph_properties}<w:r>{run_properties}<w:drawing><wp:inline{inline_attributes}><wp:extent cx="{cx}" cy="{cy}"/><wp:docPr id="{id}" name="image{id}" descr="{}" title="{}"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="image{id}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"#,
             escaped(alt),
             escaped(title)
         ))
     }
+}
+
+fn image_font_xml(font: &crate::image_dimensions::ImageParagraphFont) -> String {
+    let family = escaped(&font.family);
+    let size = font.half_points;
+    let bold = u8::from(font.bold);
+    let italic = u8::from(font.italic);
+    format!(
+        r#"<w:rFonts w:ascii="{family}" w:hAnsi="{family}" w:eastAsia="{family}" w:cs="{family}"/><w:b w:val="{bold}"/><w:bCs w:val="{bold}"/><w:i w:val="{italic}"/><w:iCs w:val="{italic}"/><w:sz w:val="{size}"/><w:szCs w:val="{size}"/>"#
+    )
 }
 
 fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
@@ -1159,6 +1242,7 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
             StyleProfile::StandardV2 => styles.push_str(&format!("<w:style w:type=\"paragraph\" w:styleId=\"Heading{level}\"><w:name w:val=\"heading {level}\"/><w:basedOn w:val=\"Normal\"/><w:pPr><w:keepNext/><w:spacing w:before=\"240\" w:after=\"120\" w:line=\"360\" w:lineRule=\"auto\"/><w:outlineLvl w:val=\"{}\"/></w:pPr><w:rPr><w:b/><w:bCs/><w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/></w:rPr></w:style>", level - 1)),
         }
     }
+    styles.push_str(&writer.image_styles.concat());
     styles.push_str("</w:styles>");
     let mut numbering =
         r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#

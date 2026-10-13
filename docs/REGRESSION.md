@@ -1,6 +1,44 @@
 # 当前跨格式回归记录
 
-## 当前：正文行内图片显示尺寸（2026-10-13）
+## 当前：单图段落间距、对齐与有限基线字体（2026-10-13）
+
+基于 `7a50b54d10493961dd750e88b7ffc0091e8f99d7` 新增可选 `imageParagraph`，保留受支持单图段落有效间距/对齐和可证明的 Latin 段落样式/图片 run 字体。实际图片选择、数值控件、原子撤销、草稿、另存 DOCX 与可信重开贯通；显示尺寸与段落格式独立重置。完整支持/规范化/拒绝边界见 [IMAGE_PARAGRAPHS.md](IMAGE_PARAGRAPHS.md)。没有扩大为混合行内文本、多图同段、浮动或完整页面布局。
+
+### 最终源码和前端检查
+
+- Rust 1.99 / 1.88 核心各 **287 项通过**（原 256 + 18 个源解析/审计回归 + 13 个模型/导出/草稿/保护回归），日志 `tmp/image-paragraph-core-final2.log`、`tmp/image-paragraph-core-1.88-final2.log`。最终 1.88 使用独立 `tmp/msrv-target`，同一集合不双计
+- **141 项无浏览器前端检查通过**（原 123 + 新 18），命令 `tmp/image-paragraph-ui-command.json`，日志 `tmp/image-paragraph-ui-final2.log`。真实 ProseMirror 事务、NodeSelection、单次撤销/重做、过期选区/保存锁、两个独立重置、预算、严格原始 JSON/字体对、DOMParser/DOMSerializer 自有包装、恶意/畸形包装拒绝和不可变打印声明均覆盖；假 DOM 不是实际浏览器
+- `npm run build`（`tmp/image-paragraph-build-final2.log`）、rustfmt、Python/JS 语法和 diff 空白检查通过，仍有既有大 bundle 提示。新增 **9 项浏览器规格仅发现/语法检查，未执行**，`tmp/image-paragraph-browser-discovery.log`。没有重试或绕过已确认的 Chromium socket 权限、官方云预览连接/URL 限制、Linux 桌面依赖和 Windows 不可用
+- 两工具链原始严格 Clippy 最终仍各仅已知跨格式单项：1.99 的 XLS `chunks_exact_to_as_chunks`、1.88 的 PPT `uninlined_format_args`；日志 `tmp/image-paragraph-clippy-strict2.log`、`tmp/image-paragraph-clippy-1.88-strict2.log`。各只排除原单项后 all-targets 通过，`tmp/image-paragraph-clippy-final2.log`、`tmp/image-paragraph-clippy-1.88-final2.log`。新代码的两项 collapsible_if 已修复，并非扩大豁免；不称完整严格 Clippy 通过
+- 早期并行混用同一 target 曾造成测试可执行文件暂不可执行/不同编译器 rlib 冲突，产物保留；改为顺序执行、MSRV 独立 target 后完整重跑通过。第一次旧功能聚合因其全源码哈希捕获这次 lint 修正，正确标为失败；所有最终消费者另用冻结最终 CLI 重跑，不拿旧构建或失败聚合充数
+- vendor、Cargo.lock、package-lock.json 未修改，没有声称本轮运行 vendor 或桌面套件
+
+### 已测根因与独立文件/PDF
+
+最终 CLI SHA-256 `b68e823cf193b49d2753c839581f775b4acc15ec6f3386b207fdb2f17ab5bb37`，新套件报告 `tmp/word-image-paragraphs/run-c6ewijsn/report.json`，旧图片套件报告 `tmp/word-image-dimensions/run-69_axbal/report.json`：
+
+- 新独立套件 **21 个正向自制源包、36 个明确拒绝源包、88 个非法模型、2 个合法上下界模型、13 个历史整个 DOCX 字节对照、1 个未经改造上游正对照、46 份 LibreOffice PDF**。21 个正向中 4 个是明确缩进/kern 规范化探针，不计为受支持的绝对坐标保持。源包由 python-docx/Pillow 定向生成，固定预期由独立 XML 样式/关系和 python-docx 核对，绝不说成真实生产文件
+- 39 个前置控制变量探针证明：50 pt 图片后的 12.3 pt 差异来自段后 6 pt + 1.5 倍行距额外 6.3 pt；恢复 0/0/240 消除。7.5 pt 图片还需有效段落样式字体名和字号；仅给 drawing run 或段落标记直接字体无效。专用样式修复行框，没有减固定常数、加空格或改变媒体来迎合测量，证据 `tmp/image-paragraph-gap-probe/summary.json`
+- 新最终 14 份受控文档、15 个图片框的源 → 未修改导出，图片 x/y/宽高与后续文字基线差均为 **0.0 pt**，断言容差 0.30 pt。覆盖大图、小图、重复图、不同 paragraph/run 字体、样式继承、部分覆盖/零和四种对齐。真实编辑后与独立另造源参考一致：字体/字号编辑使后续基线移动 −13.95 pt，行距编辑移动 −13 pt；不是只检查未修改模型
+- 原始 `mwilliamson/mammoth.js/tiny-picture.docx` 按既有 revision/文件 SHA/媒体 SHA/Git blob 不变读取，有效 0/200/276、左对齐、Calibri 11 pt；源和输出的 7.5×7.5 pt 图片框及其位置相同。仅证明该原件的图片探针，不扩大为任意字体替代、Word/WPS 全布局或所有生产文档
+- 所有支持源完整可信模型相等、PNG/JPEG 媒体字节/类型及双 extent 保留；文件哈希不变、源/已有输出 no-clobber 和失败模型不发布。缺省基线字体源保留省略并警告；外部重导入导出的默认字体会物化已知值，与 authored-only 的完整模型相等分开记录
+- 旧图片尺寸套件完整复测 **13 支持 / 51 拒绝 / 27 非法模型 / 1 原始正对照 / 26 PDF**，显示框/媒体/修改/重置与源文件保护保持通过
+- 历史 V1/V2 部件字节和旧 13 份仅尺寸导出的整个 DOCX SHA-256 全部一致；字体样式被修改甚至同步伪造模型哈希也拒绝可信重开。删除段落元数据恢复旧模型路径，不隐式移除尺寸；删除尺寸保留段落设置，layout-only 路线不冒充精确浏览器尺寸
+- 最终图片/字体编辑/上游对照 PNG 已实际查看，记录 `tmp/word-image-paragraphs/run-c6ewijsn/visual-inspection.json`。LibreOfficeDev 是独立消费者；本轮没有简文实际 CSS 布局、原生打印、Windows WebView2 或 Word/WPS 视觉等价结论
+
+### 旧功能最终回归
+
+冻结同一最终 CLI 的聚合报告 `tmp/image-paragraphs-final-safety-_myn4ru9/report.json`，源码/脚本/工具/原始文件前后哈希不变：
+
+- 段落间距：19 支持 / 23 拒绝 / 14 PDF
+- 固定列宽：11 固定 + 2 自动规范化 / 24 拒绝 / 16 非法模型 / 6 PDF
+- 表格位置：32 支持 / 39 拒绝 / 29 非法模型 / 51 PDF，含两个固定原始表格语料
+- 三份 POI 原始 DOC/DOCX：两次 DOC 转换完整可信模型、精确全文段落与 1 个手动分页、替换后 13 个未改部件字节、5 项 no-clobber
+- 隐藏文字：2 拒绝 + 1 正对照 / 4 PDF；附属故事：6 拒绝 + 1 正对照 / 8 PDF。固定 Tika 原件的既有评论先拒绝仍单列，不能冒充隔离隐藏分支证明
+
+本轮关闭受控单图段落间距及小图 Latin 行框的已测缺口，整体复制目标继续。下一项有意义的边界是源单节页面尺寸/边距：居中/右对齐依赖内容区宽度，目前统一 A4/72 pt 会改变非默认源页面的物理位置；应先用真实原件和独立坐标证据确定有界模型，而不是扩大浮动/混排承诺。优先顺序仍为 DOC/DOCX/PDF → Excel → PPT。
+
+## 上一轮：正文行内图片显示尺寸（2026-10-13）
 
 基于 `1adfef6845041dbe4b2720a02926cdb232274e31` 新增成对整数 EMU 图片尺寸、精确 pt/分数输入、保持/恢复比例、重置、原子撤销、草稿及 DOCX 可信重开。仅支持正文顶层单独行内 PNG/JPEG；完整边界见 [IMAGE_DIMENSIONS.md](IMAGE_DIMENSIONS.md)。尺寸和媒体字节保留不等于段落/全页布局保真。
 

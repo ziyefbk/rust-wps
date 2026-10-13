@@ -9,6 +9,7 @@ use office_oxide::core::{
     relationships::{Relationships, TargetMode, rel_types},
 };
 use quick_xml::{NsReader, events::Event, name::ResolveResult};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -17,8 +18,9 @@ use std::{
 
 pub(crate) const IMAGE_GEOMETRY_RISK: &str =
     "Unsupported image geometry cannot be preserved in an editable copy";
-pub(crate) const IMAGE_FORMATTING_RISK: &str =
-    "Image paragraph placement and formatting normalized; original layout not preserved";
+pub(crate) const IMAGE_FORMATTING_RISK: &str = "Image-only paragraph spacing and alignment preserved; other page and paragraph layout may be normalized";
+pub(crate) const IMAGE_BASELINE_RISK: &str =
+    "Image paragraph baseline font is unspecified; editor defaults may change its line box";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ImageGeometry {
@@ -26,6 +28,43 @@ pub(crate) struct ImageGeometry {
     pub height_emu: u64,
     pub mime: String,
     pub sha256: [u8; 32],
+    pub paragraph: ImageParagraph,
+}
+
+/// An image-only paragraph's supported effective spacing, plus its Latin
+/// paragraph-style strut and drawing-run metrics when both are provable.
+/// These are source values, never the editable document's default profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ImageParagraph {
+    pub space_before: u64,
+    pub space_after: u64,
+    pub line_spacing: u64,
+    pub text_align: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paragraph_font: Option<ImageParagraphFont>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_font: Option<ImageParagraphFont>,
+}
+impl Default for ImageParagraph {
+    fn default() -> Self {
+        Self {
+            space_before: 0,
+            space_after: 0,
+            line_spacing: 240,
+            text_align: "left".into(),
+            paragraph_font: None,
+            run_font: None,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ImageParagraphFont {
+    pub family: String,
+    pub half_points: u64,
+    pub bold: bool,
+    pub italic: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -173,6 +212,14 @@ impl Xml {
                 self.count("textDirection") == 0,
                 "Vertical or rotated image section text is unsupported"
             );
+            if let Some(grid) = self.optional(Ns::W, "docGrid")? {
+                grid.empty(&[(Ns::W, "type"), (Ns::W, "linePitch"), (Ns::W, "charSpace")])?;
+                ensure!(
+                    grid.attr(Ns::W, "type")?
+                        .is_none_or(|value| value == "default"),
+                    "Active section document grids cannot preserve image line spacing"
+                );
+            }
         }
         for child in &self.children {
             child.audit_section_direction()?;
@@ -513,7 +560,8 @@ fn drawing(node: &Xml) -> Result<(u64, u64, String)> {
     Ok((dimensions.0, dimensions.1, relationship.to_owned()))
 }
 
-// These paragraph/run properties are deliberately NORMALIZED, not preserved.
+// Spacing/alignment and bounded Latin baseline metrics are resolved below.
+// Other allowed properties remain explicitly normalized, not preserved.
 // Structural properties (numbering, frames, section boundaries, revision
 // wrappers, hidden content and unknown extensions) are not normalization cases.
 // Text direction, East Asian rotation/combining, character width scaling and
@@ -617,6 +665,7 @@ fn style_id(properties: Option<&Xml>, tag: &str) -> Result<Option<String>> {
         .transpose()?
         .flatten()
         .map(|style| {
+            style.empty(&[(Ns::W, "val")])?;
             Ok(style
                 .attr(Ns::W, "val")?
                 .context("Missing image style ID")?
@@ -624,7 +673,7 @@ fn style_id(properties: Option<&Xml>, tag: &str) -> Result<Option<String>> {
         })
         .transpose()
 }
-fn audit_style_chain(styles: &Xml, initial: Option<&str>, kind: &str) -> Result<()> {
+fn style_chain<'a>(styles: &'a Xml, initial: Option<&str>, kind: &str) -> Result<Vec<&'a Xml>> {
     ensure!(
         styles.count("style") == styles.children.iter().filter(|s| s.tag == "style").count(),
         "Non-direct image style definitions"
@@ -643,6 +692,12 @@ fn audit_style_chain(styles: &Xml, initial: Option<&str>, kind: &str) -> Result<
             indexed.insert(id, style).is_none(),
             "Duplicate image style ID"
         );
+        if let Some(value) = style.attr(Ns::W, "default")? {
+            ensure!(
+                matches!(value, "1" | "true" | "on" | "0" | "false" | "off"),
+                "Invalid image default-style flag"
+            );
+        }
         if style.attr(Ns::W, "type")?.unwrap_or("paragraph") == kind
             && matches!(style.attr(Ns::W, "default")?, Some("1" | "true" | "on"))
         {
@@ -654,12 +709,50 @@ fn audit_style_chain(styles: &Xml, initial: Option<&str>, kind: &str) -> Result<
     }
     let mut current = initial.or(default);
     let mut visited = BTreeSet::new();
+    let mut chain = Vec::new();
     while let Some(id) = current {
         ensure!(
             visited.len() < 64 && visited.insert(id),
             "Cyclic or excessive image style inheritance"
         );
         let style = indexed.get(id).context("Missing inherited image style")?;
+        style.attributes(&[
+            (Ns::W, "type"),
+            (Ns::W, "default"),
+            (Ns::W, "customStyle"),
+            (Ns::W, "styleId"),
+        ])?;
+        // Only direct properties participate in this bounded cascade. Do not
+        // silently pass wrappers a different consumer may interpret (notably
+        // AlternateContent). Check active styles only, leaving unrelated
+        // template styles outside this image's proof.
+        style.children(&[
+            (Ns::W, "name"),
+            (Ns::W, "aliases"),
+            (Ns::W, "basedOn"),
+            (Ns::W, "next"),
+            (Ns::W, "link"),
+            (Ns::W, "autoRedef"),
+            (Ns::W, "hidden"),
+            (Ns::W, "uiPriority"),
+            (Ns::W, "semiHidden"),
+            (Ns::W, "unhideWhenUsed"),
+            (Ns::W, "qFormat"),
+            (Ns::W, "locked"),
+            (Ns::W, "personal"),
+            (Ns::W, "personalCompose"),
+            (Ns::W, "personalReply"),
+            (Ns::W, "rsid"),
+            (Ns::W, "pPr"),
+            (Ns::W, "rPr"),
+        ])?;
+        for metadata in style
+            .children
+            .iter()
+            .filter(|c| !matches!(c.tag.as_str(), "pPr" | "rPr"))
+        {
+            metadata.empty(&[(Ns::W, "val")])?;
+        }
         ensure!(
             style.attr(Ns::W, "type")?.unwrap_or("paragraph") == kind,
             "Conflicting image style type"
@@ -667,8 +760,15 @@ fn audit_style_chain(styles: &Xml, initial: Option<&str>, kind: &str) -> Result<
         for tag in ["pPr", "rPr"] {
             if let Some(props) = style.optional(Ns::W, tag)? {
                 properties(props, tag == "pPr")?;
+                ensure!(
+                    props
+                        .optional(Ns::W, if tag == "pPr" { "pStyle" } else { "rStyle" })?
+                        .is_none(),
+                    "Nested image style references are unsupported"
+                );
             }
         }
+        chain.push(*style);
         current = if let Some(base) = style.optional(Ns::W, "basedOn")? {
             base.empty(&[(Ns::W, "val")])?;
             Some(
@@ -679,7 +779,8 @@ fn audit_style_chain(styles: &Xml, initial: Option<&str>, kind: &str) -> Result<
             None
         };
     }
-    Ok(())
+    chain.reverse();
+    Ok(chain)
 }
 fn audit_styles(styles: &Xml, paragraph: &Xml, run: &Xml) -> Result<()> {
     ensure!(styles.is(Ns::W, "styles"), "Unsupported image styles part");
@@ -701,17 +802,345 @@ fn audit_styles(styles: &Xml, paragraph: &Xml, run: &Xml) -> Result<()> {
                 default.children(&[(Ns::W, tag)])?;
                 if let Some(props) = default.optional(Ns::W, tag)? {
                     properties(props, tag == "pPr")?;
+                    ensure!(
+                        props
+                            .optional(Ns::W, if tag == "pPr" { "pStyle" } else { "rStyle" })?
+                            .is_none(),
+                        "Image document defaults cannot reference a style"
+                    );
                 }
             }
         }
     }
     let paragraph_style = style_id(paragraph.optional(Ns::W, "pPr")?, "pStyle")?;
-    audit_style_chain(styles, paragraph_style.as_deref(), "paragraph")?;
+    style_chain(styles, paragraph_style.as_deref(), "paragraph")?;
     let run_style = style_id(run.optional(Ns::W, "rPr")?, "rStyle")?;
-    audit_style_chain(styles, run_style.as_deref(), "character")?;
+    style_chain(styles, run_style.as_deref(), "character")?;
     Ok(())
 }
-fn image_paragraph(paragraph: &Xml, styles: &Xml) -> Result<(u64, u64, String)> {
+fn on_off(node: &Xml) -> Result<bool> {
+    node.empty(&[(Ns::W, "val")])?;
+    match node.attr(Ns::W, "val")? {
+        None | Some("1" | "true" | "on") => Ok(true),
+        Some("0" | "false" | "off") => Ok(false),
+        _ => bail!("Invalid image {} boolean", node.tag),
+    }
+}
+
+fn paragraph_layer(out: &mut ImageParagraph, props: &Xml) -> Result<()> {
+    properties(props, true)?;
+    if let Some(spacing) = props.optional(Ns::W, "spacing")? {
+        spacing.empty(&[
+            (Ns::W, "before"),
+            (Ns::W, "after"),
+            (Ns::W, "line"),
+            (Ns::W, "lineRule"),
+            (Ns::W, "beforeLines"),
+            (Ns::W, "afterLines"),
+            (Ns::W, "beforeAutospacing"),
+            (Ns::W, "afterAutospacing"),
+        ])?;
+        for name in ["beforeLines", "afterLines"] {
+            // Even zero line-count spacing changes precedence over twip values.
+            ensure!(
+                spacing.attr(Ns::W, name)?.is_none(),
+                "Image paragraph line-count spacing is unsupported"
+            );
+        }
+        for name in ["beforeAutospacing", "afterAutospacing"] {
+            if let Some(value) = spacing.attr(Ns::W, name)? {
+                ensure!(
+                    matches!(value, "0" | "false" | "off"),
+                    "Automatic image paragraph spacing is unsupported"
+                );
+            }
+        }
+        if let Some(rule) = spacing.attr(Ns::W, "lineRule")? {
+            ensure!(
+                rule == "auto",
+                "Only automatic image line spacing is supported"
+            );
+        }
+        for (name, target, min, max) in [
+            ("before", &mut out.space_before, 0, 31680),
+            ("after", &mut out.space_after, 0, 31680),
+            ("line", &mut out.line_spacing, 120, 2400),
+        ] {
+            if let Some(value) = spacing.attr(Ns::W, name)? {
+                *target = integer(Some(value), min, max, name)?;
+            }
+        }
+    }
+    if let Some(jc) = props.optional(Ns::W, "jc")? {
+        jc.empty(&[(Ns::W, "val")])?;
+        out.text_align = match jc.attr(Ns::W, "val")? {
+            Some("left" | "start") => "left",
+            Some("right" | "end") => "right",
+            Some("center") => "center",
+            Some("both") => "justify",
+            _ => bail!("Unsupported image paragraph alignment"),
+        }
+        .into();
+    }
+    for tag in ["bidi", "contextualSpacing"] {
+        if let Some(property) = props.optional(Ns::W, tag)? {
+            ensure!(
+                !on_off(property)?,
+                "Unsupported active image paragraph {tag}"
+            );
+        }
+    }
+    if let Some(alignment) = props.optional(Ns::W, "textAlignment")? {
+        alignment.empty(&[(Ns::W, "val")])?;
+        ensure!(
+            matches!(alignment.attr(Ns::W, "val")?, Some("auto" | "baseline")),
+            "Unsupported image paragraph baseline alignment"
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FontChoice {
+    Literal(String),
+    Theme(String),
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct FontState {
+    ascii: Option<FontChoice>,
+    h_ansi: Option<FontChoice>,
+    half_points: Option<u64>,
+    bold: bool,
+    italic: bool,
+}
+impl FontState {
+    fn overlay(&mut self, props: &Xml, style: bool) -> Result<()> {
+        properties(props, false)?;
+        if let Some(fonts) = props.optional(Ns::W, "rFonts")? {
+            fonts.empty(&[
+                (Ns::W, "ascii"),
+                (Ns::W, "hAnsi"),
+                (Ns::W, "eastAsia"),
+                (Ns::W, "cs"),
+                (Ns::W, "asciiTheme"),
+                (Ns::W, "hAnsiTheme"),
+                (Ns::W, "eastAsiaTheme"),
+                (Ns::W, "cstheme"),
+                (Ns::W, "hint"),
+            ])?;
+            ensure!(
+                fonts.attr(Ns::W, "hint")?.is_none_or(|v| v == "default"),
+                "Non-Latin image baseline font hint is unsupported"
+            );
+            for (literal, theme, target) in [
+                ("ascii", "asciiTheme", &mut self.ascii),
+                ("hAnsi", "hAnsiTheme", &mut self.h_ansi),
+            ] {
+                // A theme beats a literal at the SAME cascade level. A more
+                // specific literal replaces the inherited theme for its slot.
+                if let Some(value) = fonts.attr(Ns::W, theme)? {
+                    ensure!(
+                        matches!(
+                            value,
+                            "majorAscii" | "majorHAnsi" | "minorAscii" | "minorHAnsi"
+                        ),
+                        "Unsupported non-Latin image font theme"
+                    );
+                    *target = Some(FontChoice::Theme(value.into()));
+                } else if let Some(value) = fonts.attr(Ns::W, literal)? {
+                    ensure!(
+                        crate::document::supported_font_family(value),
+                        "Unsupported image baseline font family"
+                    );
+                    *target = Some(FontChoice::Literal(value.into()));
+                }
+            }
+        }
+        if let Some(size) = props.optional(Ns::W, "sz")? {
+            size.empty(&[(Ns::W, "val")])?;
+            self.half_points = Some(integer(size.attr(Ns::W, "val")?, 2, 3276, "font size")?);
+        }
+        for (tag, target) in [("b", &mut self.bold), ("i", &mut self.italic)] {
+            if let Some(value) = props.optional(Ns::W, tag)? {
+                let enabled = on_off(value)?;
+                // OOXML style b/i are toggles; a false style declaration leaves
+                // the inherited value unchanged. Direct formatting is absolute.
+                if style {
+                    *target ^= enabled;
+                } else {
+                    *target = enabled;
+                }
+            }
+        }
+        for tag in ["rtl", "cs"] {
+            if let Some(property) = props.optional(Ns::W, tag)? {
+                ensure!(
+                    !on_off(property)?,
+                    "Complex-script image baseline is unsupported"
+                );
+            }
+        }
+        for tag in ["position", "spacing"] {
+            if let Some(property) = props.optional(Ns::W, tag)? {
+                property.empty(&[(Ns::W, "val")])?;
+                integer(property.attr(Ns::W, "val")?, 0, 0, tag)?;
+            }
+        }
+        Ok(())
+    }
+    fn resolved(&self, theme: Option<&Xml>) -> Result<Option<ImageParagraphFont>> {
+        fn family(choice: &Option<FontChoice>, theme: Option<&Xml>) -> Result<Option<String>> {
+            match choice {
+                None => Ok(None),
+                Some(FontChoice::Literal(value)) => Ok(Some(value.clone())),
+                Some(FontChoice::Theme(value)) => {
+                    let Some(theme) = theme else { return Ok(None) };
+                    ensure!(
+                        theme.is(Ns::A, "theme"),
+                        "Unsupported image font theme namespace"
+                    );
+                    ensure!(
+                        theme.count("themeElements") == 1 && theme.count("fontScheme") == 1,
+                        "Wrapped or ambiguous image font scheme"
+                    );
+                    let scheme = theme
+                        .one(Ns::A, "themeElements")?
+                        .one(Ns::A, "fontScheme")?;
+                    ensure!(
+                        scheme.count("majorFont") == 1 && scheme.count("minorFont") == 1,
+                        "Wrapped or ambiguous image theme font collection"
+                    );
+                    let name = if value.starts_with("major") {
+                        "majorFont"
+                    } else {
+                        "minorFont"
+                    };
+                    let collection = scheme.one(Ns::A, name)?;
+                    ensure!(
+                        collection.count("latin") == 1,
+                        "Wrapped or ambiguous image theme Latin font"
+                    );
+                    let font = collection.one(Ns::A, "latin")?;
+                    font.empty(&[
+                        (Ns::None, "typeface"),
+                        (Ns::None, "panose"),
+                        (Ns::None, "pitchFamily"),
+                        (Ns::None, "charset"),
+                    ])?;
+                    let family = font
+                        .attr(Ns::None, "typeface")?
+                        .context("Missing image theme Latin font")?;
+                    ensure!(
+                        crate::document::supported_font_family(family),
+                        "Unsupported image theme Latin font"
+                    );
+                    Ok(Some(family.into()))
+                }
+            }
+        }
+        let ascii = family(&self.ascii, theme)?;
+        let h_ansi = family(&self.h_ansi, theme)?;
+        if let (Some(a), Some(h)) = (&ascii, &h_ansi) {
+            ensure!(a == h, "Image baseline uses conflicting Latin font slots");
+        }
+        // Do not substitute our editable profile or guess an application's
+        // unstated default. Spacing still survives; baseline omission is warned.
+        let (Some(family), Some(_), Some(half_points)) = (ascii, h_ansi, self.half_points) else {
+            return Ok(None);
+        };
+        Ok(Some(ImageParagraphFont {
+            family,
+            half_points,
+            bold: self.bold,
+            italic: self.italic,
+        }))
+    }
+}
+
+fn image_paragraph_format(
+    paragraph: &Xml,
+    run: &Xml,
+    styles: &Xml,
+    theme: Option<&Xml>,
+) -> Result<ImageParagraph> {
+    let mut out = ImageParagraph::default();
+    let mut font = FontState::default();
+    let mut marks = Vec::new();
+    if let Some(defaults) = styles.optional(Ns::W, "docDefaults")? {
+        if let Some(wrapper) = defaults.optional(Ns::W, "pPrDefault")?
+            && let Some(props) = wrapper.optional(Ns::W, "pPr")?
+        {
+            paragraph_layer(&mut out, props)?;
+            if let Some(mark) = props.optional(Ns::W, "rPr")? {
+                marks.push(mark);
+            }
+        }
+        if let Some(wrapper) = defaults.optional(Ns::W, "rPrDefault")?
+            && let Some(props) = wrapper.optional(Ns::W, "rPr")?
+        {
+            font.overlay(props, false)?;
+        }
+    }
+    let direct_p = paragraph.optional(Ns::W, "pPr")?;
+    let p_style = style_id(direct_p, "pStyle")?;
+    for layer in style_chain(styles, p_style.as_deref(), "paragraph")? {
+        if let Some(props) = layer.optional(Ns::W, "pPr")? {
+            paragraph_layer(&mut out, props)?;
+            if let Some(mark) = props.optional(Ns::W, "rPr")? {
+                marks.push(mark);
+            }
+        }
+        if let Some(props) = layer.optional(Ns::W, "rPr")? {
+            font.overlay(props, true)?;
+        }
+    }
+    if let Some(props) = direct_p {
+        paragraph_layer(&mut out, props)?;
+        if let Some(mark) = props.optional(Ns::W, "rPr")? {
+            marks.push(mark);
+        }
+    }
+    let paragraph_font = font.resolved(theme)?;
+    let mut mark_font = font.clone();
+    for props in marks {
+        let style = style_id(Some(props), "rStyle")?;
+        if style.is_some() {
+            for layer in style_chain(styles, style.as_deref(), "character")? {
+                if let Some(props) = layer.optional(Ns::W, "rPr")? {
+                    mark_font.overlay(props, true)?;
+                }
+            }
+        }
+        mark_font.overlay(props, false)?;
+    }
+    ensure!(
+        mark_font == font
+            || (paragraph_font.is_some() && mark_font.resolved(theme)? == paragraph_font),
+        "Distinct image paragraph-mark metrics are unsupported"
+    );
+    let direct_r = run.optional(Ns::W, "rPr")?;
+    let r_style = style_id(direct_r, "rStyle")?;
+    for layer in style_chain(styles, r_style.as_deref(), "character")? {
+        if let Some(props) = layer.optional(Ns::W, "rPr")? {
+            font.overlay(props, true)?;
+        }
+    }
+    if let Some(props) = direct_r {
+        font.overlay(props, false)?;
+    }
+    let run_font = font.resolved(theme)?;
+    if paragraph_font.is_some() && run_font.is_some() {
+        out.paragraph_font = paragraph_font;
+        out.run_font = run_font;
+    }
+    Ok(out)
+}
+
+fn image_paragraph(
+    paragraph: &Xml,
+    styles: &Xml,
+    theme: Option<&Xml>,
+) -> Result<(u64, u64, String, ImageParagraph)> {
     ensure!(
         paragraph.is(Ns::W, "p"),
         "Image is not in a top-level body paragraph"
@@ -756,7 +1185,9 @@ fn image_paragraph(paragraph: &Xml, styles: &Xml) -> Result<(u64, u64, String)> 
         properties(props, false)?;
     }
     audit_styles(styles, paragraph, run)?;
-    drawing(run.one(Ns::W, "drawing")?)
+    let (width, height, rid) = drawing(run.one(Ns::W, "drawing")?)?;
+    let formatting = image_paragraph_format(paragraph, run, styles, theme)?;
+    Ok((width, height, rid, formatting))
 }
 fn audit_relationships(data: &[u8]) -> Result<()> {
     let root = xml(data)?;
@@ -950,13 +1381,26 @@ fn analyze_inner(bytes: &[u8]) -> Result<Vec<ImageGeometry>> {
     audit_relationships(&package.read_part(&PartName::new(&main.rels_path())?)?)?;
     audit_content_types(&package.read_part(&PartName::new("/[Content_Types].xml")?)?)?;
     let styles = styles_part(&mut package, &main, &relationships)?;
+    let themes = relationships.get_by_type(rel_types::THEME);
+    ensure!(themes.len() <= 1, "Ambiguous image theme relationship");
+    let theme = if let Some(relationship) = themes.first() {
+        ensure!(
+            relationship.target_mode == TargetMode::Internal,
+            "External image font theme"
+        );
+        let target = main.resolve_relative(&relationship.target)?;
+        Some(xml(&package.read_part(&target)?)?)
+    } else {
+        None
+    };
     let mut result = Vec::new();
     let mut blobs = BTreeMap::new();
     for paragraph in &body.children {
         if !paragraph.has_shape() {
             continue;
         }
-        let (width_emu, height_emu, rid) = image_paragraph(paragraph, &styles)?;
+        let (width_emu, height_emu, rid, paragraph) =
+            image_paragraph(paragraph, &styles, theme.as_ref())?;
         let rel = relationships
             .get_by_id(&rid)
             .context("Missing embedded image relationship")?;
@@ -1000,6 +1444,7 @@ fn analyze_inner(bytes: &[u8]) -> Result<Vec<ImageGeometry>> {
             height_emu,
             mime: mime.clone(),
             sha256: *sha256,
+            paragraph,
         });
         ensure!(result.len() <= 4096, "Too many embedded images");
     }
@@ -1089,7 +1534,8 @@ mod tests {
                 width_emu: 1_234_567,
                 height_emu: 2_345_678,
                 mime: "image/png".into(),
-                sha256: Sha256::digest(png()).into()
+                sha256: Sha256::digest(png()).into(),
+                paragraph: ImageParagraph::default(),
             }]
         );
         let drawing = DRAWING
@@ -1539,5 +1985,437 @@ mod tests {
             .len(),
             1
         );
+    }
+    const LATIN_DEFAULTS: &str = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="DejaVu Sans" w:hAnsi="DejaVu Sans"/><w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
+    fn formatted_parts(p: &str, r: &str, style: &str) -> BTreeMap<String, Vec<u8>> {
+        let mut result = parts(&format!(
+            "<w:p><w:pPr>{p}</w:pPr><w:r><w:rPr>{r}</w:rPr>{DRAWING}</w:r></w:p>"
+        ));
+        styles(&mut result, style);
+        result
+    }
+    fn formatting(p: &str, r: &str, style: &str) -> ImageParagraph {
+        analyze(&zip(&formatted_parts(p, r, style)))
+            .unwrap()
+            .remove(0)
+            .paragraph
+    }
+    fn add_theme(parts: &mut BTreeMap<String, Vec<u8>>) {
+        replace(
+            parts,
+            "word/_rels/document.xml.rels",
+            "</Relationships>",
+            &format!(
+                r#"<Relationship Id="theme" Type="{R}/theme" Target="themes/unusual.xml"/></Relationships>"#
+            ),
+        );
+        parts.insert("word/themes/unusual.xml".into(), br#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:themeElements><a:fontScheme><a:majorFont><a:latin typeface="DejaVu Serif"/></a:majorFont><a:minorFont><a:latin typeface="DejaVu Sans"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>"#.to_vec());
+    }
+    #[test]
+    fn image_paragraph_unspecified_baseline_still_preserves_canonical_spacing() {
+        let result = formatting("", "", "");
+        assert_eq!(result, ImageParagraph::default());
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::json!({
+                "spaceBefore": 0, "spaceAfter": 0, "lineSpacing": 240, "textAlign": "left"
+            })
+        );
+        for incomplete in [
+            r#"<w:rFonts w:ascii="Arial" w:hAnsi="Arial"/>"#,
+            r#"<w:sz w:val="22"/>"#,
+            r#"<w:rFonts w:ascii="Arial"/><w:sz w:val="22"/>"#,
+            r#"<w:rFonts w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi"/><w:sz w:val="22"/>"#,
+        ] {
+            let styles = format!(
+                "<w:docDefaults><w:rPrDefault><w:rPr>{incomplete}</w:rPr></w:rPrDefault></w:docDefaults>"
+            );
+            let result = formatting(
+                r#"<w:spacing w:after="77"/><w:jc w:val="center"/>"#,
+                "",
+                &styles,
+            );
+            assert_eq!(result.space_after, 77);
+            assert_eq!(result.text_align, "center");
+            assert!(result.paragraph_font.is_none() && result.run_font.is_none());
+        }
+    }
+    #[test]
+    fn image_spacing_resolves_defaults_base_chain_and_each_direct_attribute() {
+        let styles = r#"<w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:before="10" w:after="20" w:line="276"/><w:jc w:val="left"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:styleId="Base"><w:pPr><w:spacing w:before="30" w:after="40"/><w:jc w:val="right"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:basedOn w:val="Base"/><w:pPr><w:spacing w:after="50"/><w:jc w:val="center"/></w:pPr></w:style>"#;
+        let inherited = formatting("", "", styles);
+        assert_eq!(
+            (
+                inherited.space_before,
+                inherited.space_after,
+                inherited.line_spacing
+            ),
+            (30, 50, 276)
+        );
+        assert_eq!(inherited.text_align, "center");
+        let direct = formatting(
+            r#"<w:spacing w:before="0" w:line="360"/><w:jc w:val="both"/>"#,
+            "",
+            styles,
+        );
+        assert_eq!(
+            (direct.space_before, direct.space_after, direct.line_spacing),
+            (0, 50, 360)
+        );
+        assert_eq!(direct.text_align, "justify");
+    }
+    #[test]
+    fn explicit_style_does_not_accidentally_inherit_the_default_style() {
+        let styles = format!(
+            r#"{LATIN_DEFAULTS}<w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:pPr><w:spacing w:after="500"/></w:pPr><w:rPr><w:sz w:val="50"/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Other"><w:pPr><w:spacing w:before="200"/></w:pPr></w:style>"#
+        );
+        let result = formatting(r#"<w:pStyle w:val="Other"/>"#, "", &styles);
+        assert_eq!((result.space_before, result.space_after), (200, 0));
+        assert_eq!(result.paragraph_font.unwrap().half_points, 24);
+    }
+    #[test]
+    fn image_baseline_separates_paragraph_style_and_character_direct_run_metrics() {
+        let styles = format!(
+            r#"{LATIN_DEFAULTS}<w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style><w:style w:type="character" w:styleId="Emphasis"><w:rPr><w:i/><w:sz w:val="28"/></w:rPr></w:style>"#
+        );
+        let result = formatting(
+            "",
+            r#"<w:rStyle w:val="Emphasis"/><w:b w:val="0"/><w:sz w:val="30"/>"#,
+            &styles,
+        );
+        assert_eq!(
+            result.paragraph_font,
+            Some(ImageParagraphFont {
+                family: "DejaVu Sans".into(),
+                half_points: 26,
+                bold: true,
+                italic: false,
+            })
+        );
+        assert_eq!(
+            result.run_font,
+            Some(ImageParagraphFont {
+                family: "DejaVu Sans".into(),
+                half_points: 30,
+                bold: false,
+                italic: true,
+            })
+        );
+    }
+    #[test]
+    fn style_bold_and_italic_are_toggles_but_direct_run_values_are_absolute() {
+        let styles = format!(
+            r#"{LATIN_DEFAULTS}<w:style w:type="paragraph" w:styleId="Base"><w:rPr><w:b/><w:i/></w:rPr></w:style><w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:basedOn w:val="Base"/><w:rPr><w:b/><w:i w:val="0"/></w:rPr></w:style>"#
+        );
+        let result = formatting("", r#"<w:b/><w:i w:val="off"/>"#, &styles);
+        let paragraph = result.paragraph_font.unwrap();
+        let run = result.run_font.unwrap();
+        assert!(!paragraph.bold && paragraph.italic);
+        assert!(run.bold && !run.italic);
+    }
+    #[test]
+    fn image_theme_uses_actual_relationship_and_supports_major_minor_latin() {
+        let styles = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
+        let mut parts = formatted_parts(
+            "",
+            r#"<w:rFonts w:asciiTheme="majorAscii" w:hAnsiTheme="majorHAnsi"/>"#,
+            styles,
+        );
+        add_theme(&mut parts);
+        let result = analyze(&zip(&parts)).unwrap().remove(0).paragraph;
+        assert_eq!(result.paragraph_font.unwrap().family, "DejaVu Sans");
+        assert_eq!(result.run_font.unwrap().family, "DejaVu Serif");
+    }
+    #[test]
+    fn more_specific_literal_font_replaces_theme_and_same_level_theme_wins() {
+        let styles = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults><w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/></w:rPr></w:style>"#;
+        let mut parts = formatted_parts(
+            "",
+            r#"<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:asciiTheme="majorAscii" w:hAnsiTheme="majorHAnsi"/>"#,
+            styles,
+        );
+        add_theme(&mut parts);
+        let result = analyze(&zip(&parts)).unwrap().remove(0).paragraph;
+        assert_eq!(result.paragraph_font.unwrap().family, "Arial");
+        assert_eq!(result.run_font.unwrap().family, "DejaVu Serif");
+    }
+    #[test]
+    fn distinct_paragraph_mark_font_cannot_be_misrepresented_as_style_strut() {
+        let same = formatting(
+            r#"<w:rPr><w:rFonts w:ascii="DejaVu Sans" w:hAnsi="DejaVu Sans"/><w:sz w:val="24"/><w:b w:val="0"/></w:rPr>"#,
+            "",
+            LATIN_DEFAULTS,
+        );
+        assert_eq!(same.paragraph_font, same.run_font);
+        for mark in [
+            r#"<w:sz w:val="22"/>"#,
+            r#"<w:b/>"#,
+            r#"<w:i/>"#,
+            r#"<w:rFonts w:ascii="Arial" w:hAnsi="Arial"/>"#,
+        ] {
+            let parts = formatted_parts(&format!("<w:rPr>{mark}</w:rPr>"), "", LATIN_DEFAULTS);
+            assert!(
+                analyze(&zip(&parts)).is_err(),
+                "Unexpectedly accepted mark {mark}"
+            );
+        }
+    }
+    #[test]
+    fn image_spacing_and_alignment_reject_unpreservable_or_malformed_values() {
+        for property in [
+            r#"<w:spacing w:before="-1"/>"#,
+            r#"<w:spacing w:after="31681"/>"#,
+            r#"<w:spacing w:line="119"/>"#,
+            r#"<w:spacing w:line="2401"/>"#,
+            r#"<w:spacing w:line="240.0"/>"#,
+            r#"<w:spacing w:line="+240"/>"#,
+            r#"<w:spacing w:before=" 0"/>"#,
+            r#"<w:spacing w:after="18446744073709551616"/>"#,
+            r#"<w:spacing w:lineRule="exact" w:line="240"/>"#,
+            r#"<w:spacing w:lineRule="atLeast"/>"#,
+            r#"<w:spacing w:lineRule="unknown"/>"#,
+            r#"<w:spacing w:beforeLines="0"/>"#,
+            r#"<w:spacing w:afterLines="100"/>"#,
+            r#"<w:spacing w:beforeAutospacing="true"/>"#,
+            r#"<w:spacing w:afterAutospacing="1"/>"#,
+            r#"<w:spacing w:unknown="0"/>"#,
+            r#"<w:jc w:val="distribute"/>"#,
+            r#"<w:jc w:val="justify"/>"#,
+            r#"<w:jc/>"#,
+            r#"<w:contextualSpacing/>"#,
+            r#"<w:bidi/>"#,
+            r#"<w:textAlignment w:val="top"/>"#,
+            r#"<w:spacing w:after="10"/><w:spacing w:after="20"/>"#,
+        ] {
+            let direct = formatted_parts(property, "", LATIN_DEFAULTS);
+            assert!(
+                analyze(&zip(&direct)).is_err(),
+                "Unexpectedly accepted direct {property}"
+            );
+            let style = format!(
+                r#"{LATIN_DEFAULTS}<w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:pPr>{property}</w:pPr></w:style>"#
+            );
+            assert!(
+                analyze(&zip(&formatted_parts("", "", &style))).is_err(),
+                "Unexpectedly accepted inherited {property}"
+            );
+        }
+    }
+    #[test]
+    fn image_spacing_accepts_bounds_explicit_false_and_ltr_start_end() {
+        let result = formatting(
+            r#"<w:spacing w:before="31680" w:after="0" w:line="120" w:lineRule="auto" w:beforeAutospacing="false" w:afterAutospacing="0"/><w:bidi w:val="off"/><w:contextualSpacing w:val="0"/><w:textAlignment w:val="baseline"/><w:jc w:val="start"/>"#,
+            "",
+            "",
+        );
+        assert_eq!(
+            (result.space_before, result.space_after, result.line_spacing),
+            (31680, 0, 120)
+        );
+        assert_eq!(result.text_align, "left");
+        let result = formatting(r#"<w:spacing w:line="2400"/><w:jc w:val="end"/>"#, "", "");
+        assert_eq!(result.line_spacing, 2400);
+        assert_eq!(result.text_align, "right");
+    }
+    #[test]
+    fn baseline_refuses_shift_nonlatin_or_ambiguous_active_metrics() {
+        for property in [
+            r#"<w:position w:val="1"/>"#,
+            r#"<w:position w:val="-1"/>"#,
+            r#"<w:spacing w:val="1"/>"#,
+            r#"<w:rtl/>"#,
+            r#"<w:cs/>"#,
+            r#"<w:rFonts w:hint="eastAsia"/>"#,
+            r#"<w:rFonts w:hint="cs"/>"#,
+            r#"<w:rFonts w:asciiTheme="minorEastAsia"/>"#,
+            r#"<w:rFonts w:ascii="Arial" w:hAnsi="Calibri"/>"#,
+            r#"<w:rFonts w:ascii=" Bad"/>"#,
+            r#"<w:rFonts w:ascii=""/>"#,
+            r#"<w:sz w:val="1"/>"#,
+            r#"<w:sz w:val="3277"/>"#,
+            r#"<w:sz w:val="22.0"/>"#,
+            r#"<w:sz/>"#,
+            r#"<w:b w:val="yes"/>"#,
+            r#"<w:i w:val="2"/>"#,
+            r#"<w:rFonts w:unknown="Arial"/>"#,
+        ] {
+            assert!(
+                analyze(&zip(&formatted_parts("", property, LATIN_DEFAULTS))).is_err(),
+                "Unexpectedly accepted run {property}"
+            );
+            let style = format!(
+                r#"{LATIN_DEFAULTS}<w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:rPr>{property}</w:rPr></w:style>"#
+            );
+            assert!(
+                analyze(&zip(&formatted_parts("", "", &style))).is_err(),
+                "Unexpectedly accepted style {property}"
+            );
+        }
+        assert!(formatting("", r#"<w:position w:val="0"/><w:spacing w:val="0"/><w:rtl w:val="false"/><w:cs w:val="0"/>"#, LATIN_DEFAULTS).run_font.is_some());
+    }
+    #[test]
+    fn source_spacing_namespace_aliases_conflicts_and_shadowing_are_rejected() {
+        for property in [
+            r#"<w:spacing x:after="0"/>"#,
+            r#"<w:spacing w:after="0" x:after="0"/>"#,
+            r#"<x:spacing w:after="0"/>"#,
+            r#"<w:spacing xmlns:w="urn:other" w:after="0"/>"#,
+            r#"<w:spacing xmlns:q="http://schemas.openxmlformats.org/wordprocessingml/2006/main" q:after="0"/>"#,
+        ] {
+            assert!(
+                analyze(&zip(&formatted_parts(property, "", LATIN_DEFAULTS))).is_err(),
+                "Unexpectedly accepted {property}"
+            );
+        }
+    }
+    #[test]
+    fn theme_identity_must_be_internal_unique_and_namespace_correct() {
+        let styles = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
+        let mut original = formatted_parts("", "", styles);
+        add_theme(&mut original);
+        for (part, from, to) in [
+            (
+                "word/_rels/document.xml.rels",
+                "Target=\"themes/unusual.xml\"",
+                "Target=\"themes/unusual.xml\" TargetMode=\"External\"",
+            ),
+            (
+                "word/_rels/document.xml.rels",
+                "</Relationships>",
+                &format!(
+                    r#"<Relationship Id="theme2" Type="{R}/theme" Target="themes/unusual.xml"/></Relationships>"#
+                ),
+            ),
+            (
+                "word/themes/unusual.xml",
+                "http://schemas.openxmlformats.org/drawingml/2006/main",
+                "urn:other",
+            ),
+            (
+                "word/themes/unusual.xml",
+                "<a:latin typeface=\"DejaVu Sans\"/>",
+                "<a:latin typeface=\"DejaVu Sans\"/><a:latin typeface=\"Arial\"/>",
+            ),
+            (
+                "word/themes/unusual.xml",
+                "typeface=\"DejaVu Sans\"",
+                "typeface=\"\"",
+            ),
+        ] {
+            let mut parts = original.clone();
+            replace(&mut parts, part, from, to);
+            assert!(analyze(&zip(&parts)).is_err(), "Unexpectedly accepted {to}");
+        }
+    }
+    #[test]
+    fn image_paragraph_metadata_keeps_order_when_identical_blobs_repeat() {
+        let body = format!(
+            "{}{}",
+            paragraph(DRAWING).replace("<w:p>", r#"<w:p><w:pPr><w:spacing w:after="50"/></w:pPr>"#),
+            paragraph(DRAWING).replace(
+                "<w:p>",
+                r#"<w:p><w:pPr><w:spacing w:after="100"/><w:jc w:val="right"/></w:pPr>"#
+            )
+        );
+        let images = accepted(&body);
+        assert_eq!(images[0].sha256, images[1].sha256);
+        assert_eq!(images[0].paragraph.space_after, 50);
+        assert_eq!(images[1].paragraph.space_after, 100);
+        assert_eq!(images[1].paragraph.text_align, "right");
+    }
+    #[test]
+    fn active_document_grids_are_outside_the_image_line_spacing_subset() {
+        for kind in ["lines", "linesAndChars", "snapToChars", "unknown"] {
+            rejected(&format!(
+                r#"{}<w:sectPr><w:docGrid w:type="{kind}" w:linePitch="360"/></w:sectPr>"#,
+                paragraph(DRAWING)
+            ));
+        }
+        for properties in [
+            r#"w:linePitch="360""#,
+            r#"w:type="default" w:linePitch="360""#,
+        ] {
+            assert_eq!(
+                accepted(&format!(
+                    "{}<w:sectPr><w:docGrid {properties}/></w:sectPr>",
+                    paragraph(DRAWING)
+                ))
+                .len(),
+                1
+            );
+        }
+    }
+    #[test]
+    fn active_style_wrappers_cannot_hide_properties_or_inheritance() {
+        for wrapped in [
+            r#"<w:unknown><w:rPr><w:sz w:val="80"/></w:rPr></w:unknown>"#,
+            r#"<w:unknown><w:pPr><w:spacing w:after="500"/></w:pPr></w:unknown>"#,
+            r#"<w:unknown><w:basedOn w:val="Base"/></w:unknown>"#,
+            r#"<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Fallback><w:rPr><w:sz w:val="80"/></w:rPr></mc:Fallback></mc:AlternateContent>"#,
+            r#"<w:name w:val="Normal"><w:rPr><w:sz w:val="80"/></w:rPr></w:name>"#,
+        ] {
+            let active = format!(
+                r#"{LATIN_DEFAULTS}<w:style w:type="paragraph" w:styleId="Normal" w:default="1">{wrapped}</w:style>"#
+            );
+            assert!(
+                analyze(&zip(&formatted_parts("", "", &active))).is_err(),
+                "Unexpectedly accepted active {wrapped}"
+            );
+            let unused = format!(
+                r#"{LATIN_DEFAULTS}<w:style w:type="paragraph" w:styleId="Unused">{wrapped}</w:style>"#
+            );
+            assert!(
+                analyze(&zip(&formatted_parts("", "", &unused))).is_ok(),
+                "Unrelated style tightened scope: {wrapped}"
+            );
+        }
+    }
+    #[test]
+    fn nested_theme_fonts_cannot_override_the_directly_resolved_latin_identity() {
+        let styles = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:asciiTheme="minorHAnsi" w:hAnsiTheme="minorHAnsi"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
+        for (from, to) in [
+            (
+                "</a:theme>",
+                r#"<a:unknown><a:fontScheme/></a:unknown></a:theme>"#,
+            ),
+            (
+                "</a:fontScheme>",
+                r#"<a:unknown><a:minorFont/></a:unknown></a:fontScheme>"#,
+            ),
+            (
+                "</a:minorFont>",
+                r#"<a:unknown><a:latin typeface="Arial"/></a:unknown></a:minorFont>"#,
+            ),
+            (
+                r#"<a:latin typeface="DejaVu Sans"/>"#,
+                r#"<a:unknown><a:latin typeface="DejaVu Sans"/></a:unknown>"#,
+            ),
+        ] {
+            let mut parts = formatted_parts("", "", styles);
+            add_theme(&mut parts);
+            replace(&mut parts, "word/themes/unusual.xml", from, to);
+            assert!(analyze(&zip(&parts)).is_err(), "Unexpectedly accepted {to}");
+        }
+    }
+    #[test]
+    fn style_references_are_only_resolved_at_supported_cascade_entry_points() {
+        for (tag, reference) in [
+            ("pPr", r#"<w:pStyle w:val="Other"/>"#),
+            ("rPr", r#"<w:rStyle w:val="Other"/>"#),
+        ] {
+            for styles in [
+                format!(
+                    r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:{tag}>{reference}</w:{tag}></w:style>"#
+                ),
+                format!(
+                    "<w:docDefaults><w:{tag}Default><w:{tag}>{reference}</w:{tag}></w:{tag}Default></w:docDefaults>"
+                ),
+            ] {
+                assert!(
+                    analyze(&zip(&formatted_parts("", "", &styles))).is_err(),
+                    "Unexpectedly accepted {styles}"
+                );
+            }
+        }
     }
 }

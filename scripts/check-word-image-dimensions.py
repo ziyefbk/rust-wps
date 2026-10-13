@@ -46,7 +46,10 @@ NS = {**w.NS, "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordproces
 WIDTH, HEIGHT = "displayWidthEmu", "displayHeightEmu"
 MAX_WIDTH, MAX_HEIGHT = 5715000, 7620000
 SOURCE_RISK = "Unsupported image geometry cannot be preserved in an editable copy"
-PLACEMENT_WARNING = "Image paragraph placement and formatting normalized; original layout not preserved"
+PLACEMENT_WARNING = "Image-only paragraph spacing and alignment preserved; other page and paragraph layout may be normalized"
+IMAGE_PARAGRAPH = {"spaceBefore": 0, "spaceAfter": 0, "lineSpacing": 240, "textAlign": "left",
+                   "paragraphFont": {"family": "DejaVu Sans", "halfPoints": 24, "bold": False, "italic": False},
+                   "runFont": {"family": "DejaVu Sans", "halfPoints": 24, "bold": False, "italic": False}}
 check, digest, run_cli = w.check, w.digest, w.run_cli
 
 
@@ -329,6 +332,8 @@ def export_verify(cli, evidence, directory, name, model, expected, dimensions=Tr
     verify_model(reopened, expected, name + " trusted model", dimensions)
     external = run_cli(cli, evidence["commands"], "import-docx", output)["document"]
     verify_model(external, expected, name + " external reimport")
+    check([n["attrs"].get("imageParagraph") for n in images(external)] ==
+          [n["attrs"].get("imageParagraph") for n in images(model)], name + ": external image paragraph metadata changed")
     before = digest(output)
     error = run_cli(cli, evidence["commands"], "create-docx", model_path, output, success=False)
     check("Output already exists" in error and digest(output) == before, name + ": no-clobber failed")
@@ -417,8 +422,11 @@ def run_supported(name, item, cli, evidence, directory, soffice):
     imported = run_cli(cli, evidence["commands"], "import-docx", path)
     model = imported["document"]
     item["compatibility"] = imported["compatibility"]
-    check(PLACEMENT_WARNING in item["compatibility"]["risks"], name + ": missing paragraph/layout normalization warning")
+    check(PLACEMENT_WARNING in item["compatibility"]["risks"], name + ": missing bounded paragraph/layout warning")
     verify_model(model, expected, name + " imported")
+    wanted_paragraph = item.get("expected_image_paragraph", IMAGE_PARAGRAPH)
+    check([n["attrs"].get("imageParagraph") for n in images(model)] == [wanted_paragraph] * len(expected),
+          name + ": exact image paragraph metadata differs")
     if item.get("expected_root_order"):
         check([n["type"] for n in model["content"]] == item["expected_root_order"], name + ": genuine empty paragraph order changed")
         check(all(not n.get("content") for n in model["content"] if n["type"] == "paragraph"), name + ": expected empty paragraph has content")
@@ -451,6 +459,16 @@ def run_supported(name, item, cli, evidence, directory, soffice):
                                   ("unchanged_render", Path(item["unchanged_export"]["path"]), expected),
                                   ("edited_render", Path(item["edited_export"]["path"]), edited_expected)]:
             item[key] = render_pdf(soffice, directory, docx, target, 72)
+        deltas = []
+        for source, output in zip(item["source_render"]["images"], item["unchanged_render"]["images"]):
+            delta = {key: output[key] - source[key] for key in ["x_pt", "y_pt", "width_pt", "height_pt"]}
+            check(all(abs(value) <= 0.30 for value in delta.values()), name + ": controlled source/export image placement differs")
+            deltas.append(delta)
+        source_marker = next(t for t in item["source_render"]["texts"] if t["text"] == "AfterImage")
+        output_marker = next(t for t in item["unchanged_render"]["texts"] if t["text"] == "AfterImage")
+        baseline_delta = output_marker["y_pt"] - source_marker["y_pt"]
+        check(abs(baseline_delta) <= 0.30, name + ": controlled following baseline differs")
+        item["controlled_placement_comparison"] = {"images": deltas, "following_baseline_delta_pt": baseline_delta, "tolerance_pt": 0.30}
     return model
 
 
@@ -499,7 +517,10 @@ def main():
                     path = (args.corpus_dir / pinned["name"]).resolve();blob = path.read_bytes()
                     check(len(blob) == pinned["bytes"] and digest(path) == pinned["sha256"], "Original corpus hash mismatch")
                     check(hashlib.sha1(b"blob " + str(len(blob)).encode() + b"\0" + blob).hexdigest() == pinned["git_blob_sha"], "Original corpus Git blob mismatch")
-                    item = {**pinned, "path": str(path), "expected": pinned["images"], "source_independent": snapshot(path), "render_probe": False}
+                    item = {**pinned, "path": str(path), "expected": pinned["images"], "source_independent": snapshot(path), "render_probe": False,
+                            "expected_image_paragraph": {"spaceBefore": 0, "spaceAfter": 200, "lineSpacing": 276, "textAlign": "left",
+                                "paragraphFont": {"family": "Calibri", "halfPoints": 22, "bold": False, "italic": False},
+                                "runFont": {"family": "Calibri", "halfPoints": 22, "bold": False, "italic": False}}}
                     evidence["original_corpus"][pinned["name"]] = item
                     verify_snapshot(item["source_independent"], item["expected"], pinned["name"] + " original")
                     run_supported("original-" + path.stem, item, cli, evidence, directory, None)

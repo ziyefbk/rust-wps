@@ -346,7 +346,7 @@ fn external_import_preserves_order_media_geometry_and_genuine_neighboring_blank_
             .contains("Image position and display dimensions normalized")
     );
     assert!(imported.compatibility.risks.contains(
-        "Image paragraph placement and formatting normalized; original layout not preserved"
+        "Image-only paragraph spacing and alignment preserved; other page and paragraph layout may be normalized"
     ));
     let output = dir.path().join("imported.docx");
     document::export_docx(&imported.document, &output).unwrap();
