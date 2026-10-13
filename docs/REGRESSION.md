@@ -1,5 +1,56 @@
 # 当前跨格式回归记录
 
+## 本轮：PDF 当前页旋转另存（2026-10-13）
+
+基于 `42482a5e166eb5ed46615d6ee04428c078974b95`，新增严格子集的“当前页顺时针旋转 90°，另存副本”。当前页面必须已经完成渲染，PDF.js 页号 / ref / 有效方向 / 总页数与源 SHA、精确会话 token 交叉验证。只追加选中叶页面的 Rotate 及必要 xref / trailer / 第二文件 ID，完整源前缀保留，源会话不切换，任何已有文件都不覆盖。已有修订、加密、线性化、签名 / 表单 / 注释 / 动作及未证明语法拒绝；保存后的副本可以预览，但首版不能再次旋转另存。完整范围见 [PDF_PAGE_ROTATION.md](PDF_PAGE_ROTATION.md)。
+
+### 最终门禁
+
+- Rust **1.99 / 1.88 各 537 项通过**，即原 511 + 26 个实际核心旋转 / 原始 framing / 候选验证 / 文件安全测试，不跨工具链重复累计。最终日志 `tmp/pdf-rotation-core-{stable,msrv}-final.log`
+- 新核心覆盖：单个 classic xref / generation-zero / 精确对象集合与偏移；重复 / 转义键、整数 / 实数 / 嵌套字典混淆、终端注释吞掉 startxref / EOF、跨对象注释、未索引物理对象、藏在 stream / 字符串中的假对象头、重复 Length 别名、错误 / 循环 / 非整数 Length、缺失 endobj / 解析器跳过对象、Info 缺失或类型错误、树 Count / Parent / 环 / 共享孩子、继承几何 / 方向、身份错配、预算、第一 ID 保留 / 第二 ID 改变、旧修订拒绝、确定性输出与拒绝覆盖
+- **35 项 Tauri-free 实际生产模块测试在两工具链各通过**，即原 15 + 20 个旋转保存事务检查。稳定版最终日志 `tmp/pdf-rotation-backend-tests-stable-final.log`；MSRV 初次日志 `tmp/pdf-rotation-backend-tests-msrv.log`，冻结 probe 格式后的最终日志 `tmp/pdf-rotation-backend-tests-msrv-final.log`。覆盖对话框取消、worker 前 / 中 / 后及最终发布前的过期会话、源变化、错误响应 / 候选身份 / 路径 / 类型、partial stage 清理、原件 / 已有目标 / 硬链接 / 符号链接 / 最后一刻出现目标的拒绝，以及原有真实子进程超时、阻塞 stdin、非零退出、响应上限
+- 保存事务的确定性竞态测试明确使用运输替身，不冒充已解析 PDF；另外的独立 genuine-file probe 真正调用生产 core / worker 子进程与父进程 publication 路径。读取、哈希、同步不跨 session 锁，最终 ownership + persist_noclobber 在短锁内完成
+- **509 项无浏览器前端检查通过**，即原 477 + 32 个新增实际函数检查；准确 argv `tmp/pdf-rotation-ui-command.json`，最终日志 `tmp/pdf-rotation-ui-aggregate.log`。新检查覆盖精确 token / page / ref / rotation / count、成功渲染来源、失败翻页保留旧画布、相同页面 / 缩放重叠渲染、重复操作、取消 / 读写失败、旧页面 / 会话 / 总页数下的迟到结果与控制恢复
+- 定向 PDF 组 **67 项通过**，包含上述 32 新检查及 35 旧检查，不能与全量累计。日志 `tmp/pdf-rotation-ui-final.log`。通常的保存期间关闭本来由 operation 暂停保护覆盖；本轮修复的是“关闭已在 await，保存随后开始”的竞态，在同一个原生 close handler 的 destroy 前同步复查，测试使用实际 handler 与窗口运输替身
+- TypeScript / Vite build、stable / MSRV 核心库与 CLI 构建、production probe 编译、核心格式、Python checker 编译、probe rustfmt 和 `git diff --check` 通过。前端日志 `tmp/pdf-rotation-ui-build.log`，保留既有较大 bundle 提示
+- 严格原始 all-targets Clippy 仍分别只有旧 XLS `chunks_exact_to_as_chunks` 和旧 PPT `uninlined_format_args`；各仅排除相应旧单项后通过。日志 `tmp/pdf-rotation-clippy-{stable,msrv}-{raw-final,scoped}.log`（MSRV 原始日志为 `...-msrv-raw.log`）。新增十六进制循环的同类 lint 已在本模块修复，没有新增豁免
+- 使用既有 `../toolchains/{cargo,rustup}`、`CARGO_INCREMENTAL=0`、stable `target` 和 MSRV `tmp/msrv-target`；无 RUSTFLAGS / profile 覆盖、无重复 target、无依赖 / 锁文件 / vendor 变更。前端保持 `USERPROFILE=$PWD/tmp/linux-home`
+
+### 未改造原件与独立验收
+
+实际最终命令：
+
+```sh
+python3 scripts/check-pdf-rotation.py --candidate tmp/pdf-rotation-final-cli --probe tmp/pdf-rotation-probe-final --provenance tmp/pdf-rotation-backend-provenance-stable-final.json --output tmp/pdf-rotation-independent-reference-final --visual-oracle independent-reference --diagnose-inverse-viewport
+```
+
+最终报告 `tmp/pdf-rotation-independent-reference-final/report.json` SHA-256 **`3c5fb35cfdab34b3e382e0f788036d49b2aa300283f59314f70026095fd7681d`**。冻结 CLI **`fae10aa6c08a45f2be89acca8baccc83070da45bb86ef49ef5b5c4db392f5b00`**，最终 production probe **`509d9bd2c2641c8ea3ca5f0375b44b9c7fc01ba9a7fbbc5b5d267311f368b4a8`**，checker **`d847a3bc0dd3f0386c4fe2b64fe1434f3193ae070f06379d0c9f22a790999161`**。最终 stable backend 链接来源在 `tmp/pdf-rotation-backend-provenance-stable-final.json`，SHA **`4fe392642f153dfe50f9f3db4927795cf90464565510a34708ded9cc325eea49`**；汇总构建 / 源 / 依赖身份在 `tmp/pdf-rotation-provenance-final.json`。
+
+- 原件为固定 Mozilla manifest 中的已发表论文 tracemonkey.pdf：1,016,315 字节，SHA **`3662ff519e485810520552bf301d8c3b2b917fd2f83303f4965d7abed367e113`**；14 页、嵌套页面树、共享资源。只是 **1 份未改造论文**，不是三份真实文档或普遍 PDF 兼容声明
+- 对第 **1 / 7 / 14 页**分别另存。每份独立 pypdf 核对 **996 个对象、377 个 stream 的原始及解码字节**，仅选择页面的 Rotate 与必要 trailer ID / Prev 变化；所有未选对象、活动偏移、内容 / 资源引用、页面次序和几何相同，源前缀精确保留，pypdf 每页正文相同
+- **39/39 个未选择页面的源 / 输出光栅完全相同**。每页通过新启动的 Poppler 进程渲染，程序 / wrapper / 实际可执行文件身份、DPI 和完整命令均记录
+- **6/6 个选择页对照完全相同**：三份输出分别与 pypdf 独立生成的同方向参考 PDF，在 Poppler Splash 和 Cairo 两条路径下逐像素相同。两个 Poppler 路径独立于本应用 writer，但不是两套无关 PDF 引擎；三个参考 PDF 明确是受控派生件，不算原件。参考 / 应用输出的 Poppler 正文也精确相同
+- **25 项安全 / 拒绝控制通过**：既有目标 / 源拒绝覆盖、无效页号与各身份字段、重新旋转旧修订、真实 production 取消 / 过期 / 发布、源同长度变化，以及两份实际加密派生件（含空密码）、四份受控 annotation / form / action / signature-dictionary 派生件。后者不是有效密码学签名验证
+- 另 **2 份未改造负向原件** basicapi.pdf / rotation.pdf 继续按 manifest 验证身份并被拒绝，分别包含不支持结构 / 歧义及线性化；三个原件与保护的二进制 / manifest / checker 前后散列不变
+- 对已有证据目录的重跑在写入前明确拒绝，报告散列不变；负向日志 `tmp/pdf-rotation-existing-evidence-rejection.log`
+
+### 没有隐藏的图像与文本差异
+
+初始精确“源光栅直接转置”标准 **失败**：72 DPI 的三个所选页面分别有 **45,253 / 49,432 / 27,282** 个不同像素（每图 484,704 像素）。失败报告 `tmp/pdf-rotation-independent-first/report.json` SHA **`12cbfa2426c5f4962e849b01fcc34e736d9f0ed1b0fada6ded2e8ef5ed9d4a9c`** 及原始图像保留；最终 checker 仍将三项标为失败诊断，不把它们计成通过。
+
+经独立审查后才明确采用上述“独立旋转参考 + 未选页精确像素 + 对象 / stream / 前缀不变”标准。`strict-transpose` 仍是 checker 默认值，替代标准必须显式传 `--visual-oracle independent-reference`，没有修改阈值容差来掩盖差异。
+
+MuPDF 在不重写 PDF 的前提下对输出施加反向视口旋转：关闭抗锯齿时三页均精确相同；默认抗锯齿下第 7 页还有 **22 像素、最大通道差 15** 的残差，其余两页相同。初始独立报告为 `tmp/pdf-rotation-mupdf-inverse-no-aa/report.json` 和 `...-inverse-first/report.json`；最终每一例又记录自身源 / 输出身份及生成诊断脚本。这支持方向相关光栅化解释，但根因仍未证明。关闭 FreeType 的试验出现字体错误与空白输出，被明确废弃。
+
+Poppler 在所选第 1 / 7 页出现文字顺序 / 断词拼接变化，第 7 页 sus- / pend 被拼为 suspend；不把差异归一化成“全文完全相同”。相同工具对独立旋转参考与应用输出的结果精确一致，pypdf 与 stream 数据核对也保持相同。此功能不承诺每个阅读器的复制文字顺序不变。
+
+### 纠正与未验证范围
+
+初始编译的 re-export 路径及一处 Result 嵌套、测试变量遮蔽已修正，失败日志保留。早期物理边界测试曾误用真实对象头而非 stream 中的假头、把实际 1 字节换行当成错误 Length、把有换行终止的合法注释当成跨界注释，修正后补上真正反例；没有弱化生产 guard。独立源审查补齐原始终端注释边界、Info 引用、渲染来源与迟到总页数保护，最终门禁均在这些修复之后。
+
+实际 Tauri 主适配器仍只能源审查；上述 standalone / DOM 检查不证明系统对话框、原生 IPC、WebView2、Windows Job 或实际窗口关闭已经验收。已知 Chromium EPERM、云 localhost 隔离、Linux GLib/WebKit 缺失与离线 Windows 路线没有重试。vendor 与真实桌面测试没有重跑，不借用旧 1,264 项或历史原生计数。外部原地写入、目录恶意置换、源历史侦测、解压 / 渲染资源上限、OCR / 编辑 / 多次旋转与全阶段完成均不在保证范围内。
+
+
 ## 本轮：PDF 预览字节身份与会话选择（2026-10-13）
 
 基于 `9431f8485796cf963cc49f2a935f1c1a6b64ab7d`，本轮将检查时的实际 PDF 缓冲区长度 / SHA-256 与随后交给 PDF.js 的同一返回缓冲区绑定；变化明确要求重新打开。worker 只传固定大小身份，旧 `Inspection` / 严格及预览 JSON 结构不变。新旧选择通过预留 ticket 与精确字符串 token 隔离，失败 / 取消保留已提交文档；演示另存的会话写入同样检查过期，已保存输出明确告知。完整范围见 [PDF_PREVIEW_IDENTITY.md](PDF_PREVIEW_IDENTITY.md)。

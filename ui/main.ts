@@ -15,6 +15,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 interface Inspection { format: string; backend: string; bytes: number; elapsed_ms: number; text: string; warnings: string[]; text_error?: string }
 interface OpenedDocument { session_token?: string; presentation_model?:PresentationModel|null; presentation?: Presentation | null; name: string; path: string; inspection: Inspection; authored?: JSONContent | null; workbook?: Workbook | null; workbook_model?: EditableWorkbook | null }
 interface SavedDocument { path: string; report: { replacements: number; preserved_parts: number; changed_parts: string[]; warnings: string[] } }
+interface SavedPdfRotation { path: string; page: number; pages: number; rotation: number }
+interface DisplayedPdfPage { owner: OpenedDocument; documentPdf: pdfjs.PDFDocumentProxy; token?: string; page: number; pages: number; objectId?: number; generation?: number; rotation: number }
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let current: OpenedDocument | null = null;
 let busy = false;
@@ -28,6 +30,9 @@ let pdfLoadingTask: pdfjs.PDFDocumentLoadingTask | null = null;
 let pdfLoadAttempt: object | null = null;
 let cancelPdfPassword: (() => void) | null = null;
 let stopText = false;
+let pdfRotationPending = false;
+let displayedPdfPage: DisplayedPdfPage | null = null;
+let pdfRenderAttempt: object | null = null;
 
 function notice(message: string, error = false) {
   const box = el('notice'); box.textContent = message; box.hidden = !message; box.classList.toggle('error', error);
@@ -45,6 +50,9 @@ function controls() {
   el<HTMLButtonElement>('text-view').disabled = busy || !current;
   el<HTMLButtonElement>('page-view').disabled = busy;
   el<HTMLButtonElement>('extract-pdf-text').disabled = busy || !pdf;
+  el('rotate-pdf-page').hidden = current?.inspection.format !== 'pdf' || mode !== 'page';
+  el('pdf-rotation-hint').hidden = current?.inspection.format !== 'pdf' || mode !== 'page';
+  el<HTMLButtonElement>('rotate-pdf-page').disabled = busy || pdfRotationPending || !desktop || !currentDisplayedPdfPage();
   el<HTMLButtonElement>('replace-toggle').disabled = busy || current?.inspection.format !== 'docx';
   el<HTMLButtonElement>('import-document').disabled = busy || !desktop || !['doc', 'docx', 'xlsx','pptx'].includes(current?.inspection.format ?? '') || (current?.inspection.format === 'xlsx' && !!current.workbook_model) || (current?.inspection.format==='pptx' && !!current.presentation_model);
   el('sheet-import').hidden = current?.inspection.format !== 'xlsx' || !!current.workbook_model;
@@ -55,11 +63,12 @@ function controls() {
   el<HTMLButtonElement>('prev-page').disabled = busy || !pdf || pageNumber <= 1;
   el<HTMLButtonElement>('next-page').disabled = busy || !pdf || pageNumber >= pdf.numPages;
 }
-async function operation(label: string, action: () => Promise<void>) {
+async function operation(label: string, action: () => Promise<void>, owns: () => boolean = () => true) {
   if (busy) return;
   busy = true; pauseAuthoring(true); pauseWorkbook(true); pausePresentation(true); controls(); el('status').textContent = label;
   try { await action(); }
   catch (error) {
+    if (!owns()) return;
     const message = String(error).includes('Hidden text cannot be preserved in an editable copy')
       ? '文档含隐藏文字声明，暂不能创建编辑副本，以免丢失内容。原文件保持不变；只读正文可能不显示隐藏文字。未使用或已覆盖的隐藏样式也会保守拦截。'
       : String(error).includes('Unsupported paragraph spacing cannot be preserved in an editable copy')
@@ -75,7 +84,7 @@ async function operation(label: string, action: () => Promise<void>) {
                 : String(error);
     notice(`操作未完成：${message}`, true);
   }
-  finally { busy = false; pauseAuthoring(false); pauseWorkbook(false); pausePresentation(false); el('status').textContent = '就绪'; controls(); }
+  finally { busy = false; pauseAuthoring(false); pauseWorkbook(false); pausePresentation(false); if (owns()) el('status').textContent = '就绪'; controls(); }
 }
 initializePresentationPdf(operation,notice);
 function renderText() {
@@ -112,7 +121,7 @@ function setMode(next: 'text' | 'page') {
 }
 async function clearPdf() {
   const old = pdf, loading = pdfLoadingTask;
-  pdf = null; pdfLoadingTask = null; pdfLoadAttempt = null;
+  pdf = null; pdfLoadingTask = null; pdfLoadAttempt = null; displayedPdfPage = null; pdfRenderAttempt = null;
   cancelPdfPassword?.(); cancelPdfPassword = null;
   renderTask?.cancel(); renderTask = null;
   if (loading) { try { await loading.destroy(); } catch { /* obsolete load */ } }
@@ -121,11 +130,17 @@ async function clearPdf() {
 async function renderPage() {
   const owner = current, documentPdf = pdf, number = pageNumber;
   if (!documentPdf || !owner) return;
-  const owns = () => current === owner && pdf === documentPdf;
+  const token = owner.session_token, pages = documentPdf.numPages;
+  const attempt = {}; pdfRenderAttempt = attempt;
+  const owns = () => current === owner && pdf === documentPdf && owner.session_token === token && pageNumber === number && pdfRenderAttempt === attempt;
+  // A failed page switch may leave the old canvas visible. Never let it select
+  // a page for saving until the requested page has finished rendering.
+  displayedPdfPage = null; controls();
   if (renderTask) { renderTask.cancel(); try { await renderTask.promise; } catch { /* cancelled */ } }
   if (!owns()) return;
   const page = await documentPdf.getPage(number);
   if (!owns()) { page.cleanup(); return; }
+  const displayed: DisplayedPdfPage = { owner, documentPdf, token, page: page.pageNumber, pages, objectId: page.ref?.num, generation: page.ref?.gen, rotation: page.rotate };
   const scale = Number(el<HTMLSelectElement>('zoom').value);
   const viewport = page.getViewport({ scale });
   // Bound the backing canvas for large pages while keeping the aspect ratio.
@@ -139,8 +154,13 @@ async function renderPage() {
   el('page-position').textContent = `${number} / ${documentPdf.numPages}`;
   const task = page.render({ canvasContext: context, canvas, viewport, transform: [density, 0, 0, density, 0, 0] });
   renderTask = task;
-  try { await task.promise; }
+  try { await task.promise; if (owns() && displayed.page === number) displayedPdfPage = displayed; }
   finally { if (renderTask === task) renderTask = null; page.cleanup(); }
+}
+function currentDisplayedPdfPage() {
+  const displayed = displayedPdfPage;
+  return displayed && displayed.owner === current && displayed.documentPdf === pdf &&
+    displayed.token === current?.session_token && displayed.page === pageNumber && displayed.pages === pdf?.numPages ? displayed : null;
 }
 async function showPdf() {
   const owner = current, token = owner?.session_token;
@@ -225,6 +245,65 @@ async function recoverPdfText() {
     renderText(); el('stats').textContent = `${owner.inspection.text.length.toLocaleString()} 字符 / ${documentPdf.numPages} 页`;
     notice(pdfTextSummary);
   } finally { if (owns()) el('stop-pdf-text').hidden = true; }
+}
+async function rotateCurrentPdf() {
+  if (busy || pdfRotationPending) return;
+  // These values belong to the clicked page, not to a later save-dialog result.
+  const owner = current, documentPdf = pdf, token = owner?.session_token;
+  const number = pageNumber, pages = documentPdf?.numPages;
+  const displayed = displayedPdfPage;
+  const owns = () => current === owner && pdf === documentPdf && owner?.session_token === token && pageNumber === number && Object.is(documentPdf?.numPages, pages) && displayedPdfPage === displayed;
+  pdfRotationPending = true;
+  try {
+    await operation('正在校验并另存旋转后的 PDF…', async () => {
+      if (!isTauri() || !owner || owner.inspection.format !== 'pdf' || !documentPdf || mode !== 'page') {
+        throw new Error('请先在桌面程序中打开 PDF 页面，再旋转当前页。');
+      }
+      if (typeof token !== 'string' || !/^[1-9][0-9]{0,19}$/.test(token) || BigInt(token) > 18446744073709551615n) {
+        throw new Error('PDF 会话身份无效，请重新打开文档。');
+      }
+      if (!Number.isSafeInteger(pages) || pages! < 1 || pages! > 0xffffffff || !Number.isSafeInteger(number) || number < 1 || number > pages!) {
+        throw new Error('PDF 页码身份无效，请重新打开文档。');
+      }
+      if (!displayed || currentDisplayedPdfPage() !== displayed) throw new Error('当前 PDF 页面尚未成功显示，不能确认要旋转的页面。请重新显示页面后再试。');
+      const page = await documentPdf.getPage(number);
+      let selection: { page: number; pages: number; object_id: number; generation: number; rotation: number };
+      try {
+        if (!owns()) return;
+        const objectId = page.ref?.num, generation = page.ref?.gen, rotation = page.rotate;
+        if (page.pageNumber !== number || !Number.isSafeInteger(objectId) || objectId! < 1 || objectId! > 0xffffffff ||
+            !Number.isSafeInteger(generation) || generation! < 0 || generation! > 65535 || ![0, 90, 180, 270].includes(rotation)) {
+          throw new Error('PDF 页面对象或旋转身份无法核对，请重新打开文档；此文件可能不支持旋转另存。');
+        }
+        if (objectId !== displayed.objectId || generation !== displayed.generation || rotation !== displayed.rotation) {
+          throw new Error('PDF 页面身份与已显示页面不一致，请重新打开文档后再旋转另存。');
+        }
+        selection = { page: number, pages: pages!, object_id: objectId!, generation: generation!, rotation };
+      } finally { page.cleanup(); }
+      if (!owns()) return;
+      const saved = await invoke<SavedPdfRotation | null>('rotate_current_pdf', { sessionToken: token, selection });
+      if (!owns()) return;
+      if (!saved) { notice('已取消旋转另存，当前仍显示原文件。'); return; }
+      if (typeof saved.path !== 'string' || !saved.path || saved.page !== selection.page || saved.pages !== selection.pages || saved.rotation !== (selection.rotation + 90) % 360) {
+        throw new Error('旋转另存的返回结果无法核对，请检查另存位置。当前仍显示原文件。');
+      }
+      notice(`已将第 ${saved.page} / ${saved.pages} 页顺时针旋转 90° 并另存：${saved.path}。当前仍显示未修改的原文件；可打开副本核对，但副本暂不能再次旋转另存。`);
+    }, owns);
+  } finally { pdfRotationPending = false; controls(); }
+}
+function blockPdfRotationLeave() {
+  if (!pdfRotationPending) return false;
+  notice('正在旋转另存 PDF，请等待完成或取消保存后再离开。');
+  return true;
+}
+async function canLeaveWorkspace() {
+  if (blockPdfRotationLeave()) return false;
+  if (!(await canLeavePresentation()) || !(await canLeaveWorkbook())) return false;
+  return !blockPdfRotationLeave();
+}
+function protectPdfRotationUnload(event: BeforeUnloadEvent) {
+  if (!pdfRotationPending) return;
+  event.preventDefault(); event.returnValue = '';
 }
 async function openDocument() {
   if (!(await canLeaveAuthoring())) return;
@@ -379,6 +458,7 @@ el('import-document').addEventListener('click', () => operation('正在准备编
 }));
 el('text-view').addEventListener('click', () => { setMode('text'); notice(pdfTextSummary ?? (current?.inspection.text_error ? '文字提取失败，正文搜索不可用；请查看 PDF 页面。' : '正文提取预览；原始版面请查看 PDF 页面或使用参考办公软件核对。')); });
 el('extract-pdf-text').addEventListener('click', () => operation('正在提取正文…', recoverPdfText));
+el('rotate-pdf-page').addEventListener('click', rotateCurrentPdf);
 el('stop-pdf-text').addEventListener('click', () => { stopText = true; });
 el('pdf-password-cancel').addEventListener('click', () => el<HTMLDialogElement>('pdf-password').close('cancel'));
 el('page-view').addEventListener('click', () => operation('正在显示页面…', showPdf));
@@ -409,7 +489,8 @@ async function prepareEditorWorkspace() {
   el('empty').hidden = true; el('document').hidden = true; el('pdf-pages').hidden = true;
   el('replace-panel').hidden = true; el('reading-toolbar').hidden = true; controls();
 }
-initializeAuthoring(prepareEditorWorkspace, notice, async()=>await canLeavePresentation() && await canLeaveWorkbook());
+initializeAuthoring(prepareEditorWorkspace, notice, canLeaveWorkspace, blockPdfRotationLeave);
+window.addEventListener('beforeunload', protectPdfRotationUnload);
 initializePresentationEditor(notice,operation);
 el('new-presentation').addEventListener('click',async()=>{
   if(!(await canLeaveAuthoring()))return;

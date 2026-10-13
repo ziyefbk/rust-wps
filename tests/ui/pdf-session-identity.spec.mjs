@@ -10,7 +10,7 @@ const js = ts.transpileModule(functions, { compilerOptions: { target: ts.ScriptT
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const owner = (token = '1', path = 'a.pdf') => ({ session_token: token, name: path, path, inspection: { format: 'pdf', text: 'retained Rust text', bytes: 10, warnings: [] } });
-function proxy(extra = {}) { return { numPages: 1, destroyed: 0, async destroy() { this.destroyed++; }, async getPage() { return { getViewport: () => ({ width: 200, height: 300 }), render: () => ({ promise: Promise.resolve(), cancel() {} }), cleanup() {} }; }, ...extra }; }
+function proxy(extra = {}) { return { numPages: 1, destroyed: 0, async destroy() { this.destroyed++; }, async getPage(number) { return { pageNumber: number, ref: { num: number * 2 + 1, gen: 0 }, rotate: 0, getViewport: () => ({ width: 200, height: 300 }), render: () => ({ promise: Promise.resolve(), cancel() {} }), cleanup() {} }; }, ...extra }; }
 function loading() { const pending = deferred(); return { ...pending, destroyed: 0, async destroy() { this.destroyed++; pending.reject(new Error('Loading aborted')); } }; }
 function harness({ queuedClose = false, current = owner(), pdf = null, invoke = async () => Uint8Array.of(1, 2).buffer, task = loading(), extract = async () => ({ text: 'recovered', complete: true }) } = {}) {
   const elements = new Map(), notices = [], calls = [], loads = [], modes = [], closeEvents = [];
@@ -34,7 +34,7 @@ function harness({ queuedClose = false, current = owner(), pdf = null, invoke = 
   const build = new Function('deps', `
     let {current,pdf,el,document,window,invoke,pdfjs,extractPdfText,textSummary,notice}=deps;
     let workspaceAttempt=null; let busy=false, mode='text', pageNumber=1, renderTask=null, pdfTextSummary=null, stopText=false;
-    let pdfLoadingTask=null,pdfLoadAttempt=null,cancelPdfPassword=null;
+    let pdfLoadingTask=null,pdfLoadAttempt=null,cancelPdfPassword=null,displayedPdfPage=null,pdfRenderAttempt=null;
     const controls=()=>{},pauseAuthoring=()=>{},pauseWorkbook=()=>{},pausePresentation=()=>{};
     const canLeaveAuthoring=async()=>true,closeAuthoring=()=>{},closeWorkbook=()=>{},closePresentation=()=>{},closePresentationEditor=()=>{};
     const openPresentationEditor=()=>{},openPresentation=()=>{},openWorkbook=()=>{},openAuthored=async()=>{};

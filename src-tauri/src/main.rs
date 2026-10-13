@@ -8,6 +8,7 @@ use tauri::Manager;
 mod document_protocol;
 mod document_session;
 mod pdf_export;
+mod rotation_session;
 use document_protocol::{OpenedDocument, SavedPresentation};
 use document_session::SessionState;
 mod worker;
@@ -250,6 +251,28 @@ async fn read_current_pdf(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+#[tauri::command]
+async fn rotate_current_pdf(
+    state: tauri::State<'_, Session>,
+    session_token: String,
+    selection: rust_wps::pdf_rotation::Selection,
+) -> Result<Option<rotation_session::SavedRotation>, String> {
+    let session = Arc::clone(&state.0);
+    tauri::async_runtime::spawn_blocking(move || {
+        let page = selection.page;
+        rotation_session::rotate_current(&session, &session_token, selection, |source| {
+            let stem = source.file_stem().unwrap_or_default().to_string_lossy();
+            rfd::FileDialog::new()
+                .add_filter("PDF 文档", &["pdf"])
+                .set_title(format!("第 {page} 页顺时针旋转 90°，另存 PDF 副本"))
+                .set_file_name(format!("{stem}-第{page}页旋转90度.pdf"))
+                .save_file()
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     if std::env::args_os()
         .nth(1)
@@ -294,6 +317,7 @@ fn main() {
             save_presentation_draft,
             load_presentation_draft,
             read_current_pdf,
+            rotate_current_pdf,
             save_new_document,
             save_draft,
             load_draft,

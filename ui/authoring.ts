@@ -563,7 +563,7 @@ async function create(content?: JSONContent, ask = true) {
   showNotice('支持标题、列表、链接、图片、分页和简单表格。DOC/DOCX 可导入编辑副本，修改后另存 DOCX，原文件保留。');
 }
 
-export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof showNotice, beforeLeave: () => Promise<boolean> = async () => true) {
+export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof showNotice, beforeLeave: () => Promise<boolean> = async () => true, blockWindowClose: () => boolean = () => false) {
   emptyParagraphFontControls = new WordEmptyParagraphFontControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   tableCellColorControls = new WordTableCellColorControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   tableVerticalControls = new WordTableVerticalControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
@@ -856,6 +856,9 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
         closingWindow = true;
         try {
           if (!(await canLeaveAuthoring())) return;
+          // A workspace save can start while an earlier close awaits leave checks.
+          // Recheck synchronously immediately before issuing the native destroy.
+          if (blockWindowClose()) return;
           const hadDirty = dirty; dirty = false;
           try { await getCurrentWindow().destroy(); }
           catch (error) { dirty = hadDirty; showNotice(`窗口未关闭：${String(error)}`, true); }

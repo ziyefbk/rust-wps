@@ -22,6 +22,7 @@ pub mod compatibility;
 pub mod document;
 pub mod editing;
 pub mod importing;
+pub mod pdf_rotation;
 pub mod presentation;
 pub mod presentation_edit;
 pub mod presentation_import;

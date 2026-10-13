@@ -5,6 +5,8 @@
 mod document_protocol;
 #[path = "../src-tauri/src/document_session.rs"]
 mod document_session;
+#[path = "../src-tauri/src/rotation_session.rs"]
+mod rotation_session;
 #[path = "../src-tauri/src/worker.rs"]
 mod worker;
 #[cfg(windows)]

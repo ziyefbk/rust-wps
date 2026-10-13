@@ -68,6 +68,12 @@ pub fn calculate(
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    RotatePdf {
+        path: PathBuf,
+        identity: rust_wps::PdfSourceIdentity,
+        selection: rust_wps::pdf_rotation::Selection,
+        staging_directory: PathBuf,
+    },
     Open {
         path: PathBuf,
     },
@@ -91,6 +97,9 @@ pub enum Request {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Response {
+    PdfRotated {
+        candidate: crate::rotation_session::StagedRotation,
+    },
     PresentationSaved {
         saved: crate::SavedPresentation,
     },
@@ -137,6 +146,19 @@ pub fn entry() -> Result<(), String> {
 
 fn execute(request: Request) -> Result<Response, String> {
     match request {
+        Request::RotatePdf {
+            path,
+            identity,
+            selection,
+            staging_directory,
+        } => Ok(Response::PdfRotated {
+            candidate: crate::rotation_session::stage_rotation(
+                &path,
+                &identity,
+                &selection,
+                &staging_directory,
+            )?,
+        }),
         Request::ReplacePresentation {
             path,
             output,

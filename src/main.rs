@@ -4,6 +4,29 @@ use std::path::PathBuf;
 fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let command = args.next();
+    if command.as_deref() == Some(std::ffi::OsStr::new("rotate-pdf")) {
+        let input = PathBuf::from(
+            args.next()
+                .ok_or_else(|| anyhow::anyhow!("Missing input PDF"))?,
+        );
+        let output = PathBuf::from(
+            args.next()
+                .ok_or_else(|| anyhow::anyhow!("Missing output PDF"))?,
+        );
+        let page = args
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Missing page"))?
+            .to_string_lossy()
+            .parse::<u32>()?;
+        if args.next().is_some() {
+            bail!("Unexpected extra arguments");
+        }
+        println!(
+            "{}",
+            serde_json::to_string(&rust_wps::pdf_rotation::rotate_file(&input, &output, page)?)?
+        );
+        return Ok(());
+    }
     if command.as_deref() == Some(std::ffi::OsStr::new("import-pptx")) {
         let path = PathBuf::from(
             args.next()
@@ -302,6 +325,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if command.as_deref() == Some(std::ffi::OsStr::new("--help")) || command.is_none() {
+        println!(
+            "rust-wps rotate-pdf <input.pdf> <new-output.pdf> <page> (bounded clockwise 90-degree page rotation; source unchanged)"
+        );
         println!("rust-wps inspect-xlsx <file.xlsx> (read-only; no formula recalculation)");
         println!("rust-wps inspect-xls <file.xls> (OLE BIFF8; read-only formula caches)");
         println!("rust-wps inspect-pptx <file.pptx> (read-only slide inventory; not rendering)");
