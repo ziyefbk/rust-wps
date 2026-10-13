@@ -1,5 +1,30 @@
 # 当前跨格式回归记录
 
+## 本轮：PDF.js 重提取保留字面短语（2026-10-13）
+
+基于 `c4d792784930fb004ee869752b2501bf4957ba63`，移除每个 TextItem 后无条件补空格的拼接规则。显式空白 / `hasEOL` 保留，无空白边界只在有限水平 LTR 连续几何被证明时直连，否则保守分隔；不改文字查找、PDF.js 映射或内容顺序。原页末 `trimEnd()`、取消 / 失败与 1000 页 / 2 Mi UTF-16 代码单元上限保留。精确容差、来源、界限和复现命令见 [PDF_TEXT_ASSEMBLY.md](PDF_TEXT_ASSEMBLY.md)。
+
+### 最终门禁与不变范围
+
+- **460 项无浏览器检查通过**：已发布 446 +14 个新增 PDF helper 用例，最终在构建结束后单独执行，日志 `tmp/pdf-phrase-ui-aggregate-final2.log`。实际完整参数保存于 `tmp/pdf-phrase-ui-command.json`；在原 grep 中加入整个 `pdf-text.spec.mjs`，确保新用例没有被旧四个名称筛掉
+- **18 项 PDF helper 检查通过**：新提交的 `tests/pdf-text.config.mjs` 不启动服务器或浏览器；日志 `tmp/pdf-phrase-focused-final2.log`。覆盖显式空白、不同字体连续片段、舍入 / 几何反例、非法变换与尺寸、空 EOL / 空 item / 非文本标记、大小写 / 组合字符 / 断词不规范化、空页 / 失败页、取消 / cleanup，以及分隔 / 换行 / 页边界 / UTF-16 上限
+- `npm run build` / TypeScript、Node 语法检查和 `git diff --check` 通过，`tmp/pdf-phrase-build-final2.log`；仅既有 bundle 大小提醒。未新增或执行实际浏览器 / WebView2 用例，也未重试已知受阻路线
+- Rust、桌面、vendor、Cargo / npm 依赖与锁文件、`ui/main.ts` 以及固定语料清单共 **226 个文件**相对上述提交逐字节不变，身份记录 `tmp/pdf-phrase-core-identity.json` SHA-256 **`4e1ec4f619b4af243c70b861c5c1b1411886384f9abf64003faba9abc8665429`**。此前 Rust 1.99 / 1.88 各493项、Clippy、vendor及原生结果均为历史证据，本轮没有重跑，不计为本轮新通过；没有新 Rust target 或依赖修改
+
+### 六份原件、真实 helper 与独立读者
+
+`node scripts/check-pdf-phrase-search.mjs --output tmp/pdf-phrase-validation-final2` 的最终报告 SHA-256 **`6f258e85bf4fa4e5362b18d756dd435951b2f00315f9b3bf90c10352a5929eb3`**；checker **`5586d585004d9589a053a53ba6802b26f05c1fdd48373a8f64aff262d0588b8b`**，新 helper **`0ef994e71019b399cff2c3be431fe7de6428d5636b8dc777360d37e02f974f4e`**。来源仍是固定 Mozilla revision 的六份原件，大小 / SHA / Git blob 前后相同；冻结 Rust CLI 仍为 **`aea080512d18946111e35490c223643225df1a2e423d79360f3bc37bfec54c67`**。
+
+- 已发表 14 页论文 `tracemonkey.pdf` 的四条原始字面短语，旧 helper 各 **0** 次、新 helper 各 **1** 次；本轮重读 Rust / Poppler / pypdf 各 **1** 次。完全不折叠空白或改变大小写
+- 第6页倒退约47.21用户单位的 `Trace 2` / `Trace 1`，以及第2页基线跳变约45.94的 `snippet.` / `Interpret`，均仍分隔。正反例直接来自保存的真实 TextItems，不把所有 `hasEOL:false` 都当连续文字
+- 连字 fixture 三个连续字体片段原先插入两个空格，修复后无额外空格；保留 PDF.js `ſt` 映射与独立原始 `ﬅ` 的差异，不声称 NFKC、字体映射相等或全文兼容。六份 PDF.js 非空白字符流另外核对不变，这只是诊断比较，不是搜索规范化
+- 真实 `ui/main.ts` 的 `recoverPdfText` / `renderText` 原函数接入实际 helper / PDF.js 和 DOM 运输替身：初始 Rust 正文、连续两次重提取均保留四条搜索各一个 mark；小写不匹配仍为0，重提取不会累计空格。没有声称真实点击、DOM 渲染、IPC 或原生验收
+- 六份 PDF.js helper 均完整提取；两份旧 Rust 编码 panic 仍分别为 `UniJIS-UTF16-H` / `90ms-RKSJ-H`、退出101，stderr原样保存，未冒充为 Rust 支持。pypdf部分字体警告也保留
+- checker 采用安装的 PDF.js5.6.205 **Node legacy adapter**、pypdf6.10.0 与 Poppler。现代 Node adapter 已知缺少 `Uint8Array.toHex` 的路径没有重试。旧原件PNG仅重新查看，没有本轮新渲染或应用页面对照
+- 已存在输出目录会 EEXIST 拒绝，检查后最终报告散列不变；记录 `tmp/pdf-phrase-existing-output-rejection-final2.log`。早期成功报告 `tmp/pdf-phrase-validation-first/` 与 `tmp/pdf-phrase-validation-final/` 保留，不混入最终计数；最终产品用单一尾部空白状态避免每片段重扫已累积正文，全量重新提取并复测，含两万连续片段和实际恢复 / 查找的重复路径
+
+本轮不涉及源 PDF 改写、OCR、中文映射修复、阅读顺序、页内文字选区或 PDF 编辑；后续 PDF.js 路径重开的会话身份问题仍未解决。尚未完成整个 DOC / DOCX / PDF 阶段。
+
 ## 本轮：PDF 同源有界提取快照（2026-10-13）
 
 基于 `2215210b0a4948c4037aac81352b3ee5e991293a`，PDF 提取不再在检查后重开路径。已打开 reader 最多消费 64 MiB + 1 字节；同一实际缓冲区负责大小 / 签名检查、`Inspection.bytes` 与固定 `pdf-extract 0.12.1` 内存提取。DOC / DOCX 原分支、依赖、vendor、UI 和桌面后端没有改动。策略、调查来源和未解决的后续 PDF.js 会话身份见 [PDF_SOURCE_SNAPSHOT.md](PDF_SOURCE_SNAPSHOT.md)。
