@@ -1171,8 +1171,27 @@ fn unproven_inherited_zero_refuses_fixed_but_warns_for_automatic_normalization()
                 zero_indent_style_chain()
             };
             package.insert("word/styles.xml".into(), sheet.into_bytes());
-            if fixed_layout {
+            if fixed_layout && proof_failure == "modern-mode" {
                 refused_package(&package);
+            } else if fixed_layout {
+                // The explicitly selected style now proves the other physical
+                // side: these exact former custom-margin refusals are supported.
+                let source = dir.path().join(format!("proved-{proof_failure}.docx"));
+                write(&source, &package);
+                let original = fs::read(&source).unwrap();
+                let report = importing::import_docx(&source).unwrap();
+                assert_eq!(report.document.content[0].attrs["tableIndentTwips"], 0);
+                assert_eq!(
+                    report.document.content[0].attrs["tableCellMarginsTwips"],
+                    json!({"left":0,"right":108})
+                );
+                assert!(
+                    !report
+                        .compatibility
+                        .risks
+                        .contains(INHERITED_INDENT_NORMALIZED)
+                );
+                assert_eq!(fs::read(&source).unwrap(), original);
             } else {
                 let source = dir.path().join(format!("normalized-{proof_failure}.docx"));
                 write(&source, &package);
@@ -1261,7 +1280,29 @@ fn direct_indent_cannot_downgrade_to_inherited_auto_normalization() {
                     "word/styles.xml".into(),
                     zero_indent_style_chain().into_bytes(),
                 );
-                refused_package(&package);
+                if proof_failure == "modern-mode" {
+                    refused_package(&package);
+                } else {
+                    // Physical left zero plus the explicitly selected base's
+                    // physical right 108 is a complete newly supported pair.
+                    let dir = tempfile::tempdir().unwrap();
+                    let source = dir.path().join("proved.docx");
+                    write(&source, &package);
+                    let original = fs::read(&source).unwrap();
+                    let report = importing::import_docx(&source).unwrap();
+                    assert_eq!(report.document.content[0].attrs["tableIndentTwips"], indent);
+                    assert_eq!(
+                        report.document.content[0].attrs["tableCellMarginsTwips"],
+                        json!({"left":0,"right":108})
+                    );
+                    assert!(
+                        !report
+                            .compatibility
+                            .risks
+                            .contains(INHERITED_INDENT_NORMALIZED)
+                    );
+                    assert_eq!(fs::read(&source).unwrap(), original);
+                }
             }
         }
     }

@@ -73,10 +73,17 @@
       </span>
       <span id="table-position-controls" role="group" aria-label="表格位置">
         <label>表格对齐 <select id="edit-table-align" aria-label="表格对齐" title="作用于当前表格或选中的表格；居中或右对齐会清除正缩进，可一次撤销。自动表宽设为 450 pt 基础宽度，内容仍可能撑宽或超出页面"><option value="">默认（左）</option><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option><option value="mixed" disabled>混合</option></select></label>
-        <label>左缩进 <input id="edit-table-indent" type="number" min="0" max="1584" step="0.05" aria-label="表格左缩进（pt）" placeholder="先选表格" title="以表格首列文字边缘计算，不是边框位移；仅左对齐支持正缩进。0 为显式零缩进（边框比默认位置向左 5.4 pt），留空应用恢复默认；表宽加缩进最多 1584 pt，自动表宽按 450 pt 计"> pt</label>
+        <label>左缩进 <input id="edit-table-indent" type="number" min="0" max="1584" step="0.05" aria-label="表格左缩进（pt）" placeholder="先选表格" title="以表格首列文字边缘计算，不是边框位移；仅左对齐支持正缩进。0 为显式零缩进（边框按左单元格边距向左偏移，默认 5.4 pt），留空应用恢复默认；表宽加缩进最多 1584 pt，自动表宽按 450 pt 计"> pt</label>
         <button id="edit-table-indent-apply" title="应用整表缩进；混合值留空则不变，可一次撤销">应用缩进</button>
         <button id="edit-table-position-reset" title="移除表格对齐和缩进，保留固定列宽">默认位置</button>
         <span id="edit-table-position-state" aria-live="polite"></span>
+      </span>
+      <span id="table-cell-margins-controls" role="group" aria-label="表格单元格左右边距">
+        <label>当前表格左内边距 <input id="edit-table-cell-margin-left" type="number" min="0" max="1584" step="0.05" aria-label="单元格左边距（pt）" placeholder="先选表格" title="0–1584 pt，0.05 pt 递增；须同时填写左右边距；显式 0 与默认不同"> pt</label>
+        <label>右边距 <input id="edit-table-cell-margin-right" type="number" min="0" max="1584" step="0.05" aria-label="单元格右边距（pt）" placeholder="先选表格" title="作用于当前整张表格；左右边距之和须小于每列宽度"> pt</label>
+        <button id="edit-table-cell-margins-apply" title="仅应用当前顶层简单表格的左右边距；整对留空恢复默认，可一次撤销">应用单元格边距</button>
+        <button id="edit-table-cell-margins-reset" title="移除显式左右边距，恢复原有显示与 DOCX 默认各 5.4 pt；段落不适配时整次拒绝">默认单元格边距</button>
+        <span id="edit-table-cell-margins-state" aria-live="polite"></span>
       </span>
       <span id="image-dimension-controls" role="group" aria-label="图片显示尺寸">
         <label>图片宽 <input id="edit-image-width" type="text" inputmode="decimal" aria-label="图片宽（pt）" title="最多 450 pt；小数须精确到整数 EMU，非终止小数可用 EMU/12700 分数"> pt</label>

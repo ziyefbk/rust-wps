@@ -1,3 +1,4 @@
+import {WordTableCellMarginsControls} from './word-table-cell-margins-controls';
 import {ParagraphIndent, omitDefaultParagraphIndent, validateParagraphIndentDocument} from './word-paragraph-indent';
 import {WordParagraphIndentControls} from './word-paragraph-indent-controls';
 import {WordPageGeometry, documentPageGeometry, validatePageGeometryDocument} from './word-page-geometry';
@@ -85,6 +86,7 @@ let fontFamilyInputEditing = false;
 let paragraphSpacingInputEditing = false;
 let tableWidthInputEditing = false;
 let pageControls: WordPageControls | null = null;
+let tableCellMarginsControls: WordTableCellMarginsControls | null = null;
 let paragraphIndentControls: WordParagraphIndentControls | null = null;
 let imageControls: WordImageControls | null = null;
 let imageParagraphControls: WordImageParagraphControls | null = null;
@@ -332,6 +334,7 @@ function updateToolbar() {
   // Image-specific selection/saving locks must follow the toolbar defaults.
   pageControls?.update();
   paragraphIndentControls?.update();
+  tableCellMarginsControls?.update();
   imageControls?.update();
   imageParagraphControls?.update();
   for (const mark of ['bold', 'italic', 'underline', 'strike', 'superscript', 'subscript', 'bulletList', 'orderedList']) {
@@ -463,6 +466,7 @@ function queueDraft(doc: JSONContent) {
 export function closeAuthoring() {
   pageControls?.reset();
   paragraphIndentControls?.reset();
+  tableCellMarginsControls?.reset();
   imageControls?.reset();
   imageParagraphControls?.reset();
   tableWidthInputEditing = false;
@@ -527,7 +531,7 @@ async function create(content?: JSONContent, ask = true) {
       draftTimer = setTimeout(() => { draftTimer = null; if (owner === editor) queueDraft(snapshotDocument(owner)); }, 700);
       updateToolbar();
     },
-    onFocus: () => { paragraphIndentControls?.cancelEditing(); tableIndentInputEditing = false; tableWidthInputEditing = false; paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
+    onFocus: () => { tableCellMarginsControls?.cancelEditing(); paragraphIndentControls?.cancelEditing(); tableIndentInputEditing = false; tableWidthInputEditing = false; paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
     onSelectionUpdate: updateToolbar,
   });
   dirty = !!content; version++;
@@ -538,6 +542,7 @@ async function create(content?: JSONContent, ask = true) {
 }
 
 export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof showNotice, beforeLeave: () => Promise<boolean> = async () => true) {
+  tableCellMarginsControls = new WordTableCellMarginsControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   paragraphIndentControls = new WordParagraphIndentControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   imageParagraphControls = new WordImageParagraphControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
   pageControls = new WordPageControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});

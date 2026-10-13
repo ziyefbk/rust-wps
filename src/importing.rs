@@ -210,6 +210,12 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
                 node.attrs
                     .insert("tableAlign".into(), serde_json::json!(alignment));
             }
+            if let Some(margins) = width.margins {
+                node.attrs.insert(
+                    "tableCellMarginsTwips".into(),
+                    serde_json::to_value(margins)?,
+                );
+            }
             if let Some(indent) = width.indent {
                 node.attrs
                     .insert("tableIndentTwips".into(), serde_json::json!(indent));

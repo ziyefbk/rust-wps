@@ -462,11 +462,12 @@ struct Styles<'a> {
     chain_cache: RefCell<BTreeMap<(String, String), Vec<&'a Xml>>>,
     properties_cache: RefCell<BTreeMap<usize, Properties>>,
     cell_geometry_checked: RefCell<BTreeSet<usize>>,
+    margin_proofs: RefCell<std::vec::IntoIter<bool>>,
     unresolved_chains: RefCell<BTreeSet<(String, String)>>,
     fallback_indent: Cell<Option<bool>>,
 }
 impl<'a> Styles<'a> {
-    fn new(root: &'a Xml) -> Result<Self> {
+    fn new(root: &'a Xml, margin_proofs: Vec<bool>) -> Result<Self> {
         let mut sheet = Self {
             defaults: Properties::default(),
             paragraph_defaults: Vec::new(),
@@ -481,6 +482,7 @@ impl<'a> Styles<'a> {
             chain_cache: RefCell::default(),
             properties_cache: RefCell::default(),
             cell_geometry_checked: RefCell::default(),
+            margin_proofs: RefCell::new(margin_proofs.into_iter()),
             unresolved_chains: RefCell::default(),
             fallback_indent: Cell::new(None),
         };
@@ -583,7 +585,6 @@ impl<'a> Styles<'a> {
             style.all("tblStylePr").is_empty(),
             "Conditional table styles are unsupported for indented cell paragraphs"
         );
-        margins(style)?;
         self.cell_geometry_checked.borrow_mut().insert(key);
         Ok(())
     }
@@ -830,53 +831,6 @@ fn numbering(data: Option<&Xml>, used: &BTreeSet<(u32, u8)>) -> Result<()> {
     Ok(())
 }
 
-fn margins(node: &Xml) -> Result<()> {
-    fn placement(node: &Xml) -> Result<()> {
-        node.one("tblCellMar")?;
-        node.one("tcMar")?;
-        for child in &node.children {
-            if child.tag == "tblCellMar" {
-                ensure!(node.tag == "tblPr", "Non-direct table cell margins");
-            }
-            if child.tag == "tcMar" {
-                ensure!(node.tag == "tcPr", "Non-direct cell margins");
-            }
-            if child.tag == "bidiVisual" {
-                disabled(child)?;
-            }
-            placement(child)?;
-        }
-        Ok(())
-    }
-    placement(node)?;
-    for tag in ["tblCellMar", "tcMar"] {
-        for margin in node.all(tag) {
-            margin.schema(&[], false)?;
-            for side in ["left", "right", "start", "end"] {
-                if let Some(value) = margin.one(side)? {
-                    value.schema(&["type", "w"], true)?;
-                    ensure!(
-                        value.attr("type")? == Some("dxa") && value.attr("w")? == Some("108"),
-                        "Indented cell paragraphs require 108-twip horizontal margins"
-                    );
-                }
-            }
-            ensure!(
-                !(margin.one("left")?.is_some() && margin.one("start")?.is_some()
-                    || margin.one("right")?.is_some() && margin.one("end")?.is_some()),
-                "Ambiguous horizontal cell margins"
-            );
-            ensure!(
-                margin.children.iter().all(|n| matches!(
-                    n.tag.as_str(),
-                    "top" | "bottom" | "left" | "right" | "start" | "end"
-                )),
-                "Unsupported cell margin declaration"
-            );
-        }
-    }
-    Ok(())
-}
 fn paragraph_text(node: &Xml, text: &mut String) -> Result<()> {
     match node.tag.as_str() {
         "pPr" => {}
@@ -917,6 +871,7 @@ pub(crate) fn analyze(
     numbers: Option<&[u8]>,
     config: Option<&[u8]>,
 ) -> Result<ParagraphIndentAudit> {
+    let margin_proofs = crate::table_widths::paragraph_margin_proofs(main, styles)?;
     let main = xml(main)?;
     let document = root(&main, "document")?;
     let body = document
@@ -924,7 +879,7 @@ pub(crate) fn analyze(
         .ok_or_else(|| anyhow::anyhow!("Missing DOCX body"))?;
     check_locations(body, None)?;
     let styles_xml = xml(styles)?;
-    let sheet = Styles::new(root(&styles_xml, "styles")?)?;
+    let sheet = Styles::new(root(&styles_xml, "styles")?, margin_proofs)?;
     settings(config)?;
     let numbers_xml = numbers.map(xml).transpose()?;
     let mut used = BTreeSet::new();
@@ -994,6 +949,11 @@ pub(crate) fn analyze(
                 return Ok(());
             }
             "tbl" => {
+                let margin_proved = sheet
+                    .margin_proofs
+                    .borrow_mut()
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("Table margin proof order mismatch"))?;
                 node.identity()?;
                 let props = node.one("tblPr")?;
                 let explicit = props.map(|p| p.one("tblStyle")).transpose()?.flatten();
@@ -1024,7 +984,10 @@ pub(crate) fn analyze(
                         !sheet.unresolved(id, "table"),
                         "Unresolved table style prevents cell indentation preservation"
                     );
-                    margins(node)?;
+                    ensure!(
+                        margin_proved,
+                        "Unproved horizontal margins in indented cell paragraphs"
+                    );
                     for style in chain {
                         sheet.cell_geometry(style)?;
                     }
@@ -1039,6 +1002,10 @@ pub(crate) fn analyze(
         Ok(())
     }
     walk(body, &sheet, None, 0, &mut used, &mut audit)?;
+    ensure!(
+        sheet.margin_proofs.borrow_mut().next().is_none(),
+        "Source table margin proof was not consumed"
+    );
     numbering(numbers_xml.as_ref(), &used)?;
     Ok(audit)
 }

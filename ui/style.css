@@ -148,3 +148,16 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
 .tiptap [data-paragraph-indent-table] td,.tiptap [data-paragraph-indent-table] th {
   padding-left:5.4pt; padding-right:5.4pt; min-width:0;
 }
+
+#table-cell-margins-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#table-cell-margins-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+#table-cell-margins-controls input { width:6.5em; min-width:0; border:1px solid var(--line); border-radius:4px; padding:7px; color:inherit; background:white; }
+#edit-table-cell-margins-state { color:#61738a; font-size:11px; }
+/* Owned table metadata survives the immutable print clone. Direct selectors
+   avoid applying this table's margins to descendant/nested table cells. */
+.tiptap table[data-table-cell-margins-twips] > tbody > tr > td,
+.tiptap table[data-table-cell-margins-twips] > tbody > tr > th,
+.tiptap table[data-table-cell-margins-twips] > tr > td,
+.tiptap table[data-table-cell-margins-twips] > tr > th {
+  padding-left:var(--word-cell-margin-left); padding-right:var(--word-cell-margin-right); min-width:0;
+}

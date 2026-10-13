@@ -1,3 +1,4 @@
+import {isTableCellMargins, parseTableCellMarginsMetadata, simpleCellMarginsTable, tableCellMarginsAttribute, tableCellMarginsDataAttribute, tableCellMarginsDOM, tableCellMarginsError, validateTableCellMarginsDocument, validTableCellMarginsHTML, type TableCellMargins} from './word-table-cell-margins';
 import {omitDefaultParagraphIndent, validateParagraphIndentDocument} from './word-paragraph-indent-model';
 import {isPageGeometry, omitDefaultPageGeometry, pageTableWidthTwips, validatePageGeometryDocument} from './word-page-geometry';
 import {mergeAttributes, type CommandProps, type JSONContent} from '@tiptap/core';
@@ -64,6 +65,7 @@ export function validateTableWidthsDocument(document: JSONContent): void {
     for (const child of node.content ?? []) visit(child, tableDepth + Number(node.type === 'table'), geometryAncestor ?? (geometry ? error : null));
   };
   visit(document, 0, null);
+  validateTableCellMarginsDocument(document);
 }
 
 // Default null is an editor-only attribute. Fixed cells carry no second width
@@ -74,6 +76,7 @@ export function omitDefaultTableWidths(document: JSONContent, inFixedTable = fal
   if (result.attrs) {
     result.attrs = {...result.attrs};
     if (result.type === 'table' && result.attrs[widthAttribute] === null) delete result.attrs[widthAttribute];
+    if (result.type === 'table' && result.attrs[tableCellMarginsAttribute] === null) delete result.attrs[tableCellMarginsAttribute];
     if (result.type === 'table') for (const field of tablePositionFields) if (result.attrs[field] === null) delete result.attrs[field];
     if (fixed && cellTypes.has(result.type ?? '') && result.attrs.colwidth === null) delete result.attrs.colwidth;
     if (Object.keys(result.attrs).length === 0) delete result.attrs;
@@ -94,7 +97,7 @@ export function fixedTableDOM(widths: number[], attributes: Record<string, unkno
 // row's pixel colwidth attributes. Override both mount and update for canonical
 // tables, and retain the original renderer for tables without fixed geometry.
 export class FixedTableView extends TableView {
-  constructor(...args: ConstructorParameters<typeof TableView>) { super(...args); this.syncFixedWidths(); this.syncPosition(); }
+  constructor(...args: ConstructorParameters<typeof TableView>) { super(...args); this.syncFixedWidths(); this.syncPosition(); this.syncCellMargins(); }
   private syncFixedWidths() {
     const widths: unknown = this.node.attrs[widthAttribute];
     if (!isTableColumnWidths(widths)) { this.table.removeAttribute(widthDataAttribute); return; }
@@ -123,6 +126,20 @@ export class FixedTableView extends TableView {
       this.table.style.minWidth = '0';
     }
   }
+  private syncCellMargins() {
+    const margins = this.node.attrs[tableCellMarginsAttribute];
+    this.table.removeAttribute(tableCellMarginsDataAttribute);
+    if (isTableCellMargins(margins)) {
+      this.table.setAttribute(tableCellMarginsDataAttribute, `${margins.left},${margins.right}`);
+      if (!isTableColumnWidths(this.node.attrs[widthAttribute])) {
+        this.table.style.tableLayout = 'auto'; this.table.style.width = `${DEFAULT_TABLE_WIDTH_TWIPS / 15}px`; this.table.style.minWidth = '0';
+      }
+    }
+    // Empty values remove owned variables in the real DOM, avoiding stale
+    // padding after reset and preserving independently cloned print snapshots.
+    this.table.style.setProperty('--word-cell-margin-left', isTableCellMargins(margins) ? `${margins.left / 20}pt` : '');
+    this.table.style.setProperty('--word-cell-margin-right', isTableCellMargins(margins) ? `${margins.right / 20}pt` : '');
+  }
   update(node: Node) {
     if (node.type !== this.node.type) return false;
     if (isTableColumnWidths(this.node.attrs[widthAttribute]) && !isTableColumnWidths(node.attrs[widthAttribute])) {
@@ -135,6 +152,7 @@ export class FixedTableView extends TableView {
     if (!super.update(node)) return false;
     this.syncFixedWidths();
     this.syncPosition();
+    this.syncCellMargins();
     return true;
   }
 }
@@ -230,6 +248,34 @@ export function createTablePositionTransaction(state: EditorState, patch: TableP
   return transaction;
 }
 
+export interface TableCellMarginsToken {doc: Node; selection: Selection}
+export const captureTableCellMargins = (state: EditorState): TableCellMarginsToken => ({doc: state.doc, selection: state.selection});
+export const matchesTableCellMargins = (state: EditorState, token: TableCellMarginsToken): boolean => state.doc === token.doc && state.selection.eq(token.selection);
+export function selectedTableCellMargins(state: EditorState) {
+  const selection = state.selection;
+  const selected = selection instanceof NodeSelection && selection.node.type.name === 'table'
+    ? {table: selection.node, pos: selection.from} : selectedTableColumn(state);
+  if (!selected) return null;
+  const {table, pos} = selected;
+  return {table, pos, supported: state.doc.resolve(pos).depth === 0 && simpleCellMarginsTable(table.toJSON()),
+    value: isTableCellMargins(table.attrs[tableCellMarginsAttribute]) ? table.attrs[tableCellMarginsAttribute] as TableCellMargins : null};
+}
+export function createTableCellMarginsTransaction(state: EditorState, margins: TableCellMargins | null, token?: TableCellMarginsToken): Transaction | null {
+  if (margins !== null && !isTableCellMargins(margins)) throw new Error(tableCellMarginsError);
+  if (token && !matchesTableCellMargins(state, token)) return null;
+  const selected = selectedTableCellMargins(state);
+  if (!selected) return null;
+  if (!selected.supported) throw new Error(tableCellMarginsError);
+  const previous = selected.value;
+  if (margins === null && previous === null || margins && previous && margins.left === previous.left && margins.right === previous.right) return null;
+  const transaction = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks}).tr
+    .setNodeMarkup(selected.pos, undefined, {...selected.table.attrs, [tableCellMarginsAttribute]: margins ? {...margins} : null}, selected.table.marks);
+  validateProspectiveDocument(transaction.doc);
+  transaction.setSelection(Selection.fromJSON(transaction.doc, state.selection.toJSON()));
+  if (state.storedMarks) transaction.setStoredMarks(state.storedMarks);
+  return transaction;
+}
+
 const structuralCommands = {addColumnBefore, addColumnAfter, deleteColumn, addRowBefore, addRowAfter, deleteRow, deleteTable};
 export type TableStructureAction = keyof typeof structuralCommands;
 
@@ -281,7 +327,12 @@ export function createTableStructureTransaction(state: EditorState, action: Tabl
 // never enter history or autosave. Our structural commands pass one complete,
 // already validated transaction rather than temporarily inconsistent columns.
 export function tableWidthGuard(onRejected: (message: string) => void = () => {}): Plugin {
-  return new Plugin({filterTransaction: transaction => {
+  return new Plugin({props: {handlePaste: (_view, event) => {
+    const html = event.clipboardData?.getData('text/html');
+    if (!html || !html.toLowerCase().includes(tableCellMarginsDataAttribute)) return false;
+    if (validTableCellMarginsHTML(new DOMParser().parseFromString(html, 'text/html'))) return false;
+    onRejected(tableCellMarginsError); return true;
+  }}, filterTransaction: transaction => {
     if (!transaction.docChanged) return true;
     try { validateProspectiveDocument(transaction.doc); return true; }
     catch (error) { onRejected(String(error)); return false; }
@@ -294,16 +345,31 @@ export const WordTable = Table.extend<TableOptions & {onWidthError: (message: st
     return {...this.parent?.(), [widthAttribute]: {
       default: null, rendered: false,
       parseHTML: element => parseTableColumnWidthsMetadata(element.getAttribute(widthDataAttribute)),
-    }, tableAlign: {default: null, rendered: false, parseHTML: element => parseTableAlignMetadata(element.getAttribute('data-table-align'))},
+    }, [tableCellMarginsAttribute]: {default: null, rendered: false, parseHTML: element => {
+      const raw = element.getAttribute(tableCellMarginsDataAttribute);
+      return raw === null ? null : parseTableCellMarginsMetadata(raw) ?? 'invalid-table-cell-margins';
+    }}, tableAlign: {default: null, rendered: false, parseHTML: element => parseTableAlignMetadata(element.getAttribute('data-table-align'))},
     tableIndentTwips: {default: null, rendered: false, parseHTML: element => parseTableIndentMetadata(element.getAttribute('data-table-indent-twips'))}};
   },
   renderHTML({node, HTMLAttributes}) {
     const widths: unknown = node.attrs[widthAttribute];
-    const attributes = mergeAttributes(HTMLAttributes, tablePositionDOM(node.attrs, !isTableColumnWidths(widths)));
+    const attributes = mergeAttributes(HTMLAttributes, tablePositionDOM(node.attrs, !isTableColumnWidths(widths)), tableCellMarginsDOM(node.attrs, !isTableColumnWidths(widths)));
     return isTableColumnWidths(widths) ? fixedTableDOM(widths, mergeAttributes(this.options.HTMLAttributes, attributes))
       : this.parent!({node, HTMLAttributes: attributes});
   },
   addCommands() {
+    const cellMarginsCommand = (margins: TableCellMargins | null) => ({state, dispatch, tr}: CommandProps) => {
+      try {
+        const transaction = createTableCellMarginsTransaction(state, margins);
+        if (!transaction) return false;
+        if (dispatch) {
+          for (const step of transaction.steps) tr.step(step);
+          tr.setSelection(Selection.fromJSON(tr.doc, transaction.selection.toJSON()));
+          if (transaction.storedMarksSet) tr.setStoredMarks(transaction.storedMarks);
+        }
+        return true;
+      } catch (error) {if (dispatch) this.options.onWidthError(String(error)); return false;}
+    };
     const positionCommand = (patch: TablePositionPatch) => ({state, dispatch, tr}: CommandProps) => {
       try {
         const transaction = createTablePositionTransaction(state, patch);
@@ -316,7 +382,7 @@ export const WordTable = Table.extend<TableOptions & {onWidthError: (message: st
         return true;
       } catch (error) {if (dispatch) this.options.onWidthError(String(error)); return false;}
     };
-    return {...this.parent?.(), setTablePosition: positionCommand, resetTablePosition: () => positionCommand({tableAlign: null, tableIndentTwips: null}),
+    return {...this.parent?.(), setTableCellMargins: cellMarginsCommand, resetTableCellMargins: () => cellMarginsCommand(null), setTablePosition: positionCommand, resetTablePosition: () => positionCommand({tableAlign: null, tableIndentTwips: null}),
       ...Object.fromEntries(Object.keys(structuralCommands).map(action => [action, () =>
       ({state, dispatch, tr}: CommandProps) => {
         try {

@@ -32,6 +32,7 @@ w = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(w)
 ALIGN = "tableAlign"
 INDENT = "tableIndentTwips"
+MARGINS = "tableCellMarginsTwips"
 WIDTH = "columnWidthsTwips"
 INHERITED_WARNING = "Inherited table indentation normalized; automatic table geometry not preserved"
 
@@ -82,15 +83,16 @@ def verify_positions(snap, targets, label, source=False):
                     f"{label} table {i}: python-docx alignment differs")
         if not source and (expected["align"] is not None or expected["indent"] is not None):
             margins = {m["edge"]: {k: v for k, v in m.items() if k != "edge"} for m in snap["table_cell_margins"][i]}
-            w.check(margins.get("left") == margins.get("right") == {"type": "dxa", "w": "108"},
-                    f"{label} table {i}: positioned export lacks explicit 108twip horizontal cell margins")
+            wanted = expected.get("cell_margins", {"left": 108, "right": 108})
+            w.check(all(margins.get(side) == {"type": "dxa", "w": str(wanted[side])} for side in ["left", "right"]),
+                    f"{label} table {i}: positioned export horizontal cell margins differ")
 
 
 def verify_model(model, targets, label):
     tables = w.verify_model(model, targets, label)
     for i, (table, expected) in enumerate(zip(w.model_tables(model), targets)):
         attrs = table.get("attrs", {})
-        for key, value in [(ALIGN, expected["align"]), (INDENT, expected["indent"])]:
+        for key, value in [(ALIGN, expected["align"]), (INDENT, expected["indent"]), (MARGINS, expected.get("cell_margins"))]:
             w.check((key not in attrs) if value is None else attrs.get(key) == value,
                     f"{label} table {i}: {key} missing, invented or changed")
     return tables
@@ -117,7 +119,7 @@ def make_fixtures(directory):
         if expected is not None:
             verify_positions(sources[name]["source_independent"], expected, name + " source", source=True)
 
-    def fixture(name, jc=None, indent=None, typ="dxa", layout="fixed", reject=None, mutate=None, render=False, effective_indent=None):
+    def fixture(name, jc=None, indent=None, typ="dxa", layout="fixed", reject=None, mutate=None, render=False, effective_indent=None, cell_margins=None):
         doc = w.fresh_document()
         table = w.add_table(doc, [1800, 4200], rows=1, probe=True, layout=layout)
         if jc is not None:
@@ -130,6 +132,8 @@ def make_fixtures(directory):
         texts = [[" ".join(w.WRAP_WORDS), "RightProbe"]]
         expected = [{"widths": [1800, 4200] if layout == "fixed" else None, "texts": texts,
                      "header_rows": [False], "align": {"start": "left", "end": "right"}.get(jc, jc), "indent": indent}]
+        if cell_margins is not None:
+            expected[0]["cell_margins"] = cell_margins
         if effective_indent is not None:
             expected[0].update(indent=effective_indent, source_indent=indent)
         if name in ("auto-left-indent", "fixed-max-combined", "auto-max-combined"):
@@ -175,7 +179,8 @@ def make_fixtures(directory):
                 w.child(p, edge, w=value, type="dxa")
         return apply
     for amount in [0, 216]:
-        fixture(f"reject-custom-margin-{amount}", "left", 720, reject="custom horizontal margin", mutate=margin(amount))
+        fixture(f"fixed-custom-margin-{amount}", "left", 720, mutate=margin(amount),
+                cell_margins={"left": amount, "right": amount})
     fixture("reject-cell-margin", "left", 720, reject="cell-level horizontal margin override", mutate=margin(216, True))
     def malformed_margin(kind):
         def apply(doc, table):
@@ -236,7 +241,8 @@ def make_fixtures(directory):
     fixture("fixed-inherited-zero-right", "right", mutate=selected_style(), effective_indent=0, render=True)
     fixture("reject-modern-inherited-zero", "left", reject="modern fixed inherited zero indentation", mutate=selected_style(compatibility=15))
     fixture("auto-modern-inherited-zero", "left", layout=None, mutate=selected_style(compatibility=15))
-    fixture("reject-inherited-custom-margin", "left", reject="legacy inherited zero with custom horizontal margin",
+    fixture("fixed-inherited-custom-margin", "left", effective_indent=0,
+            cell_margins={"left": 216, "right": 216},
             mutate=lambda d,t: (selected_style()(d,t), margin(216)(d,t)))
     # Header and multiple-table evidence is separate from one-table PDF probes.
     doc = w.fresh_document()
@@ -287,7 +293,7 @@ def rendered(soffice, directory, path, expected):
     w.check(abs(result["page_width_pt"] - page_width) < 0.1, "PDF page width mismatch")
     width = sum(widths) / 20
     align, indent = expected["align"], expected["indent"]
-    x = left + (page_width - left - right - width) / 2 if align == "center" else page_width - right - width if align == "right" else left + (indent / 20 - 5.4 if indent is not None else 0)
+    x = left + (page_width - left - right - width) / 2 if align == "center" else page_width - right - width if align == "right" else left + ((indent - expected.get("cell_margins", {"left": 108})["left"]) / 20 if indent is not None else 0)
     result["expected_left_border_pt"] = x
     result["left_border_error_pt"] = result["vertical_border_x_pt"][0] - x
     w.check(abs(result["left_border_error_pt"]) < 0.8, f"Border position mismatch: {path}: {result['left_border_error_pt']}")

@@ -309,7 +309,8 @@ pub fn page_geometry(doc: &Node) -> Result<Option<PageGeometry>> {
 }
 
 /// Check bounded object frames, not text pagination or intrinsic auto-table
-/// layout. Legacy explicit-left-indent tables can protrude 108 twips left;
+/// layout. Legacy explicit-left-indent tables can protrude by their leading
+/// cell margin (108 twips when omitted);
 /// this conservative size/right-edge check does not promise full containment.
 fn validate_page_content(doc: &Node, page: &PageGeometry) -> Result<()> {
     let width = page.width_twips - page.margin_left_twips - page.margin_right_twips;
@@ -581,6 +582,75 @@ pub fn table_column_widths(node: &Node) -> Result<Option<Vec<u64>>> {
     Ok(Some(widths))
 }
 
+/// Uniform physical horizontal cell margins for one simple top-level table.
+/// Omission keeps historical encoding; explicit zero remains a real value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TableCellMargins {
+    pub left: u64,
+    pub right: u64,
+}
+impl Default for TableCellMargins {
+    fn default() -> Self {
+        Self {
+            left: 108,
+            right: 108,
+        }
+    }
+}
+
+pub fn table_cell_margins(node: &Node) -> Result<Option<TableCellMargins>> {
+    let Some(value) = node.attrs.get("tableCellMarginsTwips") else {
+        return Ok(None);
+    };
+    let margins: TableCellMargins = serde_json::from_value(value.clone())
+        .context("Table cell margins require exactly left and right integer twips")?;
+    ensure!(
+        margins.left <= MAX_TABLE_WIDTH_TWIPS && margins.right <= MAX_TABLE_WIDTH_TWIPS,
+        "Table cell margins exceed supported bounds"
+    );
+    Ok(Some(margins))
+}
+
+/// Use exactly the same grid as the writer, including the old truncated auto
+/// columns and the explicit-page unpositioned integer-remainder convention.
+fn table_layout_columns(node: &Node, page: Option<&PageGeometry>) -> Result<Vec<u64>> {
+    if let Some(widths) = table_column_widths(node)? {
+        return Ok(widths);
+    }
+    let columns = node
+        .content
+        .first()
+        .context("Table has no rows")?
+        .content
+        .len();
+    ensure!(columns > 0, "Table has no columns");
+    let total = table_layout_width(node, page)?;
+    let normalized = page.is_some()
+        && !node.attrs.contains_key("tableAlign")
+        && !node.attrs.contains_key("tableIndentTwips");
+    Ok((0..columns)
+        .map(|index| {
+            total / columns as u64
+                + u64::from(normalized && (index as u64) < total % columns as u64)
+        })
+        .collect())
+}
+
+fn validate_table_cell_content(doc: &Node, page: Option<&PageGeometry>) -> Result<()> {
+    for table in doc.content.iter().filter(|node| node.kind == "table") {
+        if let Some(margins) = table_cell_margins(table)? {
+            ensure!(
+                table_layout_columns(table, page)?
+                    .iter()
+                    .all(|width| *width > margins.left + margins.right),
+                "Table cell margins must leave positive content width in every column"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Optional positioning is separate from paragraph alignment. Omission retains
 /// legacy encoding; explicit zero is retained rather than treated as absent.
 pub fn table_position(node: &Node) -> Result<(Option<&str>, Option<u64>)> {
@@ -708,25 +778,9 @@ pub fn validate_paragraph_indents(doc: &Node) -> Result<()> {
                     !block.content.iter().any(contains_table),
                     "Indented table cannot contain nested tables"
                 );
-                let columns = block
-                    .content
-                    .first()
-                    .context("Indented table has no rows")?
-                    .content
-                    .len();
-                ensure!(columns > 0, "Indented table has no columns");
-                let total = table_layout_width(block, page.as_ref())?;
-                let normalized = page.is_some()
-                    && !block.attrs.contains_key("tableAlign")
-                    && !block.attrs.contains_key("tableIndentTwips");
-                let widths = table_column_widths(block)?.unwrap_or_else(|| {
-                    (0..columns)
-                        .map(|index| {
-                            total / columns as u64
-                                + u64::from(normalized && (index as u64) < total % columns as u64)
-                        })
-                        .collect()
-                });
+                let widths = table_layout_columns(block, page.as_ref())?;
+                let margins = table_cell_margins(block)?.unwrap_or_default();
+                let horizontal = margins.left + margins.right;
                 for row in &block.content {
                     for (cell, width) in row.content.iter().zip(&widths) {
                         for child in &cell.content {
@@ -741,8 +795,11 @@ pub fn validate_paragraph_indents(doc: &Node) -> Result<()> {
                                 matches!(child.kind.as_str(), "paragraph" | "heading"),
                                 "Paragraph indentation requires a plain body or direct table-cell paragraph"
                             );
-                            ensure!(*width > 216, "Indented table cell has no content width");
-                            paragraph(child, width - 216)?;
+                            ensure!(
+                                *width > horizontal,
+                                "Indented table cell has no content width"
+                            );
+                            paragraph(child, width - horizontal)?;
                         }
                     }
                 }
@@ -796,7 +853,12 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "firstLineIndentTwips",
             ],
             "orderedList" => &["start", "type"],
-            "table" => &["columnWidthsTwips", "tableAlign", "tableIndentTwips"],
+            "table" => &[
+                "columnWidthsTwips",
+                "tableAlign",
+                "tableIndentTwips",
+                "tableCellMarginsTwips",
+            ],
             "tableCell" | "tableHeader" => &["colspan", "rowspan", "colwidth", "align"],
             "image" => &[
                 "src",
@@ -1070,7 +1132,13 @@ pub fn validate(doc: &Node) -> Result<()> {
             let (alignment, indent) = table_position(node)?;
             alignment.is_some() || indent.is_some()
         };
-        let fixed = node.kind == "table" && (table_column_widths(node)?.is_some() || positioned);
+        let explicit_margins = node.kind == "table" && table_cell_margins(node)?.is_some();
+        ensure!(
+            !explicit_margins || depth == 1,
+            "Explicit cell margins require a top-level table"
+        );
+        let fixed = node.kind == "table"
+            && (table_column_widths(node)?.is_some() || positioned || explicit_margins);
         if node.kind == "table" {
             ensure!(
                 !(fixed_ancestor || fixed && table_depth > 0),
@@ -1099,6 +1167,7 @@ pub fn validate(doc: &Node) -> Result<()> {
         Ok(())
     }
     visit(doc, 0, 0, false, &mut nodes, &mut text_bytes)?;
+    validate_table_cell_content(doc, page.as_ref())?;
     validate_paragraph_indents(doc)?;
     // A size edit must not create a valid-looking draft which later fails the
     // existing writer's media-count/aggregate limits. Preserve the historical
@@ -1355,13 +1424,15 @@ impl Writer {
                 if let Some(indent) = indent {
                     position.push_str(&format!("<w:tblInd w:w=\"{indent}\" w:type=\"dxa\"/>"));
                 }
-                let margins = if alignment.is_some()
-                    || indent.is_some()
-                    || has_paragraph_indents(node)
-                {
-                    "<w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar>"
+                let margins = if let Some(margins) = table_cell_margins(node)? {
+                    format!(
+                        "<w:tblCellMar><w:left w:w=\"{}\" w:type=\"dxa\"/><w:right w:w=\"{}\" w:type=\"dxa\"/></w:tblCellMar>",
+                        margins.left, margins.right
+                    )
+                } else if alignment.is_some() || indent.is_some() || has_paragraph_indents(node) {
+                    "<w:tblCellMar><w:left w:w=\"108\" w:type=\"dxa\"/><w:right w:w=\"108\" w:type=\"dxa\"/></w:tblCellMar>".to_owned()
                 } else {
-                    ""
+                    String::new()
                 };
                 let grid: String = widths
                     .iter()

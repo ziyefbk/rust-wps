@@ -11,6 +11,8 @@ pub(crate) const AUTOFIT_WIDTHS_RISK: &str =
 pub(crate) const INHERITED_POSITION_RISK: &str =
     "Inherited table indentation normalized; automatic table geometry not preserved";
 pub(crate) const TABLE_FORMATTING_RISK: &str = "Table borders and cell formatting normalized";
+pub(crate) const MARGIN_POSITION_NORMALIZED_RISK: &str =
+    "Horizontal cell margins preserved; source compatibility-dependent table position normalized";
 
 #[derive(Default)]
 pub(crate) struct TableAudit {
@@ -23,11 +25,14 @@ pub(crate) struct TableGeometry {
     pub row_cells: Vec<usize>,
     pub alignment: Option<String>,
     pub indent: Option<u64>,
+    pub margins: Option<crate::document::TableCellMargins>,
 }
 
 #[derive(Default)]
 struct Xml {
     tag: String,
+    raw: String,
+    text: bool,
     wml: bool,
     attrs: BTreeMap<String, (String, bool)>,
     children: Vec<Xml>,
@@ -38,6 +43,25 @@ fn wml(ns: ResolveResult<'_>) -> bool {
         "http://purl.oclc.org/ooxml/wordprocessingml/main"))
 }
 impl Xml {
+    fn schema(&self, allowed: &[&str], leaf: bool) -> Result<()> {
+        ensure!(
+            self.wml
+                && self.raw == format!("w:{}", self.tag)
+                && !self.text
+                && (!leaf || self.children.is_empty()),
+            "Unsupported table margin declaration: {}",
+            self.tag
+        );
+        for key in self.attrs.keys() {
+            let name = key.rsplit(':').next().expect("attribute");
+            ensure!(
+                allowed.contains(&name),
+                "Unknown table margin attribute: {key}"
+            );
+            self.attr(name)?;
+        }
+        Ok(())
+    }
     // Attribute identity matches the downstream reader; reject same-local-name
     // collisions instead of allowing an unrelated prefix to shadow w:*.
     fn attr(&self, name: &str) -> Result<Option<&str>> {
@@ -99,6 +123,7 @@ fn xml(data: &[u8]) -> Result<Xml> {
                 );
                 let mut node = Xml {
                     tag: e.local_name().as_ref().to_owned(),
+                    raw: e.name().as_ref().to_owned(),
                     wml: is_wml,
                     ..Default::default()
                 };
@@ -128,6 +153,16 @@ fn xml(data: &[u8]) -> Result<Xml> {
                 let node = stack.pop().expect("element");
                 stack.last_mut().expect("root").children.push(node);
             }
+            Event::Text(value) => {
+                if !value
+                    .as_ref()
+                    .bytes()
+                    .all(|byte| byte.is_ascii_whitespace())
+                {
+                    stack.last_mut().expect("root").text = true;
+                }
+            }
+            Event::CData(_) | Event::GeneralRef(_) => stack.last_mut().expect("root").text = true,
             Event::DocType(_) => anyhow::bail!("DTD is not supported in DOCX XML"),
             Event::Eof => {
                 ensure!(stack.len() == 1, "Incomplete table metadata XML");
@@ -433,11 +468,282 @@ fn indent_margins(node: &Xml) -> Result<()> {
     Ok(())
 }
 
+// The new path preserves only a complete, uniform physical pair. Omitted
+// components keep the historical 108 baseline only when no custom component
+// is being claimed; the OOXML default and consumer defaults are not a proof.
+#[derive(Clone, Copy, Default)]
+struct MarginLayer {
+    sides: [Option<u64>; 2],
+    logical: bool,
+}
+impl MarginLayer {
+    fn custom(self) -> bool {
+        self.sides.into_iter().flatten().any(|v| v != 108)
+    }
+    fn overlay(&mut self, other: Self) {
+        for (slot, value) in self.sides.iter_mut().zip(other.sides) {
+            if value.is_some() {
+                *slot = value;
+            }
+        }
+        self.logical |= other.logical;
+    }
+}
+fn margin_layer(node: &Xml) -> Result<MarginLayer> {
+    node.schema(&[], false)?;
+    let mut result = MarginLayer::default();
+    for child in &node.children {
+        ensure!(
+            matches!(
+                child.tag.as_str(),
+                "left" | "right" | "start" | "end" | "top" | "bottom"
+            ),
+            "Unknown cell margin side"
+        );
+        if matches!(child.tag.as_str(), "top" | "bottom") {
+            // Vertical values remain the historical warned normalization. Do
+            // not turn their unrelated attributes into horizontal geometry.
+            ensure!(
+                child.wml && child.children.is_empty(),
+                "Wrapped or foreign vertical margin"
+            );
+            continue;
+        }
+        node.one(&child.tag)?;
+        child.schema(&["type", "w"], true)?;
+        ensure!(
+            child.attrs.len() == 2 && child.attr("type")? == Some("dxa"),
+            "Cell margins require explicit integer dxa values"
+        );
+        let value = number(child.attr("w")?, true)?;
+        match child.tag.as_str() {
+            "left" => result.sides[0] = Some(value),
+            "right" => result.sides[1] = Some(value),
+            "start" | "end" => {
+                ensure!(value == 108, "Custom logical cell margins are unsupported");
+                result.logical = true;
+            }
+            _ => {}
+        }
+    }
+    ensure!(
+        !(node.one("left")?.is_some() && node.one("start")?.is_some()
+            || node.one("right")?.is_some() && node.one("end")?.is_some()),
+        "Ambiguous horizontal cell margins"
+    );
+    Ok(result)
+}
+fn margin_locations(node: &Xml) -> Result<()> {
+    node.one("tblCellMar")?;
+    node.one("tcMar")?;
+    for child in &node.children {
+        if matches!(child.tag.as_str(), "tblCellMar" | "tcMar") {
+            ensure!(
+                (child.tag == "tblCellMar" && node.tag == "tblPr")
+                    || (child.tag == "tcMar" && node.tag == "tcPr"),
+                "Non-direct cell margins"
+            );
+            margin_layer(child)?;
+        }
+        margin_locations(child)?;
+    }
+    Ok(())
+}
+fn direct_margin(node: Option<&Xml>, tag: &str) -> Result<MarginLayer> {
+    node.map(|n| n.one(tag))
+        .transpose()?
+        .flatten()
+        .map(margin_layer)
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+fn margin_reference(node: &Xml) -> Result<&str> {
+    node.schema(&["val"], true)?;
+    node.attr("val")?
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("Missing cell margin style reference"))
+}
+fn resolved_margins(
+    table: &Xml,
+    styles: &Xml,
+    top_level: bool,
+) -> Result<Option<crate::document::TableCellMargins>> {
+    let root = styles
+        .children
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("Missing styles root"))?;
+    ensure!(
+        styles.children.len() == 1 && root.tag == "styles",
+        "Ambiguous styles root"
+    );
+    ensure!(
+        root.wml && root.raw == "w:styles" && !root.text,
+        "Unsupported margin styles root"
+    );
+    let properties = table.one("tblPr")?;
+    let selected = properties.map(|p| p.one("tblStyle")).transpose()?.flatten();
+    if let Some(reference) = selected {
+        margin_reference(reference)?;
+    }
+    let active = check_styles(table, styles)?;
+    let mut effective = MarginLayer::default();
+    let mut conditional = false;
+    for style in active.iter().rev() {
+        ensure!(
+            root.children
+                .iter()
+                .any(|child| std::ptr::eq(child, *style)),
+            "Non-direct table margin style"
+        );
+        ensure!(
+            style.raw == "w:style",
+            "Unsupported table margin style identity"
+        );
+        // Discover aliases as candidates rather than silently ignoring a
+        // same-ID foreign/alternate-prefix definition beside the selected one.
+        let id = style.attr("styleId")?.expect("checked style");
+        let mut all = Vec::new();
+        root.descendants("style", &mut all);
+        ensure!(
+            all.iter()
+                .filter(
+                    |candidate| candidate.attrs.iter().any(|(key, (value, _))| key
+                        .rsplit(':')
+                        .next()
+                        == Some("styleId")
+                        && value == id)
+                )
+                .count()
+                == 1,
+            "Ambiguous cell margin style identity"
+        );
+        if let Some(base) = style.one("basedOn")? {
+            margin_reference(base)?;
+        }
+        let mut bases = Vec::new();
+        style.descendants("basedOn", &mut bases);
+        ensure!(
+            bases.len() == usize::from(style.one("basedOn")?.is_some()),
+            "Non-direct cell margin style reference"
+        );
+        margin_locations(style)?;
+        let mut margins = Vec::new();
+        for tag in ["tblCellMar", "tcMar"] {
+            style.descendants(tag, &mut margins);
+        }
+        let own = style
+            .one("tblPr")?
+            .map(|pr| pr.one("tblCellMar"))
+            .transpose()?
+            .flatten();
+        for margin in margins {
+            if own.is_some_and(|own| std::ptr::eq(own, margin)) {
+                continue;
+            }
+            let layer = margin_layer(margin)?;
+            ensure!(
+                !layer.custom(),
+                "Conditional or cell-style custom margins are unsupported"
+            );
+            conditional |= layer.logical || layer.sides.iter().any(Option::is_some);
+        }
+        let layer = direct_margin(style.one("tblPr")?, "tblCellMar")?;
+        if selected.is_none() {
+            ensure!(
+                !layer.custom(),
+                "Implicit custom table margins are ambiguous"
+            );
+        } else {
+            effective.overlay(layer);
+        }
+    }
+    margin_locations(table)?;
+    effective.overlay(direct_margin(properties, "tblCellMar")?);
+    let mut uniform = None;
+    for row in table.children.iter().filter(|n| n.tag == "tr") {
+        for cell in row.children.iter().filter(|n| n.tag == "tc") {
+            let mut cell_effective = effective;
+            cell_effective.overlay(direct_margin(cell.one("tcPr")?, "tcMar")?);
+            let custom = cell_effective.custom();
+            ensure!(
+                !custom
+                    || (!cell_effective.logical
+                        && !conditional
+                        && cell_effective.sides.iter().all(Option::is_some)),
+                "Custom margins require two proven unconditional physical sides"
+            );
+            let pair = crate::document::TableCellMargins {
+                left: cell_effective.sides[0].unwrap_or(108),
+                right: cell_effective.sides[1].unwrap_or(108),
+            };
+            ensure!(
+                uniform.is_none_or(|prior| prior == pair),
+                "Nonuniform horizontal cell margins"
+            );
+            uniform = Some(pair);
+        }
+    }
+    let pair = uniform.ok_or_else(|| anyhow::anyhow!("Missing margin cells"))?;
+    let custom = pair.left != 108 || pair.right != 108;
+    ensure!(
+        !custom || top_level,
+        "Custom margins require a direct body table"
+    );
+    Ok(custom.then_some(pair))
+}
+
+fn body_tables(tree: &Xml) -> BTreeSet<usize> {
+    let Some(document) = tree
+        .children
+        .first()
+        .filter(|n| tree.children.len() == 1 && n.wml && n.raw == "w:document")
+    else {
+        return BTreeSet::new();
+    };
+    let Ok(Some(body)) = document.one("body") else {
+        return BTreeSet::new();
+    };
+    if !body.wml || body.raw != "w:body" {
+        return BTreeSet::new();
+    }
+    body.children
+        .iter()
+        .filter(|n| n.tag == "tbl")
+        .map(|n| n as *const Xml as usize)
+        .collect()
+}
+
+// Paragraph indentation uses exactly the same per-table proof, in document
+// order, instead of imposing a separate 108-only interpretation. These bytes
+// are the same relationship-resolved bounded snapshot used by the table audit.
+pub(crate) fn paragraph_margin_proofs(main: &[u8], styles: &[u8]) -> Result<Vec<bool>> {
+    let main = xml(main)?;
+    let mut tables = Vec::new();
+    main.descendants("tbl", &mut tables);
+    if tables.is_empty() {
+        return Ok(Vec::new());
+    }
+    let styles = xml(styles)?;
+    let direct = body_tables(&main);
+    Ok(tables
+        .into_iter()
+        .map(|table| {
+            resolved_margins(
+                table,
+                &styles,
+                direct.contains(&(table as *const Xml as usize)),
+            )
+            .is_ok()
+        })
+        .collect())
+}
+
 fn position(
     table: &Xml,
     styles: &Xml,
     settings: Option<&[u8]>,
     fixed: bool,
+    top_level: bool,
 ) -> Result<(Option<String>, Option<u64>, bool)> {
     let properties = table.one("tblPr")?;
     let alignment_node = properties.map(|p| p.one("jc")).transpose()?.flatten();
@@ -461,10 +767,7 @@ fn position(
     let mut indent = indent_node
         .map(|node| {
             indent_compatibility(settings)?;
-            indent_margins(table)?;
-            for style in check_styles(table, styles)? {
-                indent_margins(style)?;
-            }
+            resolved_margins(table, styles, top_level)?;
             ensure!(
                 node.wml
                     && node.children.is_empty()
@@ -517,9 +820,15 @@ fn position(
     if indent.is_none() && inherited_zero {
         let proof = (|| -> Result<()> {
             indent_compatibility(settings)?;
-            indent_margins(table)?;
-            for style in active {
-                indent_margins(style)?;
+            if fixed {
+                resolved_margins(table, styles, top_level)?;
+            } else {
+                // Keep the old automatic-width normalization contract: a new
+                // margin proof must not promote previously omitted position.
+                indent_margins(table)?;
+                for style in active {
+                    indent_margins(style)?;
+                }
             }
             Ok(())
         })();
@@ -682,7 +991,9 @@ pub(crate) fn analyze(main: &[u8], styles: &[u8], settings: Option<&[u8]>) -> Re
         return Ok(audit);
     }
     let styles = xml(styles)?;
+    let direct = body_tables(&main);
     for table in tables {
+        let top_level = direct.contains(&(table as *const Xml as usize));
         let row_cells = table
             .children
             .iter()
@@ -691,16 +1002,16 @@ pub(crate) fn analyze(main: &[u8], styles: &[u8], settings: Option<&[u8]>) -> Re
             .collect();
         match table_widths(table, &styles) {
             Ok(widths) => {
-                let positioning = position(table, &styles, settings, widths.is_some()).and_then(
-                    |(alignment, indent, normalized)| {
+                let positioning = position(table, &styles, settings, widths.is_some(), top_level)
+                    .and_then(|(alignment, indent, normalized)| {
                         let total = widths.as_ref().map_or(9000, |values| values.iter().sum());
                         ensure!(
                             total + indent.unwrap_or(0) <= crate::document::MAX_TABLE_WIDTH_TWIPS,
                             "Table width and indentation exceed limits"
                         );
                         Ok((alignment, indent, normalized))
-                    },
-                );
+                    });
+                let positioning_supported = positioning.is_ok();
                 let (alignment, indent, normalized) = match positioning {
                     Ok(position) => position,
                     Err(_) => {
@@ -714,7 +1025,18 @@ pub(crate) fn analyze(main: &[u8], styles: &[u8], settings: Option<&[u8]>) -> Re
                 if widths.is_none() {
                     audit.risks.insert(AUTOFIT_WIDTHS_RISK.into());
                 }
+                // Failure retains the already-warned formatting normalization
+                // for tables without a preservation dependency. Direct table
+                // and effective cell paragraph indents separately require proof.
+                let margins = resolved_margins(table, &styles, top_level).ok().flatten();
+                if margins.is_some()
+                    && positioning_supported
+                    && indent_compatibility(settings).is_err()
+                {
+                    audit.risks.insert(MARGIN_POSITION_NORMALIZED_RISK.into());
+                }
                 audit.tables.push(TableGeometry {
+                    margins,
                     widths,
                     row_cells,
                     alignment,
@@ -724,6 +1046,7 @@ pub(crate) fn analyze(main: &[u8], styles: &[u8], settings: Option<&[u8]>) -> Re
             Err(_) => {
                 audit.risks.insert(TABLE_GEOMETRY_RISK.into());
                 audit.tables.push(TableGeometry {
+                    margins: None,
                     widths: None,
                     alignment: None,
                     indent: None,

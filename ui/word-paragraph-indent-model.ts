@@ -1,4 +1,5 @@
 import type {JSONContent} from '@tiptap/core';
+import {cellMarginsTableColumnWidths, tableCellMargins} from './word-table-cell-margins';
 
 export const paragraphIndentFields = ['indentLeftTwips', 'indentRightTwips', 'firstLineIndentTwips'] as const;
 export type ParagraphIndentField = typeof paragraphIndentFields[number];
@@ -29,16 +30,7 @@ export function simpleIndentTable(table: JSONContent): boolean {
 // truncate each column; only explicit-page unpositioned grids share remainder.
 export function indentTableColumnWidths(table: JSONContent, page: unknown): number[] {
   if (!simpleIndentTable(table)) throw new Error(paragraphIndentError);
-  const attrs = table.attrs ?? {}, count = table.content![0].content!.length;
-  if (attrs.columnWidthsTwips != null) {
-    const widths: unknown = attrs.columnWidthsTwips;
-    if (!Array.isArray(widths) || widths.length !== count || widths.some(value => !Number.isInteger(value) || value < 1 || value > 31680)
-      || widths.reduce((sum, value) => sum + value, 0) > 31680) throw new Error(paragraphIndentError);
-    return widths;
-  }
-  const normalized = page != null && attrs.tableAlign == null && attrs.tableIndentTwips == null;
-  const total = normalized ? Math.min(9000, indentBodyWidth(page)) : 9000;
-  return Array.from({length: count}, (_, index) => Math.floor(total / count) + Number(normalized && index < total % count));
+  try {return cellMarginsTableColumnWidths(table, page);} catch {throw new Error(paragraphIndentError);}
 }
 export function indentBodyWidth(page: unknown): number {
   if (page == null) return 9026;
@@ -49,10 +41,10 @@ export function indentBodyWidth(page: unknown): number {
 }
 export function validateParagraphIndentDocument(document: JSONContent): void {
   const page = document.attrs?.pageGeometry, bodyWidth = indentBodyWidth(page);
-  const stack: {node: JSONContent; width: number | null; tableWidths?: number[]}[] = [{node: document, width: null}];
+  const stack: {node: JSONContent; width: number | null; tableWidths?: number[]; cellMarginTotal?: number}[] = [{node: document, width: null}];
   let count = 0;
   while (stack.length) {
-    const {node, width, tableWidths} = stack.pop()!;
+    const {node, width, tableWidths, cellMarginTotal} = stack.pop()!;
     if (++count > 10000) throw new Error('段落缩进修改后文档结构超出保存上限。');
     if (hasParagraphIndent(node)) {
       if (!paragraphIndentTypes.has(node.type ?? '') || width === null) throw new Error(paragraphIndentError);
@@ -72,9 +64,9 @@ export function validateParagraphIndentDocument(document: JSONContent): void {
     for (const [index, child] of (node.content ?? []).entries()) {
       if (node === document) {
         const widths = child.type === 'table' && simpleIndentTable(child) ? indentTableColumnWidths(child, page) : undefined;
-        stack.push({node: child, width: paragraphIndentTypes.has(child.type ?? '') ? bodyWidth : null, tableWidths: widths});
-      } else if (node.type === 'table' && tableWidths && child.type === 'tableRow') stack.push({node: child, width: null, tableWidths});
-      else if (node.type === 'tableRow' && tableWidths && ['tableCell', 'tableHeader'].includes(child.type ?? '')) stack.push({node: child, width: tableWidths[index] - 216});
+        stack.push({node: child, width: paragraphIndentTypes.has(child.type ?? '') ? bodyWidth : null, tableWidths: widths, cellMarginTotal: widths ? tableCellMargins(child.attrs ?? {}).left + tableCellMargins(child.attrs ?? {}).right : undefined});
+      } else if (node.type === 'table' && tableWidths && child.type === 'tableRow') stack.push({node: child, width: null, tableWidths, cellMarginTotal});
+      else if (node.type === 'tableRow' && tableWidths && ['tableCell', 'tableHeader'].includes(child.type ?? '')) stack.push({node: child, width: tableWidths[index] - (cellMarginTotal ?? 216)});
       else stack.push({node: child, width: ['tableCell', 'tableHeader'].includes(node.type ?? '') && paragraphIndentTypes.has(child.type ?? '') ? width : null});
     }
   }

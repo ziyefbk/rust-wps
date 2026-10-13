@@ -1,6 +1,44 @@
 # 当前跨格式回归记录
 
-## 当前：有限段落左右、首行与悬挂缩进（2026-10-13）
+## 当前：简单表格统一水平单元格边距（2026-10-13）
+
+基于 `a4a2bf26f1b8c279342a5999b7d53d27dd4186ce` 新增 `table.attrs.tableCellMarginsTwips` 完整物理左右整数 twip 对。支持当前正文顶层简单表格、显式零、一次撤销、草稿、DOCX 与可信重开和不可变打印声明。所有列须保留正正文宽度；段落行框按实际边距复查，缩窄页面/列宽或增列失败时整次拒绝。范围、旧字节与继承/规范化边界见 [TABLE_CELL_MARGINS.md](TABLE_CELL_MARGINS.md)。
+
+### 测量先于扩展
+
+现代 compatibilityMode15 **没有解禁**，也没有新增 border-reference 属性或全局改模式。前置独立 python-docx/XML→LibreOfficeDev 探针与 0.25/0.5/1/2 pt 边框控制发现：简单加左边距仍有 0.25–0.5 pt 系统差，零边距受半边框下限影响；本应用实际旧包控制亦复现。没有把消费者特有的半边框公式写进产品。证据 `tmp/table-cell-margins-investigation/semantic-summary.json` 和各子目录。现代**无缩进**源若只保留边距数值，会明确提示兼容模式相关位置规范化，绝不归入位置相等结果。隐式默认自定义边距同样不能凭一个消费者或编辑器缺省值猜测。
+
+### 最终源码与前端
+
+- Rust **1.99/1.88 核心各388项通过**：原364 +13模型/编码/草稿/安全 +11源证明测试。日志 `tmp/cell-margins-core-final.log`、`tmp/cell-margins-core-1.88.log`；两工具链同一集合不重复累计，1.88沿用独立 `tmp/msrv-target`
+- **223项无浏览器检查通过**，包含26项新边距检查及原197项集合；`tmp/cell-margins-ui-final2.log`，完整命令 `tmp/cell-margins-ui-command.json`。覆盖整对类型/零/缺省、当前表格选区、marks、撤销、无效候选原子性、宽度/页面/增列复查、失效控件、HTML自有元数据、挂载表格视图重置与打印克隆。早先两次全量尝试各有5个跨格式 Python 测试环境错误：缺 USERPROFILE、随后缺原 Linux 测试别名；恢复指向已安装 Python 的路径别名后全223通过，未改测试断言或产品来掩盖失败。相关单元格布局检查没有启动浏览器
+- **6个新增真实浏览器规格仅发现，未执行**；`tmp/cell-margins-browser-discovery.log`。既有 Chromium socket EPERM、云浏览器访问受阻、Linux glib/WebKit 和 Windows 不在线限制未重试或绕过；实际浏览器/原生打印仍未验收
+- `npm run build`、CLI build、`cargo fmt --check`、Python/JS语法与 `git diff --check` 通过；前端仍有既有大 chunk 提示。日志 `tmp/cell-margins-build.log`、`tmp/cell-margins-cli-initial.log`、`tmp/cell-margins-fmt.log`
+- 原始严格 Clippy 两版本仍各仅既有跨格式单项：1.99 XLS `chunks_exact_to_as_chunks`、1.88 PPT `uninlined_format_args`。只排除对应单项后 all-targets 通过；`tmp/cell-margins-clippy-scoped.log`、`tmp/cell-margins-clippy-1.88-scoped.log`。原失败日志带 `raw`，没有声称原始严格全绿
+- 解析库 **1,264项本轮重新通过**，`tmp/cell-margins-vendor.log`；vendor、锁文件不变，两份既有补丁 reverse-check 通过
+
+最终CLI SHA256：`944a3a9d17630d7113c2d38153c79cbf4dcf80e48ad4ada32184d48816521684`，固定副本 `tmp/cell-margins-initial-cli/rust-wps`；“initial”目录名是冻结时建立，不表示最终用了不同产品代码。
+
+### 独立源、真实文件与新PDF
+
+最终报告 `tmp/word-table-cell-margins/run-0baqvkr8/report.json`，418条实际CLI命令；此前 `run-4uookvjo` 为较窄通过记录，未用新结果覆盖旧文件。定向源由独立 python-docx/OOXML 生成，预期另存；source/output XML 与 python-docx 精确核对网格、单元格宽、完整文字和边距。**27支持源、23源拒绝、22非法模型、3包/模型篡改**通过，另验证显式108/108自有模型耐久、恢复省略后的整包字节、原件哈希和禁止覆盖、完整可信模型与外部重导入。
+
+**108份本轮新LibreOffice PDF**：26份受测源 +26份独立编辑参考 +52份受测导出 +3份相邻表格仅视觉对照 +1份现代拒绝校准。受测源→输出、真正边距编辑→独立参考共有 **51组位置保持比较，最大差0.00pt**；另1组现代无缩进输出独立报告 **0.50pt规范化**，不计为保真相等。计数按实际文件清单，不能把视觉-only或拒绝校准混入支持组。
+
+新增分隔的双表对照避免相邻表格被消费者合并：旧缺省表、新非对称边距+720twip缩进表与显式字体/间距/段落缩进锚点逐表测量。源→输出及编辑参考→输出的边框、所有文字x/y坐标差 **0.00pt**。真实编辑使第一表文字右移6.6pt，第二表边框左移3pt、首列文字仍保持；换行增加使后续内容下移28pt，与独立参考一致，不能把自然重排说成“所有段落都不动”。详细散列与坐标在同目录 `separated-mixed-summary.json`。四张最终联系图实际查看；相邻旧对照保留为视觉-only，不当作逐表坐标证明。
+
+**4份未改造的固定上游文件**单列：`Bug66988.docx` 物理55/55边距仍因百分比表宽、负缩进和页码元数据等独立问题拒绝；七表 `table-indent.docx` 仍有逻辑自定义边距、现代模式、不同单位/负缩进、页面适配及pgNumType阻断；六表 `table-alignment.docx` 保留既有自动宽度/继承位置明确规范化正对照；`SampleDoc.docx` 为普通基线正对照。没有找到能在本子集完整转换的未改造自定义边距原件，因此不冒称真实自定义边距正对照。来源/版本/size/SHA256/Git blob与许可限制见 `scripts/table-cell-margins-corpus.json` 及复用清单；未提交原二进制，未把它们称为用户生产文件，也没有扩大页码元数据处理。
+
+### 旧路径与明确复用证据
+
+- 原表格位置独立脚本本轮重新通过 **35支持/39拒绝/29非法模型/2原件**，`tmp/cell-margins-table-position/run-bk8o39re/report.json`；本次未重新渲染该旧套件。3个旧拒绝改为有证据的支持：统一0/0、216/216的直接缩进与固定样式继承零缩进。非统一单格覆盖、现代、逻辑、未知单位等拒绝保留
+- **319条去重旧表格相关 audit/import 响应：313完全相等、6条预期支持扩展**，对应上述3源各audit/import；新audit仅去掉该已解决的表格几何阻断，新完整模型精确确认边距和缩进。196种输入SHA身份不变，`tmp/cell-margins-legacy-checks/table-source-equivalence.json`。不是用“任意错误”替代原保护，不把扩展响应称为逐字相等
+- **109份按整文件SHA去重的历史DOCX字节金样通过**，覆盖原117个历史工件路径与上一轮54个输出路径的交集；不能把171个路径加成171份独立文件。当前CLI重新编码整文件字节相同，218次完整可信重开、218次不覆盖，全部旧输入不变；`tmp/cell-margins-legacy-checks/absent-margin-goldens/report.json`
+- **119份旧PDF明确复用**：固定宽度6、表格位置51、页面40、段落缩进22。对应39种自有DOCX输入由最终CLI重新生成且整文件字节相同，原始/参考输入及PDF散列不变；`tmp/cell-margins-legacy-checks/retained-table-pdfs/report.json`。这一组新渲染数为0，不能把它称为119次新渲染；其39份输出与109份金样可能重叠，不相加宣称独立文件总数
+
+本轮证据只覆盖声明的有限几何、独立消费者和安全路径。完整DOC/DOCX/PDF复制及后续Excel/PPT仍未完成；下一步现代缩进需要更完整边框/定位语义及多消费者证据，不能通过全局模式切换或经验偏移跳过保护。
+
+## 上一轮：有限段落左右、首行与悬挂缩进（2026-10-13）
 
 基于 `f47da946026679a6cfa8f28c39ec553863179eff` 新增可选整数 twip 的 `indentLeftTwips` / `indentRightTwips` / `firstLineIndentTwips`。正文、标题及简单顶层表格直接单元格段落支持默认/显式零、混合选区、逐项重置、一次撤销、草稿、DOCX 与不可变打印声明。首行负值表示悬挂；左右及首行行框必须适合实际页面/单元格宽度，缩小页面或改列宽时先检查完整候选。范围与未支持语义见 [PARAGRAPH_INDENTATION.md](PARAGRAPH_INDENTATION.md)。这不是完整 Word 行布局、制表位、列表几何或图片缩进支持。
 

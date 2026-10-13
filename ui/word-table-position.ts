@@ -1,6 +1,7 @@
 import type {JSONContent} from '@tiptap/core';
 import type {Node} from '@tiptap/pm/model';
 import type {EditorState} from '@tiptap/pm/state';
+import {tableCellMargins} from './word-table-cell-margins';
 import {parseParagraphSpacePoints} from './word-paragraph-spacing';
 
 export const tablePositionFields = ['tableAlign', 'tableIndentTwips'] as const;
@@ -39,14 +40,14 @@ export function validateTablePositionAttributes(node: JSONContent): boolean {
 }
 
 // DOCX table indentation is the first cell's text edge, not a raw border
-// translation. Positioned tables export 108-twip (5.4pt) cell side margins.
+// translation. Tables without explicit cell margins retain 108-twip sides.
 // Absence and explicit zero have different left-border origins; center/right
 // alignment ignores zero indentation. Inline margins survive print cloning.
 export function tablePositionMargins(attrs: Record<string, unknown>): {left: string; right: string} | null {
   if (attrs.tableAlign == null && attrs.tableIndentTwips == null) return null;
   if (attrs.tableAlign === 'center') return {left: 'auto', right: 'auto'};
   if (attrs.tableAlign === 'right') return {left: 'auto', right: '0pt'};
-  return {left: isTableIndent(attrs.tableIndentTwips) ? `${(attrs.tableIndentTwips - 108) / 20}pt` : '0pt', right: '0pt'};
+  return {left: isTableIndent(attrs.tableIndentTwips) ? `${(attrs.tableIndentTwips - tableCellMargins(attrs).left) / 20}pt` : '0pt', right: '0pt'};
 }
 export function tablePositionDOM(attrs: Record<string, unknown>, automatic: boolean): Record<string, string> {
   const margins = tablePositionMargins(attrs);

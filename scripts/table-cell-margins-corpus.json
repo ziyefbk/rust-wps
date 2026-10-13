@@ -1,0 +1,34 @@
+{
+  "repository": "apache/poi",
+  "revision": "ae62bb5116b9aee19ebd5834e3a82066132c9f7f",
+  "directory": "test-data/document",
+  "license": {
+    "repository_license": "Apache License 2.0",
+    "url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/legal/LICENSE",
+    "caveat": "Original individual fixture authorship and redistribution rights have not been separately reviewed. Local validation only; no binary committed."
+  },
+  "fixtures": [
+    {
+      "name": "Bug66988.docx",
+      "bytes": 4875,
+      "sha256": "349b3576e2478801a80672e190d7406252d7adefb6d722bd6ae790817ea0bd2f",
+      "git_blob_sha": "4b7a781bc37506d4495a2dc76edf16fe1a020945",
+      "source_url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/Bug66988.docx",
+      "raw_url": "https://raw.githubusercontent.com/apache/poi/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/Bug66988.docx",
+      "local_default": "tmp/paragraph-indentation-source/poi/Bug66988.docx",
+      "retrieval": "Existing unchanged pinned raw download, verified against independently saved GitHub tree listing size and Git blob SHA",
+      "expected_action": "refuse-editable-import",
+      "scope": "Untouched physical55/55twip margin negative. Percentage table width, negative indentation and page-number properties remain unsupported. Never presented as supported custom-margin roundtrip or user production evidence.",
+      "table_count": 1,
+      "horizontal_margins_twips": {
+        "left": 55,
+        "right": 55
+      },
+      "existing_blockers": [
+        "tblW5000pct",
+        "tblInd-5dxa",
+        "pgNumType"
+      ]
+    }
+  ]
+}
