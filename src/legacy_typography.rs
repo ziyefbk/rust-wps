@@ -1,12 +1,16 @@
 //! Independent, deliberately bounded source proof for binary DOC Latin fonts
-//! and encoded Normal paragraph identity.
+//! and encoded Normal paragraph identity and spacing values.
 //!
 //! This does not trust permissive legacy formatting recovery, implement a general
 //! Word style engine, or promise appearance. All reads use the import snapshot.
 use crate::document::{Mark, Node};
 use anyhow::{Context, Result, ensure};
 use office_oxide::cfb::{CfbReader, EntryType};
-use std::{collections::BTreeSet, io::Cursor, ops::Range};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io::Cursor,
+    ops::Range,
+};
 
 const MAX_PROPERTIES: usize = 1024 * 1024;
 const MAX_RUNS: usize = 10_000;
@@ -27,8 +31,53 @@ pub(crate) enum Block {
     /// In particular, outline declarations and actual heading styles are never
     /// represented here. A future broader font proof needs a separate variant;
     /// font evidence alone must not authorize removal of heading identity.
-    NormalParagraph(Vec<Run>),
+    NormalParagraph {
+        runs: Vec<Run>,
+        spacing: ParagraphSpacing,
+    },
     PageBreak,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EncodedLineSpacing {
+    Multiple(u16),
+    Minimum(u16),
+    Exact(u16),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ParagraphSpacing {
+    before: u16,
+    after: u16,
+    line: EncodedLineSpacing,
+}
+impl Default for ParagraphSpacing {
+    fn default() -> Self {
+        // MS-DOC paragraph defaults: zero gaps and single line spacing.
+        // These are source values, not the editor profile's 0/120/360.
+        Self {
+            before: 0,
+            after: 0,
+            line: EncodedLineSpacing::Multiple(240),
+        }
+    }
+}
+impl ParagraphSpacing {
+    fn supported_line(self) -> std::result::Result<u16, String> {
+        match self.line {
+            EncodedLineSpacing::Multiple(value) if (120..=2400).contains(&value) => Ok(value),
+            // A zero minimum has the normative single-line lower bound.
+            // A zero multiple, by contrast, is valid but unsupported.
+            EncodedLineSpacing::Minimum(0) => Ok(240),
+            EncodedLineSpacing::Multiple(value) => Err(format!(
+                "line multiple {value}/240 is outside supported 120–2400 units"
+            )),
+            EncodedLineSpacing::Minimum(value) => Err(format!(
+                "minimum line spacing of {value} twips is outside the supported multiple-line subset"
+            )),
+            EncodedLineSpacing::Exact(value) => Err(format!(
+                "exact line spacing of {value} twips is outside the supported multiple-line subset"
+            )),
+        }
+    }
 }
 #[derive(Debug)]
 pub(crate) struct Run {
@@ -284,6 +333,7 @@ fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
         hps: 20,
         direct_hps: None,
     };
+    let mut normal_spacing = ParagraphSpacing::default();
     ensure!(
         valid_font_index(defaults.0, &fonts) && valid_font_index(defaults.1, &fonts),
         "DOC STSHI default font index is out of bounds"
@@ -307,7 +357,11 @@ fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
                     u16_at(payload, 0)? == *index,
                     "DOC paragraph style UPX identity mismatch"
                 );
-                apply_paragraph(&payload[2..], &mut reasons)?;
+                let mut spacing = ParagraphSpacing::default();
+                apply_paragraph(&payload[2..], &mut spacing, &mut reasons)?;
+                if *index == 0 {
+                    normal_spacing = spacing;
+                }
             } else if i == 1 {
                 let mut properties = normal.clone();
                 apply_character(payload, &mut properties, false, &fonts, &mut reasons)?;
@@ -338,8 +392,11 @@ fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
         validate_font(&properties, &fonts, &mut reasons)?;
         effective.push(properties);
     }
+    let mut paragraph_spacing = Vec::with_capacity(paragraph_runs.len());
     for run in &paragraph_runs {
-        apply_paragraph(run.properties, &mut reasons)?;
+        let mut spacing = normal_spacing;
+        apply_paragraph(run.properties, &mut spacing, &mut reasons)?;
+        paragraph_spacing.push(spacing);
     }
     let Some(range) = piece else {
         return Ok(Audit::Unsupported(reasons));
@@ -375,7 +432,7 @@ fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
     }
     let mut blocks = Vec::new();
     let mut run_index = 0;
-    for paragraph in paragraphs {
+    for (paragraph, spacing) in paragraphs.into_iter().zip(paragraph_spacing) {
         let content = paragraph.start..paragraph.end - 1;
         if &word[content.clone()] == b"\x0c" {
             blocks.push(Block::PageBreak);
@@ -409,7 +466,7 @@ fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
         }
         // The complete source proof above also establishes encoded Normal
         // identity. Neither the display name nor legacy title heuristics do.
-        blocks.push(Block::NormalParagraph(runs));
+        blocks.push(Block::NormalParagraph { runs, spacing });
     }
     ensure!(
         blocks.len() <= MAX_RUNS,
@@ -702,7 +759,7 @@ fn validate_referenced_styles(
                 u16_at(paragraph, 0)? == index,
                 "DOC referenced paragraph style UPX identity mismatch"
             );
-            apply_paragraph(&paragraph[2..], reasons)?;
+            apply_paragraph(&paragraph[2..], &mut ParagraphSpacing::default(), reasons)?;
         }
         let character = style.upx[usize::from(kind == 1)];
         character_refs(character, &mut queue, styles, 0)?;
@@ -1031,17 +1088,56 @@ fn walk_sprms(
     }
     Ok(())
 }
-fn apply_paragraph(data: &[u8], reasons: &mut BTreeSet<String>) -> Result<()> {
-    walk_sprms(data, true, |op, _| {
-        match op {
-            // Spacing cannot change encoded Normal identity. Existing DOC
-            // spacing normalization remains; outline/heading SPRMs may not be
-            // added here merely because they do not select a font.
-            0x6412 | 0xa413 | 0xa414 => {}
-            _ => unsupported(
+fn apply_spacing_operand(op: u16, operand: &[u8], spacing: &mut ParagraphSpacing) -> Result<bool> {
+    match op {
+        0xa413 | 0xa414 => {
+            let value = u16_at(operand, 0)?;
+            ensure!(
+                value <= 31680,
+                "DOC paragraph spacing 0x{op:04X} is outside valid 0–31680 twips"
+            );
+            if op == 0xa413 {
+                spacing.before = value;
+            } else {
+                spacing.after = value;
+            }
+        }
+        0x6412 => {
+            // MS-DOC LSPD: validate every active declaration, even when later
+            // overridden or found on an otherwise unsupported property path.
+            let value = u16_at(operand, 0)?;
+            let flag = u16_at(operand, 2)?;
+            ensure!(flag <= 1, "DOC LSPD fMultLinespace must be 0 or 1");
+            ensure!(
+                value <= 0x7bc0 || value >= 0x8440,
+                "DOC LSPD dyaLine is outside the valid signed twip range"
+            );
+            spacing.line = if value >= 0x8440 {
+                // Negative dyaLine is exact for either legal flag.
+                EncodedLineSpacing::Exact((65536u32 - u32::from(value)) as u16)
+            } else if flag == 0 {
+                EncodedLineSpacing::Minimum(value)
+            } else {
+                EncodedLineSpacing::Multiple(value)
+            };
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+fn apply_paragraph(
+    data: &[u8],
+    spacing: &mut ParagraphSpacing,
+    reasons: &mut BTreeSet<String>,
+) -> Result<()> {
+    walk_sprms(data, true, |op, operand| {
+        // No expansion of the audited opcode set: other paragraph modifiers
+        // can affect identity, inheritance or physical layout.
+        if !apply_spacing_operand(op, operand, spacing)? {
+            unsupported(
                 reasons,
                 format!("active paragraph modifier 0x{op:04X} is outside audited typography"),
-            ),
+            );
         }
         Ok(())
     })
@@ -1065,6 +1161,10 @@ fn apply_character_nested(
 ) -> Result<()> {
     ensure!(depth <= 8, "DOC nested character modifier depth exceeded");
     walk_sprms(data, false, |op, operand| {
+        // Active PRCs and wrong-context/nested paragraph modifiers still get
+        // their old unsupported result, but cannot conceal malformed spacing.
+        apply_spacing_operand(op, operand, &mut ParagraphSpacing::default())?;
+
         match op {
             0xca47 => {
                 let mut nested = props.clone();
@@ -1218,13 +1318,20 @@ pub(crate) fn attach(
     );
     let mut candidate = document.clone();
     let mut generated = 1 + candidate.content.len();
+    let mut preserved_spacing = 0;
+    let mut unsupported_spacing = BTreeMap::<String, usize>::new();
+    let mut break_paragraphs = 0;
+    let mut empty_paragraphs = 0;
     for (block, node) in blocks.into_iter().zip(&mut candidate.content) {
         match block {
-            Block::PageBreak => ensure!(
-                node.kind == "pageBreak",
-                "DOC typography manual-break identity mismatch"
-            ),
-            Block::NormalParagraph(runs) => {
+            Block::PageBreak => {
+                ensure!(
+                    node.kind == "pageBreak",
+                    "DOC typography manual-break identity mismatch"
+                );
+                break_paragraphs += 1;
+            }
+            Block::NormalParagraph { runs, spacing } => {
                 ensure!(
                     matches!(node.kind.as_str(), "paragraph" | "heading")
                         && node
@@ -1246,6 +1353,25 @@ pub(crate) fn attach(
                 if node.kind == "heading" {
                     node.kind = "paragraph".into();
                     node.attrs.remove("level");
+                }
+                // Apply a complete supported tuple only after exact binding.
+                // A valid unsupported final line value preserves the previous
+                // tuple while retaining independently proven fonts/Normal.
+                match spacing.supported_line() {
+                    Ok(line) => {
+                        for (key, value) in [
+                            ("spaceBefore", spacing.before),
+                            ("spaceAfter", spacing.after),
+                            ("lineSpacing", line),
+                        ] {
+                            node.attrs.insert(key.into(), value.into());
+                        }
+                        preserved_spacing += 1;
+                    }
+                    Err(reason) => *unsupported_spacing.entry(reason).or_default() += 1,
+                }
+                if expected.is_empty() {
+                    empty_paragraphs += 1;
                 }
                 let mut output = Vec::new();
                 let mut source_start = 0;
@@ -1325,6 +1451,27 @@ pub(crate) fn attach(
     risks.insert(PRESERVED.into());
     risks.insert(NORMAL_PRESERVED.into());
     risks.insert("Font names are preserved; unavailable fonts may be substituted locally".into());
+    let normalized_spacing: usize = unsupported_spacing.values().sum();
+    if preserved_spacing + normalized_spacing > 0 {
+        risks.insert(format!(
+            "Legacy DOC encoded paragraph spacing values preserved for {preserved_spacing} audited Normal paragraph(s); {normalized_spacing} paragraph(s) retain normalized spacing; source layout, grids and compatibility settings are not proven"
+        ));
+    }
+    for (reason, count) in unsupported_spacing {
+        risks.insert(format!(
+            "Legacy DOC encoded paragraph spacing not preserved for {count} audited Normal paragraph(s): {reason}"
+        ));
+    }
+    if break_paragraphs > 0 {
+        risks.insert(format!(
+            "Legacy DOC break-only paragraph spacing and baseline fonts are not preserved ({break_paragraphs} paragraph(s)); standalone page-break nodes are retained"
+        ));
+    }
+    if empty_paragraphs > 0 {
+        risks.insert(format!(
+            "Legacy DOC empty-paragraph baseline fonts are not preserved ({empty_paragraphs} paragraph(s)); encoded spacing does not establish their line geometry"
+        ));
+    }
     Ok(())
 }
 
@@ -1383,6 +1530,25 @@ mod tests {
             direct_hps: None,
         }
     }
+    fn normal(runs: Vec<Run>) -> Block {
+        Block::NormalParagraph {
+            runs,
+            spacing: ParagraphSpacing::default(),
+        }
+    }
+    fn with_spacing(runs: Vec<Run>, spacing: ParagraphSpacing) -> Block {
+        Block::NormalParagraph { runs, spacing }
+    }
+    fn spacing_attrs(
+        before: u16,
+        after: u16,
+        line: u16,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        serde_json::from_value(
+            serde_json::json!({"spaceBefore":before,"spaceAfter":after,"lineSpacing":line}),
+        )
+        .unwrap()
+    }
     fn heading(text: &str, level: u8) -> Node {
         let mut node = document(text).content.remove(0);
         node.kind = "heading".into();
@@ -1397,6 +1563,454 @@ mod tests {
         assert_eq!(serde_json::to_value(document).unwrap(), before);
         assert_eq!(risks, old_risks);
     }
+    fn gap(op: u16, value: u16) -> Vec<u8> {
+        [op.to_le_bytes().as_slice(), value.to_le_bytes().as_slice()].concat()
+    }
+    fn lspd(value: u16, flag: u16) -> Vec<u8> {
+        [
+            0x6412u16.to_le_bytes().as_slice(),
+            value.to_le_bytes().as_slice(),
+            flag.to_le_bytes().as_slice(),
+        ]
+        .concat()
+    }
+    fn resolve(style: &[u8], direct: &[u8]) -> ParagraphSpacing {
+        let mut spacing = ParagraphSpacing::default();
+        let mut reasons = BTreeSet::new();
+        apply_paragraph(style, &mut spacing, &mut reasons).unwrap();
+        apply_paragraph(direct, &mut spacing, &mut reasons).unwrap();
+        assert!(reasons.is_empty());
+        spacing
+    }
+    fn fixture_spacing(style: &[u8], direct: [&[u8]; 4]) -> (Vec<u8>, Vec<u8>) {
+        // The committed independently authored fixture has one plain piece,
+        // four known CR ranges and Normal's PAPX UPX at table bytes 48..52.
+        // Author raw SPRM bytes; do not ask the product parser for expectations.
+        assert!(style.len().is_multiple_of(2));
+        let source = include_bytes!("../tests/fixtures/doc-typography/blank.doc");
+        let mut cfb = CfbReader::new(Cursor::new(source.as_slice())).unwrap();
+        let mut word = stream(&mut cfb, "WordDocument", source.len()).unwrap();
+        let mut table = stream(&mut cfb, "1Table", source.len()).unwrap();
+        assert_eq!(&table[48..54], &[2, 0, 0, 0, 4, 0]);
+        table.splice(52..52, style.iter().copied());
+        table[48..50].copy_from_slice(&(2 + style.len() as u16).to_le_bytes());
+        table[20..22].copy_from_slice(&(36 + style.len() as u16).to_le_bytes());
+        table[28..30].copy_from_slice(&(36 + style.len() as u16).to_le_bytes());
+        word[0xa6..0xaa].copy_from_slice(&(146u32 + style.len() as u32).to_le_bytes());
+        for i in 0..93 {
+            let p = 0x9a + i * 8;
+            let offset = u32::from_le_bytes(word[p..p + 4].try_into().unwrap());
+            if offset >= 52 {
+                word[p..p + 4].copy_from_slice(&(offset + style.len() as u32).to_le_bytes());
+            }
+        }
+        let page = &mut word[2048..2560];
+        page.fill(0);
+        page[511] = 4;
+        for (i, value) in [1024u32, 1031, 1032, 1034, 1041].into_iter().enumerate() {
+            page[4 * i..4 * i + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let mut end = 510;
+        for (i, props) in direct.into_iter().enumerate() {
+            let mut props = props.to_vec();
+            if props.len() % 2 == 1 {
+                props.push(0);
+            }
+            let mut payload = vec![0, ((2 + props.len()) / 2) as u8, 0, 0];
+            payload.extend(props);
+            end = (end - payload.len()) & !1;
+            assert!(end > 72);
+            page[end..end + payload.len()].copy_from_slice(&payload);
+            page[20 + 13 * i] = (end / 2) as u8;
+        }
+        (word, table)
+    }
+    #[test]
+    fn paragraph_spacing_defaults_are_source_zero_zero_single() {
+        assert_eq!(
+            resolve(&[], &[]),
+            ParagraphSpacing {
+                before: 0,
+                after: 0,
+                line: EncodedLineSpacing::Multiple(240)
+            }
+        );
+        assert_eq!(resolve(&[], &lspd(0, 0)).supported_line().unwrap(), 240);
+        assert!(
+            resolve(&[], &lspd(0, 1))
+                .supported_line()
+                .unwrap_err()
+                .contains("0/240")
+        );
+    }
+    #[test]
+    fn paragraph_spacing_supported_integer_boundaries_are_exact() {
+        for before in [0, 1, 31680] {
+            for after in [0, 1, 31680] {
+                for line in [120, 240, 241, 276, 360, 2400] {
+                    let p = resolve(
+                        &gap(0xa413, before),
+                        &[gap(0xa414, after), lspd(line, 1)].concat(),
+                    );
+                    assert_eq!(
+                        (p.before, p.after, p.supported_line().unwrap()),
+                        (before, after, line)
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn paragraph_spacing_normal_then_direct_last_wins_by_component() {
+        let style = [gap(0xa413, 100), gap(0xa414, 200), lspd(276, 1)].concat();
+        let direct = [gap(0xa414, 300), gap(0xa414, 0), lspd(360, 1), lspd(241, 1)].concat();
+        assert_eq!(
+            resolve(&style, &direct),
+            ParagraphSpacing {
+                before: 100,
+                after: 0,
+                line: EncodedLineSpacing::Multiple(241)
+            }
+        );
+    }
+    #[test]
+    fn paragraph_spacing_classifies_only_final_valid_value() {
+        for first in [
+            lspd(0xffff, 0),
+            lspd(0x8440, 1),
+            lspd(300, 0),
+            lspd(0, 1),
+            lspd(31680, 1),
+        ] {
+            assert_eq!(
+                resolve(&first, &lspd(276, 1)).supported_line().unwrap(),
+                276
+            );
+            assert_eq!(
+                resolve(&[], &[first, lspd(240, 1)].concat())
+                    .supported_line()
+                    .unwrap(),
+                240
+            );
+        }
+    }
+    #[test]
+    fn paragraph_spacing_negative_is_exact_for_either_legal_flag() {
+        for flag in [0, 1] {
+            for (encoded, twips) in [(0xffff, 1), (0xfe98, 360), (0x8440, 31680)] {
+                let p = resolve(&[], &lspd(encoded, flag));
+                assert_eq!(p.line, EncodedLineSpacing::Exact(twips));
+                assert!(
+                    p.supported_line()
+                        .unwrap_err()
+                        .contains(&format!("exact line spacing of {twips} twips"))
+                );
+            }
+        }
+    }
+    #[test]
+    fn paragraph_spacing_valid_unsupported_values_do_not_poison_typography() {
+        for line in [
+            lspd(1, 0),
+            lspd(31680, 0),
+            lspd(0, 1),
+            lspd(119, 1),
+            lspd(2401, 1),
+            lspd(31680, 1),
+        ] {
+            let p = resolve(&[], &line);
+            assert!(p.supported_line().is_err());
+        }
+    }
+    #[test]
+    fn paragraph_spacing_rejects_every_malformed_value_even_if_overridden() {
+        let invalid = [
+            gap(0xa413, 31681),
+            gap(0xa413, 65535),
+            gap(0xa414, 31681),
+            gap(0xa414, 65535),
+            lspd(0x7bc1, 0),
+            lspd(0x8000, 1),
+            lspd(0x843f, 1),
+            lspd(240, 2),
+            lspd(0xffff, 65535),
+        ];
+        for value in invalid {
+            for suffix in [vec![], lspd(240, 1), vec![5, 0x24, 1], gap(0xa413, 0)] {
+                let data = [value.clone(), suffix].concat();
+                assert!(
+                    apply_paragraph(
+                        &data,
+                        &mut ParagraphSpacing::default(),
+                        &mut BTreeSet::new()
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+    #[test]
+    fn paragraph_spacing_rejects_truncated_operands() {
+        for operation in [gap(0xa413, 0), gap(0xa414, 0), lspd(240, 1)] {
+            for end in 1..operation.len() {
+                assert!(
+                    apply_paragraph(
+                        &operation[..end],
+                        &mut ParagraphSpacing::default(),
+                        &mut BTreeSet::new()
+                    )
+                    .is_err()
+                );
+            }
+        }
+    }
+    #[test]
+    fn spacing_does_not_expand_paragraph_opcode_whitelist() {
+        // Automatic gaps, contextual spacing, line-unit gaps, grid and outline.
+        for (op, operand) in [
+            (0x245bu16, vec![0]),
+            (0x245c, vec![0]),
+            (0x246d, vec![0]),
+            (0x4458, vec![0, 0]),
+            (0x4459, vec![0, 0]),
+            (0x2447, vec![0]),
+            (0x2640, vec![9]),
+        ] {
+            let mut reasons = BTreeSet::new();
+            let bytes = [op.to_le_bytes().as_slice(), &operand].concat();
+            apply_paragraph(&bytes, &mut ParagraphSpacing::default(), &mut reasons).unwrap();
+            assert!(reasons.iter().any(|r| r.contains(&format!("0x{op:04X}"))));
+        }
+    }
+    #[test]
+    fn spacing_source_proof_uses_normal_then_each_distinct_papx() {
+        let style = [gap(0xa414, 200), lspd(276, 1)].concat();
+        let direct = [gap(0xa413, 100), lspd(360, 1)].concat();
+        let blank = [gap(0xa414, 0), lspd(0, 0)].concat();
+        let last = lspd(0, 1);
+        let (word, table) = fixture_spacing(&style, [&direct, &blank, &[], &last]);
+        let Audit::Proven(blocks) = audit_streams(&word, &table).unwrap() else {
+            panic!("source proof unexpectedly unsupported")
+        };
+        assert_eq!(blocks.len(), 4);
+        for (index, expected) in [
+            (0, (100, 200, Ok(360))),
+            (1, (0, 0, Ok(240))),
+            (3, (0, 200, Err(()))),
+        ] {
+            let Block::NormalParagraph { spacing, .. } = &blocks[index] else {
+                panic!("paragraph identity")
+            };
+            assert_eq!(
+                (
+                    spacing.before,
+                    spacing.after,
+                    spacing.supported_line().map_err(|_| ())
+                ),
+                expected
+            );
+        }
+        assert!(matches!(blocks[2], Block::PageBreak));
+    }
+    #[test]
+    fn spacing_source_proof_rejects_malformed_style_or_papx_despite_fallback() {
+        for malformed in [
+            gap(0xa413, 31681),
+            gap(0xa414, 65535),
+            lspd(0x8000, 1),
+            lspd(240, 2),
+        ] {
+            let (word, table) = fixture_spacing(&malformed, [&[], &[], &[], &[]]);
+            let error = audit_streams(&word, &table).unwrap_err().to_string();
+            assert!(
+                error.contains("spacing") || error.contains("LSPD"),
+                "{error}"
+            );
+            let direct = [malformed.clone(), lspd(240, 1)].concat();
+            let (word, table) = fixture_spacing(&[], [&[], &[], &[], &direct]);
+            let error = audit_streams(&word, &table).unwrap_err().to_string();
+            assert!(
+                error.contains("spacing") || error.contains("LSPD"),
+                "{error}"
+            );
+            let unknown = [5, 0x24, 1];
+            let (word, table) = fixture_spacing(&malformed, [&unknown, &[], &[], &[]]);
+            let error = audit_streams(&word, &table).unwrap_err().to_string();
+            assert!(
+                error.contains("spacing") || error.contains("LSPD"),
+                "{error}"
+            );
+            let (word, table) = fixture_spacing(&[], [&unknown, &[], &[], &malformed]);
+            let error = audit_streams(&word, &table).unwrap_err().to_string();
+            assert!(
+                error.contains("spacing") || error.contains("LSPD"),
+                "{error}"
+            );
+        }
+    }
+    #[test]
+    fn malformed_spacing_in_active_prc_or_nested_character_path_is_rejected() {
+        for malformed in [
+            gap(0xa413, 31681),
+            gap(0xa414, 65535),
+            lspd(0x8000, 1),
+            lspd(240, 2),
+        ] {
+            assert!(
+                apply_character(
+                    &malformed,
+                    &mut props(),
+                    false,
+                    &parsed_font(),
+                    &mut BTreeSet::new()
+                )
+                .is_err()
+            );
+            let nested = [vec![0x47, 0xca, malformed.len() as u8], malformed].concat();
+            assert!(
+                apply_character(
+                    &nested,
+                    &mut props(),
+                    false,
+                    &parsed_font(),
+                    &mut BTreeSet::new()
+                )
+                .is_err()
+            );
+        }
+        let mut reasons = BTreeSet::new();
+        apply_character(
+            &lspd(276, 1),
+            &mut props(),
+            false,
+            &parsed_font(),
+            &mut reasons,
+        )
+        .unwrap();
+        assert_eq!(
+            reasons,
+            BTreeSet::from([
+                "active character modifier 0x6412 is outside audited typography".into()
+            ])
+        );
+    }
+    #[test]
+    fn spacing_unsupported_tuple_is_atomic_without_revoking_fonts_or_normal() {
+        let mut n = document("Title");
+        n.content[0] = heading("Title", 1);
+        n.content[0].attrs.extend(spacing_attrs(80, 140, 300));
+        let mut risks = BTreeSet::from(["existing".into()]);
+        let p = resolve(
+            &[gap(0xa413, 500), gap(0xa414, 600)].concat(),
+            &lspd(300, 0),
+        );
+        attach(
+            Audit::Proven(vec![with_spacing(vec![run("Title", 20)], p)]),
+            &mut n,
+            &mut risks,
+        )
+        .unwrap();
+        assert_eq!(n.content[0].kind, "paragraph");
+        assert_eq!(n.content[0].attrs, spacing_attrs(80, 140, 300));
+        assert_eq!(n.content[0].content[0].marks.len(), 2);
+        assert!(
+            risks.contains(PRESERVED)
+                && risks.contains(NORMAL_PRESERVED)
+                && risks.contains("existing")
+        );
+        assert!(
+            risks
+                .iter()
+                .any(|r| r.contains("preserved for 0 audited Normal paragraph(s); 1 paragraph(s)"))
+        );
+        assert!(
+            risks
+                .iter()
+                .any(|r| r.contains("minimum line spacing of 300 twips"))
+        );
+        assert!(
+            !risks
+                .iter()
+                .any(|r| r.contains("font names and effective sizes are not preserved"))
+        );
+    }
+    #[test]
+    fn spacing_supported_and_unsupported_paragraphs_are_counted_independently() {
+        let mut n = document("same");
+        n.content.push(document("same").content.remove(0));
+        let mut risks = BTreeSet::new();
+        attach(
+            Audit::Proven(vec![
+                normal(vec![run("same", 20)]),
+                with_spacing(vec![run("same", 20)], resolve(&[], &lspd(0, 1))),
+            ]),
+            &mut n,
+            &mut risks,
+        )
+        .unwrap();
+        assert_eq!(n.content[0].attrs, spacing_attrs(0, 0, 240));
+        assert!(n.content[1].attrs.is_empty());
+        assert!(
+            risks
+                .iter()
+                .any(|r| r.contains("preserved for 1 audited Normal paragraph(s); 1 paragraph(s)"))
+        );
+    }
+    #[test]
+    fn spacing_preserves_exact_whitespace_and_distinguishes_truly_empty() {
+        let mut n = document(" \u{a0} ");
+        n.content.push(Node {
+            content: vec![],
+            ..document("").content.remove(0)
+        });
+        n.content.push(document(" ").content.remove(0));
+        let mut risks = BTreeSet::new();
+        attach(
+            Audit::Proven(vec![
+                normal(vec![run(" \u{a0} ", 20)]),
+                normal(vec![]),
+                normal(vec![run(" ", 20)]),
+            ]),
+            &mut n,
+            &mut risks,
+        )
+        .unwrap();
+        assert_eq!(n.content[0].content[0].text.as_deref(), Some(" \u{a0} "));
+        assert!(n.content[1].content.is_empty());
+        assert_eq!(n.content[2].content[0].text.as_deref(), Some(" "));
+        assert!(risks.iter().any(|r| {
+            r.contains("empty-paragraph baseline fonts are not preserved (1 paragraph(s))")
+        }));
+    }
+    #[test]
+    fn spacing_failure_keeps_model_and_all_diagnostics_atomic() {
+        let mut n = document("Title");
+        n.content[0] = heading("Title", 1);
+        n.content.push(document("Actual").content.remove(0));
+        assert_unchanged_after_refusal(
+            Audit::Proven(vec![
+                with_spacing(vec![run("Title", 20)], resolve(&[], &lspd(0, 1))),
+                normal(vec![run("Other", 20)]),
+            ]),
+            n,
+        );
+    }
+    #[test]
+    fn spacing_break_only_paragraph_cannot_smuggle_attributes_or_content() {
+        for change in [
+            serde_json::json!({"type":"pageBreak","attrs":{"spaceAfter":200}}),
+            serde_json::json!({"type":"pageBreak","text":"x"}),
+            serde_json::json!({"type":"pageBreak","marks":[{"type":"bold"}]}),
+            serde_json::json!({"type":"pageBreak","content":[{"type":"text","text":"x"}]}),
+        ] {
+            let mut n = document("Title");
+            n.content.push(serde_json::from_value(change).unwrap());
+            assert_unchanged_after_refusal(
+                Audit::Proven(vec![normal(vec![run("Title", 20)]), Block::PageBreak]),
+                n,
+            );
+        }
+    }
     #[test]
     fn encoded_normal_replaces_each_inferred_heading_level() {
         for level in 1..=3 {
@@ -1404,16 +2018,13 @@ mod tests {
             n.content[0] = heading("Encoded Normal title", level);
             let mut risks = BTreeSet::new();
             attach(
-                Audit::Proven(vec![Block::NormalParagraph(vec![run(
-                    "Encoded Normal title",
-                    22,
-                )])]),
+                Audit::Proven(vec![normal(vec![run("Encoded Normal title", 22)])]),
                 &mut n,
                 &mut risks,
             )
             .unwrap();
             assert_eq!(n.content[0].kind, "paragraph");
-            assert!(n.content[0].attrs.is_empty());
+            assert_eq!(n.content[0].attrs, spacing_attrs(0, 0, 240));
             assert_eq!(
                 n.content[0].content[0].text.as_deref(),
                 Some("Encoded Normal title")
@@ -1454,6 +2065,7 @@ mod tests {
         let mut expected = n.clone();
         expected.content[0].kind = "paragraph".into();
         expected.content[0].attrs.remove("level");
+        expected.content[0].attrs.extend(spacing_attrs(0, 0, 240));
         let mut first = expected.content[0].content[0].clone();
         first.text = Some("A’".into());
         first.marks.extend(
@@ -1476,10 +2088,7 @@ mod tests {
         let mut second_source = run("bc", 32);
         second_source.font = "Times New Roman".into();
         attach(
-            Audit::Proven(vec![Block::NormalParagraph(vec![
-                run("A’", 22),
-                second_source,
-            ])]),
+            Audit::Proven(vec![normal(vec![run("A’", 22), second_source])]),
             &mut n,
             &mut BTreeSet::new(),
         )
@@ -1499,17 +2108,20 @@ mod tests {
             {"type":"paragraph"}
         ]}))
         .unwrap();
-        let before = n.clone();
+        let mut before = n.clone();
+        for index in [0, 1, 3, 5, 7] {
+            before.content[index].attrs.extend(spacing_attrs(0, 0, 240));
+        }
         attach(
             Audit::Proven(vec![
-                Block::NormalParagraph(vec![]),
-                Block::NormalParagraph(vec![]),
-                Block::NormalParagraph(vec![run("Title", 20)]),
-                Block::NormalParagraph(vec![]),
+                normal(vec![]),
+                normal(vec![]),
+                normal(vec![run("Title", 20)]),
+                normal(vec![]),
                 Block::PageBreak,
-                Block::NormalParagraph(vec![]),
-                Block::NormalParagraph(vec![run("LATER", 20)]),
-                Block::NormalParagraph(vec![]),
+                normal(vec![]),
+                normal(vec![run("LATER", 20)]),
+                normal(vec![]),
             ]),
             &mut n,
             &mut BTreeSet::new(),
@@ -1524,7 +2136,7 @@ mod tests {
         }
         for index in [2, 6] {
             assert_eq!(n.content[index].kind, "paragraph");
-            assert!(n.content[index].attrs.is_empty());
+            assert_eq!(n.content[index].attrs, spacing_attrs(0, 0, 240));
         }
     }
     #[test]
@@ -1537,8 +2149,9 @@ mod tests {
         let mut expected = n.clone();
         expected.content[0].kind = "paragraph".into();
         expected.content[0].attrs.remove("level");
+        expected.content[0].attrs.extend(spacing_attrs(0, 0, 240));
         attach(
-            Audit::Proven(vec![Block::NormalParagraph(vec![])]),
+            Audit::Proven(vec![normal(vec![])]),
             &mut n,
             &mut BTreeSet::new(),
         )
@@ -1575,10 +2188,7 @@ mod tests {
         for source in ["Other", " Title", "Title "] {
             let mut n = document("Title");
             n.content[0] = heading("Title", 1);
-            assert_unchanged_after_refusal(
-                Audit::Proven(vec![Block::NormalParagraph(vec![run(source, 20)])]),
-                n,
-            );
+            assert_unchanged_after_refusal(Audit::Proven(vec![normal(vec![run(source, 20)])]), n);
         }
     }
     #[test]
@@ -1588,8 +2198,8 @@ mod tests {
         n.content.push(document("Actual").content.remove(0));
         assert_unchanged_after_refusal(
             Audit::Proven(vec![
-                Block::NormalParagraph(vec![run("Title", 20)]),
-                Block::NormalParagraph(vec![run("Wrong!", 20)]),
+                normal(vec![run("Title", 20)]),
+                normal(vec![run("Wrong!", 20)]),
             ]),
             n,
         );
@@ -1600,10 +2210,7 @@ mod tests {
         n.content[0] = heading("Title", 1);
         n.content.push(document("Actual").content.remove(0));
         assert_unchanged_after_refusal(
-            Audit::Proven(vec![
-                Block::NormalParagraph(vec![run("Title", 20)]),
-                Block::PageBreak,
-            ]),
+            Audit::Proven(vec![normal(vec![run("Title", 20)]), Block::PageBreak]),
             n,
         );
     }
@@ -1612,19 +2219,28 @@ mod tests {
         let mut n = document("Title");
         n.content[0] = heading("Title", 1);
         n.content[0].attrs.insert("unknown".into(), true.into());
-        assert_unchanged_after_refusal(
-            Audit::Proven(vec![Block::NormalParagraph(vec![run("Title", 20)])]),
-            n,
-        );
+        assert_unchanged_after_refusal(Audit::Proven(vec![normal(vec![run("Title", 20)])]), n);
     }
     #[test]
     fn outline_declarations_never_prove_encoded_normal_identity() {
         for level in 0..=9 {
             let mut reasons = BTreeSet::new();
-            apply_paragraph(&[0x40, 0x26, level], &mut reasons).unwrap();
+            apply_paragraph(
+                &[0x40, 0x26, level],
+                &mut ParagraphSpacing::default(),
+                &mut reasons,
+            )
+            .unwrap();
             assert!(reasons.iter().any(|r| r.contains("0x2640")));
         }
-        assert!(apply_paragraph(&[0x40, 0x26], &mut BTreeSet::new()).is_err());
+        assert!(
+            apply_paragraph(
+                &[0x40, 0x26],
+                &mut ParagraphSpacing::default(),
+                &mut BTreeSet::new()
+            )
+            .is_err()
+        );
     }
     #[test]
     fn non_normal_and_inherited_style_identities_are_not_proven() {
@@ -1786,7 +2402,7 @@ mod tests {
         let before = n.clone();
         assert!(
             attach(
-                Audit::Proven(vec![Block::NormalParagraph(vec![run("source", 20)])]),
+                Audit::Proven(vec![normal(vec![run("source", 20)])]),
                 &mut n,
                 &mut BTreeSet::new()
             )
@@ -1805,10 +2421,7 @@ mod tests {
             attrs: Default::default(),
         });
         attach(
-            Audit::Proven(vec![Block::NormalParagraph(vec![
-                run("a’", 20),
-                run("bc", 32),
-            ])]),
+            Audit::Proven(vec![normal(vec![run("a’", 20), run("bc", 32)])]),
             &mut n,
             &mut BTreeSet::new(),
         )
@@ -1830,7 +2443,7 @@ mod tests {
         });
         assert!(
             attach(
-                Audit::Proven(vec![Block::NormalParagraph(vec![run("x", 20)])]),
+                Audit::Proven(vec![normal(vec![run("x", 20)])]),
                 &mut n,
                 &mut BTreeSet::new()
             )

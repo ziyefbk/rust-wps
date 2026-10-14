@@ -1,6 +1,93 @@
 # 当前跨格式回归记录
 
 
+## 本轮：旧二进制 DOC 的编码 Normal 段落间距（2026-10-14）
+
+基于 `f7f2c84fc5bb3f5b4e13142eb9d0e5e3523e02cd`，只在原完整字体 / 编码 Normal 源证明成功后保留段前 / 段后和支持倍数行距。源默认 `0/0/240` → Normal UPX → 该段 PAPX 依次覆盖，全部已知活动操作数先验合法性，最终值才分类。逐段整组三属性应用；合法但不支持的最终行距保留该段旧间距及已证明字体 / Normal，分项报告准确段数和原因。损坏、迟到身份冲突或候选模型失败原子拒绝。vendor、通用 `convert_ir(..., false)`、模型、writer 和 UI 均未改，范围见 [LEGACY_DOC_PARAGRAPH_SPACING.md](LEGACY_DOC_PARAGRAPH_SPACING.md)。
+
+### 核心门禁与执行身份
+
+- Rust 1.99 / 1.88 **各 697 项核心测试通过**，原 680 + 17 单元控制；两项既有 legacy DOC 集成更新为已证明的显式默认间距，并继续完整模型 / 可信重开 / 非覆盖验证。新增控制包括两种零语义、正负边界和合法 flag、Normal / 逐段 PAPX / 同属性最后优先、被覆盖损坏与有效不支持的区别、活动 PRC / 嵌套或错误上下文验证、排除操作码、逐段整组 fallback、精确空白 / 空段 / 独立分页与原子回滚
+- 两工具链原始严格 Clippy 各只有既有单项：stable 的 `spreadsheet_xls.rs` / `chunks_exact_to_as_chunks`，MSRV 的 `presentation_import.rs` / `uninlined_format_args`；各仅排除对应项后 all-targets Clippy、build 通过，定向 rustfmt 与 `git diff --check` 通过，没有增加源码 lint 豁免
+- stable 完整门禁 `tmp/legacy-doc-spacing-gates-stable-final2.json` SHA **`553d9fdcfa66f1bdd283e3068fcc9985b005b2ed092ca881d22d8fc2f5056008`**；记录精确 argv、环境、源码前后身份、日志和 CLI。697 测试为全量新运行，最小观察空闲 `1,061,302,272` bytes，无空间终止
+- MSRV 完整重跑门禁 `tmp/legacy-doc-spacing-gates-msrv-final2.json` SHA **`b223f9b9da6758399a7b229402e2e8aea2b5e49d6b6c5eb287b2c7b870f9fe66`**；697 测试、raw / scoped Clippy 与 build 均重新执行，CLI SHA `72a557f800533a40c511ace52cc7f847435da48a25edba2db2d287ca822ba66c`，源码前后相同，最小观察空闲 `993,218,560` bytes，无空间终止
+- 最终 stable CLI `target/debug/rust-wps` SHA **`b2c7d87e448397b6fac61892c97b9cee32d1662212a2851ff877a60f9742c6b3`**；冻结 Normal-only baseline `tmp/legacy-doc-normal-final-cli` SHA `a4414930e0b4049dd781b733b4893b23c91b17d5d7afee402c6ab1eb3b9ab441` 为独立 inode
+- 产品 / 单元控制 `src/legacy_typography.rs` SHA `d81fde388a4952c30c82452dcb8c1defb60b968926f1e35ec23118e7e259c393`；集成 `tests/importing.rs` SHA `b676e24bb1f445dfcb48e23d9126e0b256af488c652dc537eeae9d0a905c15d0`；没有改 RUSTFLAGS、profile、锁文件、依赖或 vendor
+- 沿用既有 stable `target` / MSRV `tmp/msrv-target`、`CARGO_INCREMENTAL=0`、串行 `-j1`；监控每 0.5 秒采样空闲空间，低于 600 MiB 时停止自己的 Cargo 进程组，不声称硬文件系统配额
+
+两份完整门禁报告记录实际工具链环境和以下精确命令；原始严格 Clippy 的已知失败与 scoped 通过分别留档。`CARGO_HOME` / `RUSTUP_HOME` 指向工作区 `toolchains/cargo` / `toolchains/rustup`，没有新建 target 规避历史状态。
+
+```sh
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo test --locked --quiet -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo clippy --locked --all-targets -j1 -- -D warnings
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo clippy --locked --all-targets -j1 -- -D warnings -A clippy::chunks_exact_to_as_chunks
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo build --locked -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 test --locked --quiet -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 clippy --locked --all-targets -j1 -- -D warnings
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 clippy --locked --all-targets -j1 -- -D warnings -A clippy::uninlined_format_args
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 build --locked -j1
+```
+
+### 前端与生产后端
+
+- 本轮新运行 **622 项无浏览器前端检查**、prepare-pdf / TypeScript / Vite build 全通过，报告 `tmp/legacy-doc-spacing-frontend-final-gates.json` SHA `47066031b8f0b7f501e457d1247452d279e465f79cfecb529374b04a333bfde8`；复用既有精确 argv，未安装依赖或修改前端，不等于实际浏览器 / Windows 原生验收
+- stable **35 项 Tauri-free 生产后端测试通过**，报告 `tmp/legacy-doc-spacing-regression/backend-stable-test-adyfkmsr/report.json` SHA `4711ebd4803630ccee6eb7e4b1e8e0af95d90a6fb7ebb46d13afe0f0abf07301`；实际生产 worker probe 独立重建，编译报告 `tmp/legacy-doc-spacing-regression/backend-stable-worker-4517dm_5/report.json` SHA `63c9b6632f2bef3617b0e29e72e69555fdcc6868a5c5f50a8cd48cb8ba0fe1b1`，精确 rustc argv / 环境 / 链接依赖身份与日志保留
+
+- MSRV **35 项 Tauri-free 生产后端测试通过**，报告 `tmp/legacy-doc-spacing-regression/backend-msrv-test-8rosxp1p/report.json` SHA `c17d300233d6a0a51b32bb74861beb23ec25933b0946c6d833be5157322cfa86`；链接本轮最终 MSRV core，全部依赖身份前后不变，覆盖生产模块而非真实 Tauri IPC / WebView2
+
+### 独立二进制来源、完整模型与 XML
+
+新 checker `scripts/check-legacy-doc-normal-spacing.py` 独立解码 / 编码源 CFB、STSH、PAPX 和 LSPD，并以冻结 Normal-only baseline 模型加独立已知三属性变化建立预期。旧 font-only / Normal-only checker 与所有旧失败断言不改。**182 输入：54 支持、15 间距专属 fallback、27 整份原样 Unsupported、50 相同拒绝、36 新识别的损坏拒绝**；支持 / fallback 都继续保持已证明的字体 / Normal。后续覆盖不能隐藏坏间距；合法不支持被覆盖为支持值时按最终有效值处理。
+
+**182 次只读 inspect 精确相等**（只排除 elapsed_ms）、**207 次完整可信重开、414 次不覆盖、18 个 XML / 同步哈希篡改拒绝**通过。只有已证明且受支持段落的三个间距属性和精确诊断允许变化，非间距模型字段完整比较；源 `spaceBefore/spaceAfter/lineSpacing` 与实际 `w:spacing`、`lineRule="auto"`、settings / OPC 关系分别核对。两份未改造真实原件分别为 simple `0/0/240` 与 SampleDoc 六个普通段落 `0/200/276`；独立分页段保持 bare atom，并明确其字体 / 间距不保留。
+
+早期来源 / XML 专用报告 `tmp/legacy-doc-normal-spacing-verify/spacing-run-p1gghm2k/report.json` SHA **`56cf6599d6b4d09f191e3655841c2cf8534d5a1b051715d433b9cb5d19879e6c`**，该次 **0 PDF**，状态明确保留分页段 / 空段字体 / 网格 / 兼容设置 / 页面 / 字体替代限制。Manifest `tmp/legacy-doc-normal-spacing-verify/spacing-fixtures-m2glvbaq/manifest.json` SHA `48ae4d0d3175207d67ae7453db188d8ccb2a153b369a5a4e6f3052b0b3e94e59`；该次 checker SHA `bf6b0d7b0b3d90f4a16f7edb026fb8b1f8e0e63002d02566912a39231f1e5273`。其 settings 篡改归因问题见下方；最终通过结果来自修正后的完整新运行，不拼接早期计数。
+
+### 最终独立消费者与真实源文件
+
+最终报告 `tmp/legacy-doc-normal-spacing-verify/spacing-run-hqcqfwf5/report.json` SHA **`fa0390c419f8b6340766b8dea6e28f348e4382a293c6789f66857f3d09d93e7f`**，状态 `PASS-with-explicit-page-break-empty-font-grid-compatibility-page-and-substitution-limits`。最终 checker SHA **`90398b500f62a57f5d8c9e354cff94ae5169553241a3a0a01ef255c2cd4dd429`**；manifest `tmp/legacy-doc-normal-spacing-verify/spacing-fixtures-afdxojzt/manifest.json` SHA `ea9df47749c4e200b65cb0eb17e99dd102d4fe03f620263541ff2261a45524f2`。该次从头执行同一 **182 输入**，计数仍为 **54 / 15 / 27 / 50 / 36、182 次只读相等、207 次完整可信重开、414 次不覆盖、18 个篡改拒绝**；同步哈希篡改分别要求准确指向 document、settings 或完整部件集合，不能由无关 XML 变化触发拒绝代替。
+
+固定消费者为 LibreOfficeDev `26.8.0.0.alpha0 2c87e51eeaa2b413ff4ae097b2705eea1995d8e5`，实际 `soffice.bin` SHA `d905a74dc92eaccb22481ba2de1345666a074a5f0d48322aaad1b6dc8a9e1e40`；PyMuPDF `1.26.6`，Poppler `pdftotext` SHA `7fe3559cac3ba61dd93650a1ba90499b9fc488184ef8d0f2f1305ddf52c0378b`。**91 份新 PDF / 91 个隔离 profile 与 HOME**：41 对产品输出 / 独立 XML 参考、两份真实 DOC 与其冻结 Normal-only 输出、四份独立作者的已安装字体 DOC，以及一份刻意去掉 settings 的参考控制。**41 对全文、字体 / 物理字号、span / 字符、坐标与完整页面光栅精确相等**，最大坐标差 0 pt、变化像素 0；参考由独立二进制源值覆盖冻结 Normal-only 包并独立建立最小 settings / OPC 登记，不以产品 parser 结果为 oracle。最终 91 份不包含早期失败的 1 份 PDF 或 OPC 隔离的 1 份诊断 PDF，也不重复累计来源专用运行。
+
+- 真实 SampleDoc 第一页源 / 新输出均为 Carlito 常规 11 pt，首字符原点同为 `[72.0999984741211, 82.70074462890625]`；源 / 新输出的相邻基线间距同为 **`25.45001220703125 pt`**，冻结 Normal-only 为 `26.1500244140625 pt`。原 **`0.70001220703125 pt`** 间距误差归零，第一页字符记录与完整光栅精确相等
+- 独立作者的 LiberationSerif 10 pt 多行控制在 240 / 360 / 480 行距下，源 / 输出相对基线差均为 0 pt；仅证明这些受测行距，不宣称完整源页面相等
+- **作者控制 `spacing-installed-margins` 仍有 12 pt 物理差异**：源二进制 DOC 在该消费者中将相邻段后 / 段前相加，而现有 DOCX 最小 settings 采用最大值。源相对基线 `0 / 35.54998779296875 / 51.0999755859375 pt`，输出 `0 / 23.54998779296875 / 39.0999755859375 pt`。编码值和完整独立 DOCX 参考均正确，仍不能声称源布局一致；独立删除参考的 settings 及两处 OPC 登记后，第二 / 三行额外 12 pt 再现，明确区分相加与取最大值。没有放宽容差、改变 writer 或更换兼容模式
+- SampleDoc 第二页源 NotoSans-Regular / 输出 NotoSerif-Regular（均 16 pt）的缺失 Arial Black 替代仍在，首字符 y 分别为 `114.55078125 / 89.10076904296875 pt`；独立分页段仍不能携带源间距 / 基线字体，不能称第二页顶部相同
+- simple 源 Letter `612×792 pt`、首字 x≈90.1 pt，输出 A4 `595.303955078125×841.8897705078125 pt`、x≈72.1 pt；源页面与边距仍未恢复
+
+复现命令如下；每次建立新目录，不覆盖旧证据。省略 `--render` 只执行来源 / 模型 / XML 检查，不会产生消费者 PDF。冻结 Normal-only CLI 身份由 checker 另行核验。
+
+```sh
+python3 scripts/check-legacy-doc-normal-spacing.py --prepare
+python3 scripts/check-legacy-doc-normal-spacing.py --manifest tmp/legacy-doc-normal-spacing-verify/spacing-fixtures-afdxojzt/manifest.json --cli target/debug/rust-wps --expected-cli-sha256 b2c7d87e448397b6fac61892c97b9cee32d1662212a2851ff877a60f9742c6b3 --render
+```
+
+### 最终生产 worker 与历史跨格式契约
+
+最终生产 worker probe SHA `24771f8f4efd424741573a41f85310b07feb3cbead7abdd36f760bd9002dc208`。实际子进程运输重新执行修正后的全部 **182 控制**：**96 份完整导入响应、86 份完整原因链拒绝、182 次只读 Open、27 份原样 Unsupported、15 份合法间距 fallback、69 次可信输出 Open 和 69 次不覆盖**。86 份包括损坏与超限来源，其中 36 份为新间距损坏拒绝；所有 86 份仍可沿只读路线 Open，不将只读成功称为编辑兼容。只规范化 CLI 多行 anyhow 与 Rust 字符串冒号分隔的展示形式，原因链完整相等。报告 `tmp/legacy-doc-spacing-regression/worker-z_yv7szx/report.json` SHA **`ac0722c6e0ccf71f8154f9626fd5ef92fc5353e6717e075f09323aae5a5d7c5e`**。先前 worker `tmp/legacy-doc-spacing-regression/worker-z3h592bd/report.json` SHA `91300b28127480f37902a2b838407608d048ed5c2fa65422d33afc3cc449e743` 仍保留，计数不与最终重跑相加。生产模块 / 进程运输不等于真实 Tauri IPC / WebView2 / 对话框验收。
+
+历史重放是一次完整不中断的新运行：**1,520 条新候选 CLI 读取响应全部逐字节精确相等，0 变化、0 新增 DOCX 导入拒绝**。比较基准明确复用上轮 Normal-only 成功报告中哈希绑定的 1,520 条原始响应；冻结 baseline CLI 身份单独核对，没有声称重新运行这些 baseline 读取。**302 份唯一作者模型**由旧 / 新 CLI 各自新导出，两个 CLI 各 302 份整包均与金样字节相同；每个 CLI **各 604 次完整可信重开、604 次不覆盖**通过。**325 份历史 PDF 仅核对并保留，0 份重渲染**。报告 `tmp/legacy-doc-spacing-regression/historical-02us46dx/report.json` SHA **`b3e357f95d02ce6838ef1f31b9386303083d1ae4616574b8238a21cf5687da41`**；哈希绑定的历史驱动 `tmp/legacy-doc-spacing-regression/verify.py` SHA `d4a252d3953f51db24ca2a035099e2eee57b75ba2e7de0ce753df4427cfa5041`，精确 argv、逐条读取 / 金样执行日志保留。
+
+最终后端 / worker / 历史汇总 `tmp/legacy-doc-spacing-regression/summary.json` SHA **`4a90bd1562dbe3115b3b32313d990d0c4035cb9d7477fbaae684c2e72598c07d`**，联合 **8,166 件受保护源码 / 报告 / 日志 / 输入 / CLI / probe / 链接依赖**身份重新核对全部不变。消费者报告另行统计新 PDF，汇总中的 `newly_rendered_pdfs=0` 仅指历史 / worker 门禁；二者不能混淆。
+
+### 初次失败与证据保护
+
+stable `final1` 产品编译成功，但新的原始源单元控制只扩大了 Normal 记录外层长度，漏写记录内嵌 `cbSTD`，219/220 单元测试通过后停止，未继续完整门禁。修复仅涉及测试作者 helper，并将损坏控制收紧为检查具体间距 / LSPD 错误，不能用其他结构错误代替。失败报告 `tmp/legacy-doc-spacing-gates-stable-final1.json` SHA `7f30dd225db847f44c263490ac84500b3022bcd7b1e185bcd843580e42ae2162` 与日志保留；`final2` 从完整门禁重新执行。
+
+MSRV `final1` 在编译期间观察空闲 `625,573,888` bytes（低于 600 MiB），监控停止 Cargo 子进程组，exit -15；核心日志为空，**0 项测试执行**，不能计为部分通过。报告 `tmp/legacy-doc-spacing-gates-msrv-final1.json` SHA `1b9bc1a699654d71acd9c74aced5fad0770c63ca35d8792df1a654754cf64997` 与日志保留。恢复空间后的 `final2` 从完整门禁重新执行且全部通过，没有拼接中断结果。
+
+为保留链接峰值空间，核验既有完整 MSRV 680 测试门禁 / 日志、每个 test-only fingerprint、SHA / 大小 / 单链接 inode 与 CLI / rlib guard 后，分两批回收六件已完成旧 MSRV 测试可执行文件；原件、报告、失败记录、所有当前及冻结 CLI / rlib 保持。清理账本 `tmp/test-cache-cleanup-20261014T031800Z.json` 与 `tmp/test-cache-cleanup-20261014T032800Z.json` 保留。没有删除需复用的生产二进制或修改编译选项以迁就空间。
+
+随后按同样的已完成门禁 / fingerprint / inode / 哈希核验，分别回收本轮 stable 已完成的六件测试专用可执行文件，用于 MSRV 链接峰值；账本 `tmp/test-cache-cleanup-20261014T033240Z.json`、`tmp/test-cache-cleanup-20261014T033730Z.json` 保留。失败或中断不计作通过；当前生产 CLI、库、probe 与全部证据不在清理范围内。
+
+独立 checker 初次运行修正 JSON tuple/list 表示差异，并将旧读取器原已拒绝的短标题式边缘空白，与可支持的普通空白 / NBSP / 真正空段 / 分页控制分开，未放宽模型或精确文字断言。初始失败报告 `tmp/legacy-doc-normal-spacing-verify/spacing-run-fe8rrg2e/report.json` SHA `df5d2d38bc6d63a111332c8c0c55f8ba8ff1566e0c4f4041dc4718bd80d44509` 保留。随后 reviewer 发现 settings 篡改控制重序列化了无关 `document.xml`，其拒绝原因可能来自错误部件；修正为只改目标部件原字节，并要求同步哈希情况下拒绝原因指向 settings 或精确部件集合。没有修改产品或旧失败报告。更新 checker 的来源 `final3` 在第一个 CLI 前因空闲 `625,180,672` bytes 低于 600 MiB 停止，所有计数为 0；报告 `tmp/legacy-doc-normal-spacing-verify/spacing-run-ofk2d5b0/report.json` SHA `51eca217b0e241575ef6ef9552cd46f5ea5f275f114bdcdf37500d09dfdfbc4c` 保留，不能将这次资源中断当作来源或产品失败。
+
+随后消费者初次运行已完整通过修正后的 182 来源控制及 18 个准确归因的篡改拒绝，但在生成第一份产品 PDF 后，独立参考被 LibreOffice 报 `source file could not be loaded`；该轮 **1 PDF、0 参考对**，不能称消费者通过。失败报告 `tmp/legacy-doc-normal-spacing-verify/spacing-run-303quv5b/report.json` SHA **`59a325a250dade8618bee9743370426de949ff6a8684db946ece5274a857a657`** 保留。
+
+OPC 隔离只改变该失败参考的命名空间前缀序列化：仅规范化 `[Content_Types].xml` 仍失败，仅规范化 `word/_rels/document.xml.rels` 仍失败，**同时规范化两者才成功加载**；三种变体所有展开名称后的 XML 树均相等，其他部件原字节相同，尤其 `document.xml` 未变。隔离报告 `tmp/legacy-doc-normal-spacing-verify/opc-namespace-isolation-76r5w5e7/report.json` SHA **`47da9f6d4edd59c74fdd2d1db2a62efbd79ac2b0a2215e9aaa424e3c3e25192d`**；语义 / 部件核对 `tmp/legacy-doc-normal-spacing-verify/opc-namespace-isolation-76r5w5e7/semantic-verification.json` SHA **`8ff6b14cb403c6c7170268413e9043c18ee5df8a78b3d01c4b737485071ef154`**。证据指向该固定消费者对参考 OPC `ns0` 序列化的兼容问题，不能归因为产品间距失败，也不泛化为任意消费者对前缀的要求。只修正参考作者，之后完整重跑得到上面的最终 91 PDF；不删除、覆盖或把早期失败计为通过。
+
+分页段的间距 / 基线字体、空段源基线字体、节网格 / DOP / 兼容设置、相邻边距求和 / 取最大值的 12 pt 源布局差异、simple 页面 / 边距与 SampleDoc 第二页字体替代仍未解决；本轮不提高历史容差，没有新的实际浏览器、Windows 原生打印、Microsoft Word 或 WPS 验收，不宣称完整 DOC / Word / WPS 版式相同。
+
 ## 本轮：旧二进制 DOC 的编码 Normal 段落身份（2026-10-14）
 
 基于 `f5074dcab55f85ddd52a98a3ae02f9e713b91a26`，仅在前轮完整字体源证明成功的 Normal 正文子集内，修复编辑副本的启发式标题身份。匹配 `heading` 改为 `paragraph` 并只移除 `level`；其余属性 / 标记 / 精确文字 / 字体 / 字号 / 颜色 / 空段 / 分页原子保持。显式命名的 Normal 证明变体防止后续字体范围扩大时误降真实标题。Unsupported、损坏拒绝、vendor 和只读 / IR 元数据保持，范围与尚存布局差异见 [LEGACY_DOC_NORMAL_PARAGRAPHS.md](LEGACY_DOC_NORMAL_PARAGRAPHS.md)。

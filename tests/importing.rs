@@ -247,9 +247,9 @@ fn encoded_normal_import_repairs_guessed_headings_without_changing_legacy_ir() {
     assert_eq!(guessed_levels, vec![1, 2]);
     let report = importing::import_doc(&source).unwrap();
     let expected = serde_json::json!({"type":"doc","attrs":{"styleProfile":"standard-v2"},"content":[
-        {"type":"paragraph","content":[{"type":"text","text":"Title!","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]},
-        {"type":"paragraph"}, {"type":"pageBreak"},
-        {"type":"paragraph","content":[{"type":"text","text":"LATER!","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]}
+        {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240},"content":[{"type":"text","text":"Title!","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]},
+        {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240}}, {"type":"pageBreak"},
+        {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240},"content":[{"type":"text","text":"LATER!","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]}
     ]});
     assert_eq!(serde_json::to_value(&report.document).unwrap(), expected);
     assert!(
@@ -289,10 +289,10 @@ fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
     std::fs::write(&source, bytes).unwrap();
     let report = importing::import_doc(&source).unwrap();
     let expected = serde_json::json!({"type":"doc","attrs":{"styleProfile":"standard-v2"},"content":[
-        {"type":"paragraph","content":[{"type":"text","text":"hello.","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]},
-        {"type":"paragraph"},
+        {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240},"content":[{"type":"text","text":"hello.","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]},
+        {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240}},
         {"type":"pageBreak"},
-        {"type":"paragraph","content":[{"type":"text","text":"world.","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]}
+        {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240},"content":[{"type":"text","text":"world.","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]}
     ]});
     assert_eq!(serde_json::to_value(&report.document).unwrap(), expected);
     assert!(!report.compatibility.fidelity_verified);
@@ -300,11 +300,11 @@ fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
     document::export_docx(&report.document, &output).unwrap();
     let reopened = importing::import_docx(&output).unwrap();
     let mut exported_expected = expected;
-    // External re-import retains the explicit exported page as well as V2 defaults.
+    // External re-import retains the exported page and the proven legacy spacing values.
     exported_expected["attrs"]["pageGeometry"] = serde_json::json!({"widthTwips":11906,"heightTwips":16838,"marginTopTwips":1440,"marginRightTwips":1440,"marginBottomTwips":1440,"marginLeftTwips":1440});
     for index in [0, 1, 3] {
         exported_expected["content"][index]["attrs"] = serde_json::json!({
-            "spaceBefore":0,"spaceAfter":120,"lineSpacing":360,
+            "spaceBefore":0,"spaceAfter":0,"lineSpacing":240,
             "keepNext":false,"keepLines":false,"pageBreakBefore":false
         });
     }
