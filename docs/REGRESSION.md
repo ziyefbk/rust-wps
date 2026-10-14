@@ -1,5 +1,33 @@
 # 当前跨格式回归记录
 
+## 本轮：DOCX 主题色消费者校准，产品代码未改（2026-10-14）
+
+基于 `d21e9e7bd0b044b78cfa187ed7afc0b2173b401e`，纠正前轮三组源 / 输出光栅差异的原因解释。固定 LibreOffice 在受测运行文字路径中读取 `w:val` 缓存，不能用它的页面 RGB 反推主题变换的舍入；原始三组失败仍未关闭。**没有修改主题优先级、HSL 算法或任何产品代码**。规范 / 固定消费者源码依据与有限结论见 [DOCX_THEME_COLOR_CALIBRATION.md](DOCX_THEME_COLOR_CALIBRATION.md)。
+
+### 最终独立校准
+
+- **16 行独立作者矩阵**覆盖冲突 / 省略缓存、MS shade / tint 示例、tint 优先、无变换主题与直接 RGB。固定消费者全部跟随 `w:val`，缺少 `val` 的主题行均为黑色；checker 明确断言这些受测消费者结果。应用每行 RGB 与完整作者模型另按独立期望核对，未把消费者缓存当作主题正确性金样
+- **1 份真实未改造 Styles 原件、2 份单属性派生控制**：cache-only `365F91→FF00FF` 使消费者标题变洋红，应用完整导入响应不变；shade-only `BF→80` 的消费者仍为 `365F91`，应用完整响应仅有 Heading1 色改成 `254062`。两派生的完整逐页文字、字体与坐标不变；shade-only 整页像素严格相同，cache-only 像素不同且色变已定位。其他 ZIP 部件及原件身份均保持
+- 最终 **4 份新隔离 profile / HOME PDF、4 次完整可信重开、8 次禁止覆盖、独立输出文字 / RGB XML 核对**。实际 PNG 已查看。`NoHeadFoot.docx` 仅核对原件哈希并保留历史证据，未计为新渲染。这里的 PyMuPDF 文字 / 字体 / RGB / 坐标和 72 dpi 光栅检查不是 Word/WPS 或原生浏览器验收
+- 独立 `Fraction` 有理数 HLS 与标准库 `colorsys` 交叉核对三组向量。蓝色 shade `BF` 完整精度舍入 / floor 分别为 `376092` / `366091`；红色 shade `BF` 为 `953735` / `943734`，都不能仅靠 floor 得到真实缓存 `365F91` 或 MS shade 示例 `943634`。蓝色 tint `99` 两者均为 `95B3D7`。不据近似示例引入通道修补值
+- 最终报告 `tmp/docx-theme-consumer-calibration/run-6_a2rlwo/report.json` SHA **`2fb9410a49c5d734b7cd4bfc15b277b3e497a042ab8f3fb42a337674b8b262f5`**；checker `scripts/check-docx-theme-consumer-probe.py` SHA **`4f101c2b0cebb23d712bbb4d15b6ebf998a29940c1a5f534c71941feda71bf4f`**。状态为 `completed-calibration-only`，明确 `theme_rounding_repair_proven=false`
+- 初始测量报告 `run-ngaiicyu/report.json` SHA `a8d7912aa31d3ffedd245b464721680869bd00084c060d4e7af37a6ad59c8199` 与其冻结 checker 保存；中间断言运行 `run-__n_zcjh/report.json` SHA `017ecfeae55f04f68c5f3572b5e62614628024733a73b028bc6e0be52202c963` 另保存。初始 / 中间 / 最终各 4 份新 PDF，物理合计 12 份，但最终验证只计 4 份，不当作 12 种独立来源。中间报告修正前的“两个 published shade examples”措辞不准确，最终区分 MS 示例和真实文件缓存；旧报告未覆盖
+- 最终独立算术专用补充报告 `run-cka3rjav/report.json` SHA `8d5c857a64002016f86d0499c4a92e5fa3af160f9772db0bdd751f89ce6e32ec`，没有 CLI 执行或 PDF，不额外累计消费者数量
+
+实际从仓库根目录运行 `python3`，解析到 `/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3`。CLI 与消费者身份在执行前后严格核对。checker 固定本轮基线，环境或版本改变应另行审查，不能移除身份限制后宣称复现：
+
+```sh
+python3 scripts/check-docx-theme-consumer-probe.py
+python3 scripts/check-docx-theme-consumer-probe.py --arithmetic-only
+python -m py_compile scripts/check-docx-theme-consumer-probe.py
+```
+
+### 不变证明与复用门禁
+
+`tmp/docx-theme-consumer-calibration/product-source-identity.json` SHA **`0f9f104e4f05254037107ebbd520b08bc72df9a50e8703faaf8d50014871c84b`**，将五个明确修改的既有文档之外的 **595 个已跟踪文件**逐一与基线 Git blob 核对，全部相同。Rust / vendor 实现、前后端、模型 / writer、配置 / 锁文件、既有测试和独立回归脚本均未改。新文件只有本轮校准说明和 checker；现有 CLI 仍为 SHA `35d4b018e67a032c619938c62765fbeb1eaa6e09126240cbdc8448dcfa75bf47`，未重建或复制大二进制。
+
+因此下节已完成的 **Rust 1.99 / 1.88 各 629 核心 + 35 后端、622 前端**及 302 份作者整包金样 / 1,520 响应记录是明确复用，**本轮没有重跑全量门禁、历史响应或历史作者包导出**。本轮新执行 checker 与 Python 语法检查，逐项保护原件、旧消费者报告、当前 CLI 和消费者工具身份。所有原光栅失败及原生 / 浏览器 / Word/WPS 限制保持；本轮不承诺颜色量化已经修复。串行小型渲染保留 650 MiB 空间底线，最终剩余 818,995,200 字节，无删除证据或新构建。
+
 
 ## 本轮：正文顶层段落分页属性（2026-10-14）
 
@@ -28,7 +56,7 @@
 
 全部 21 对源 / 参考控制已完成新隔离 profile 转换：完整逐页文字、换行与横纵坐标都精确相等，最大差 0.0 pt；其中 18 对整页像素严格相等。覆盖三项 true / false、keepNext 连续链、111 行超长 keepLines 段落、文档起点、手动分页相邻、直接 false 覆盖样式 true、样式 false 覆盖默认 true，以及显式样式不叠加无关默认样式。15 项预先指定的分页边界断言另行通过；超长 keepLines 仍可跨页，未将约束写成不可拆分保证。
 
-两份真实原件和未修改的原始继承控制仍有**源 / 输出光栅失败**：Styles 501 像素、NoHeadFoot 第一页 824 像素、继承控制 849 像素。源主题 `accent1=4F81BD`、`themeShade=BF` 的消费色为 `365F91`，既有导入固定色为 `376092`。源 / 当前完整文字、换行、位置和逐 span 其他字体属性相同；当前模型只去除这三项分页属性后严格等于冻结旧 CLI 的模型，旧 / 当前字符 `rPr` 相同。两真实原件另新渲染旧输出，旧 / 当前整页像素与坐标精确相等。原始继承控制的旧分页本就不同，所以没有要求或声称它旧 / 当前完整布局相同。
+两份真实原件和未修改的原始继承控制仍有**源 / 输出光栅失败**：Styles 501 像素、NoHeadFoot 第一页 824 像素、继承控制 849 像素。源主题 `accent1=4F81BD`、`themeShade=BF` 的消费色为 `365F91`，既有导入固定色为 `376092`。 后续 [主题颜色校准](DOCX_THEME_COLOR_CALIBRATION.md) 证明此固定消费者读取 `w:val` 缓存；上述差异不能单独证明 HSL 量化有误。这里保留原始测量、失败状态和旧 / 新比较，不改写其结果。源 / 当前完整文字、换行、位置和逐 span 其他字体属性相同；当前模型只去除这三项分页属性后严格等于冻结旧 CLI 的模型，旧 / 当前字符 `rPr` 相同。两真实原件另新渲染旧输出，旧 / 当前整页像素与坐标精确相等。原始继承控制的旧分页本就不同，所以没有要求或声称它旧 / 当前完整布局相同。
 
 这个例外只匹配三份精确 SHA 与固定旧 CLI，保留原始 `strictly_equal=false` 和 FAILED 分类，不提高阈值，不忽略任意颜色差异。另生成独立标注的黑色继承派生控制：仅把活动 Heading1 颜色改为固定黑色，保持原始来源不动，独立逐段分页 / 文字 / 类型 / 页面期望不变；其源 / 当前完整像素、文字与坐标严格相等。前端参考与其他控制均不使用颜色例外。
 
