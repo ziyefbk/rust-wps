@@ -1,5 +1,52 @@
 # 当前跨格式回归记录
 
+## 本轮：有界十进制列表几何保留（2026-10-14）
+
+基于 `2de7447a57a564203465d57ccf92c69866f53a9d`，新增受审计的直接正文单级 decimal `%1.` 列表：完整非负物理左右/悬挂三元组、独立固定 Latin 编号字体、同一编号实例的一段连续运行。完整正文块/项/文字/顺序与转换结果绑定，源样式关联须解析到同一编号实例；没有修改 vendor 通用优先级。源空项等未证明基线仍拒绝；编辑范围、受控 Enter 和历史/打印限制见 [十进制列表几何](LIST_GEOMETRY.md)。
+
+### 最终门禁与身份
+
+- **Rust 1.99 / 1.88 各 601 项通过**，即原 575 + 26 个新模型/源/草稿/导出/安全检查，不跨工具链累计。日志 `tmp/list-geometry-core-{stable,msrv}-final2.log`
+- **35 项 Tauri-free 生产后端检查在两工具链各通过**，原 `scripts/pdf-rotation-probe.rs` 未改，分别链接本轮核心。日志 `tmp/list-geometry-backend-{build,tests}-{stable,msrv}-final2.log`
+- **548 项无浏览器前端检查通过**，即原 524 + 24；实际 ProseMirror 候选事务、完整扩展链和注册 Enter、撤销/重做、草稿/打印快照、错误/开放列表粘贴、锁定状态、页面缩小/清除与非法原始属性均覆盖。日志 `tmp/list-geometry-ui-parent-final3-aggregate.log`，准确 argv/状态 `tmp/list-geometry-ui-parent-final3-gates.json` SHA `f7b4ac82788948a86da0cd659a6f184cb377299a8db3b8a83a22e6cf552cf001`
+- prepare-pdf、TypeScript、Vite build 通过，保留既有 bundle 大小提示；仅用本机已安装 `node_modules/.bin`，`USERPROFILE=$PWD/tmp/linux-home`，没有 npx 网络获取。**6 个浏览器规格仅发现，未执行**。548 是最终源冻结后的整组结果，先前 546 / 547 轮次已被后续剪贴板/严格属性修复替代，日志保留
+- 两端核心/CLI build、fmt、`git diff --check` 与 scoped all-targets Clippy 通过。原始严格 Clippy 仍各仅既有单项：stable XLS `chunks_exact_to_as_chunks`、1.88 PPT `uninlined_format_args`，只在对应工具链命令排除旧单项，没有新增豁免。门禁记录 `tmp/list-geometry-gates-final2.json` SHA `01d2fdb8353f74954af206af82e7ae4d9440b3e4eac84946079122a1ae3935c1`
+- `CARGO_INCREMENTAL=0`，既有 `../toolchains/{cargo,rustup}`，stable `target` / MSRV `tmp/msrv-target`；无 RUSTFLAGS/profile 覆盖、依赖/锁文件/vendor 变化。资源不足时按 600 MiB 阈值暂停，parent 仅清理逐项重验的旧可重建测试可执行文件，日志、原件、冻结生产 CLI/probe 与源码不动，再继续未完成命令
+
+冻结最终 CLI `tmp/list-geometry-final-cli` SHA **`5c008894209311c84515a6432b6e973a120ad459b30c848ea019c2128808111a`**，与 stable 最后 build 一致。旧基线 `tmp/paragraph-overhang-second-cli` SHA **`dba98e9ba0514c2c5d33ba05d82b4161dce3729ffc921df9c3d0e76ab94210ac`**。本轮 12 个产品源码文件组合指纹 **`ed586f16928576299457c536cb1c7d992e5a726096fa24570dd98360a884cc50`**；完整源身份在 `tmp/list-geometry-product-identity.json`，不将产品文件数、测试数和独立源数混计。
+
+### 未改造原件与独立消费
+
+完整命令由 checker 报告保存，主调用为：
+
+```sh
+python3 scripts/check-list-geometry-independent.py --cli tmp/list-geometry-final-cli --render --editor-models tmp/list-geometry-editor-original-1 --root tmp/list-geometry-final-independent
+```
+
+- 原件 `testParaListRightIndent.docx` 来自 LibreOffice/core 已验证 revision `6e5f11edfc5f080cf99e1807916df5cedec785b7`；12,774 字节，SHA `48209f95d7a2ddfbf0fb3291658b1463e7b8121dac982f26501d8775e5450707`，Git blob `975b598f476e97e08366b102f5b60b8211e384b1`。未改造/未覆盖；只是一个真实公开回归原件，不是用户生产文件或多份真实文档
+- **9 个支持源 / 44 个拒绝源、57 个非法模型、12 个篡改包、13 份真实前端操作快照、22 次完整可信模型重开**。独立代码解析真实 OPC 路径、样式继承、字体、编号实例/层级、正文内容与物理声明；不导入应用 resolver。非法模型不得创建新目标，已有目标与所有源文件保持字节不变
+- **38 份全新 LibreOffice PDF / 38 个独立 profile；19/19 对源或独立参考与输出的横纵坐标差严格为 0.0 pt，整页光栅完全相同**。涵盖未改造原件、完整直接覆盖、右侧显式零、起始编号 7、起始 99 的零/一 twip 悬挂，以及实际文字/间距/正文字号/Enter 编辑与所有 undo/redo。独立参考不通过应用 writer 构建
+- 原件标记 x=113.50 / 170.20 pt，正文 x=141.85 / 283.60 pt，7 / 18 行正文；27 行可见文字与全部 **757,350** 页像素相等。实际查看原件/输出、字号编辑、Enter 和零悬挂图像；不是空白页面假通过
+- 全量报告 `tmp/list-geometry-final-independent/run-41zrpucu/report.json` SHA **`3957dea4710f2b534a21030332f4a63578c0e174a836ef2400802b6b6cacb91b`**。报告内当时 checker SHA `34f935493297ade2bfa5e60e88c69f5314a8eb655b389710444cc2fbfb19c057` 的坐标 gate 仍为 0.1 pt，但所有实际测量都是 0.0，像素 gate 一直为精确相等
+- reviewer 要求后，最终 checker 将 pairwise 坐标 gate 收紧至精确 0，SHA **`f71c8838d06b55b27c233528b56e6e9eef526426333d1de4a905d3e3bf67c187`**。对**同一 38 份全新 PDF**全部重新提取坐标、读取原光栅并复核输入/输出/CLI 身份，**19 对全部严格通过**。小型重检报告 `tmp/list-geometry-final-independent/run-41zrpucu/strict-coordinate-recheck-f71c8838d06b.json` SHA **`394f0b00f18350af29a39d8738614d1977b51b9f5d3c251628cc71025ea76c06`**；原报告不修改。这个重检没有新增 PDF，不能再累计为 38 次新渲染
+- 最终实际 production `worker::run` 子进程验证原件导入和可信作者包打开与冻结 CLI 完整模型一致，源空项/负值来源拒绝、六个受保护输入/程序不变。报告 `tmp/list-geometry-worker-evidence/report.json` SHA **`654df5825adec371783438809706a8975c0d1858b3ce918943abc4e39a6c7b7e`**；新 probe SHA **`0eebd452bccf2e40fd0e6e9b7ed2f59953b99734d4494a55706e57016c57ac7a`**，链接来源 `tmp/list-geometry-backend-provenance-final.json` SHA **`9bf314d928d02d05a8b9a070ac65a11c04f871fc8a45c22b96314b8b77783180`**。这不等同 Tauri 薄适配器、系统对话框或原生 IPC
+
+### 历史契约、审查和保留限制
+
+- 完整历史目录 **1,520 / 1,520 条 read 响应与上一发布 CLI 精确相同**，包含返回码、stdout 原字节与解析 JSON、stderr；没有该目录内的新增拒绝、支持扩张或诊断变化。新真实列表原件的支持扩张由本轮单独的哈希固定 oracle 验证
+- **302 个哈希不同的历史无新属性 DOCX 整包金样**，两 CLI 分别重新导出均与历史文件逐字节相等；每个 CLI 各 **604 次完整可信重开、604 次原件/生成件禁止覆盖**通过
+- **1,647 个受保护来源/历史报告/模型/输出等文件**身份不变；另核对 **325 份保留的旧 PDF**身份，不冒称重新渲染。新渲染仍只有本轮 38 份
+- 报告 `tmp/list-geometry-legacy-replay/run-go2w29_o/report.json` SHA **`616b8b261b4b52e12a837630a24354db015261b3b0301bc6fbdf0fce64fc5f1d`**，状态 PASS；原报告和当前/基线 CLI 前后 hash 均未改变
+
+独立只读 reviewer 另通过 **58 个源检查**（6 保留 / 47 拒绝 / 5 旧规范化响应与旧 CLI 完全相等）和 **269 个模型决策/导出/可信重开/目标保护检查**。报告 `tmp/list-geometry-review/run-8bjvtabh/report.json`、`tmp/list-geometry-review/models-mf1b2dq1/report.json`；最终结论绑定已暂存树，不把定向检查加到 601/548 计数。
+
+早期独立探针发现真正空源项会出现 **0.05 pt / 1,659 像素差**，该源子集已保守拒绝。初次 Enter 参考误继承源 Calibri 11，改为作者模型明确的 Arial 11 后精确相等；只修独立参考，不放宽阈值。第一次整组 Rust 检查因此中断并保留日志，最终 `final2` 全部重跑。资源边界夹具曾小于预设工作配额，扩大夹具后验证拒绝，没有提高配额。provenance helper 曾把 `-L dependency` 目录当作文件求 hash，发生在后端检查成功之后；修正为显式 extern 文件集合并保留原失败日志，没有重跑/冒称其他阶段失败。
+
+无新属性的旧 writer 字节、旧 normalized list 警告和此前拒绝边界保持。新模式自身没有列表几何数值控件；结构删除/提升/嵌套/合并/移动/切换明确拒绝。作者输出重开走 `read-docx-model`；刻意强制外部 `import-docx` 仍可因不支持的 marker `rPr` / pStyle / override 组合拒绝。
+
+已知 Chromium EPERM、云 localhost 隔离、Linux GLib/WebKit 和离线 Windows 限制没有重试。实际 WebView2、键鼠/输入法/系统剪贴板/对话框、原生打印、Word/WPS 和一般复杂列表仍未验收；不借用历史 vendor/native 计数或声称 DOC/DOCX/PDF 阶段完成。
+
+
 ## 本轮：显式页面内的正文缩进外伸（2026-10-13）
 
 基于 `5f812c2612d1d1de1363b61786c3e435d0163616`，新增仅限已证明显式页面的顶层正文/标题段落负左右缩进及页边距内悬挂。两条左边缘、共同右边缘和各自行宽分别校验；不允许伸出纸张，不钳制数值或自动增加页面。缺省页面、单元格、列表与单图的旧路径维持保守范围；源负值的活动继承/覆盖来源继续可见，编号层级不顺带放行。范围和公式见 [段落页边距外伸](PARAGRAPH_OVERHANG.md)。

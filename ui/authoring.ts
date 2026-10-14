@@ -1,3 +1,4 @@
+import {PreservedListGeometry, omitDefaultListGeometry, preflightListGeometryHTML, validateListGeometryDocument, withPreservedListRendering} from './word-list-geometry';
 import {EmptyParagraphFont, preflightEmptyParagraphFontHTML, validateEmptyParagraphFontDocument} from './word-empty-paragraph-font';
 import {WordEmptyParagraphFontControls} from './word-empty-paragraph-font-controls';
 import {WordTableCellColorControls} from './word-table-cell-color-controls';
@@ -51,11 +52,12 @@ const WordStarterKit = StarterKit.extend({
       .filter(extension => extension.type === 'mark' && !['fontSize', 'textColor', 'fontFamily'].includes(extension.name))
       .map(extension => extension.name).join(' ');
     return extensions.map(extension => {
-      if (extension instanceof TiptapNode && ['paragraph', 'heading'].includes(extension.name)) return withWordBlockTypeInteractions(extension, {
+      if (extension instanceof TiptapNode && ['paragraph', 'heading'].includes(extension.name)) return withPreservedListRendering(withWordBlockTypeInteractions(extension, {
         locked: () => paused || leaving || saving || printing,
         syncSelection: syncDomTextSelection,
         onError: message => showNotice(message, true),
-      });
+      }));
+      if (extension instanceof TiptapNode && extension.name === 'orderedList') return withPreservedListRendering(extension);
       if (extension.name === 'code' && extension instanceof TiptapMark) return extension.extend({excludes: excluded});
       if (extension.name === 'doc' && extension instanceof TiptapNode) return extension.extend({
         addAttributes: () => ({styleProfile: {default: null, rendered: false, parseHTML: () => null}}),
@@ -111,7 +113,7 @@ const paragraphSpacingIds: Record<ParagraphSpacingField, string> = {
   spaceBefore: 'edit-space-before', spaceAfter: 'edit-space-after', lineSpacing: 'edit-line-spacing',
 };
 function snapshotDocument(owner: Pick<Editor, 'getJSON'>): JSONContent {
-  return omitDefaultParagraphIndent(omitDefaultImageDimensions(omitDefaultTableWidths(omitDefaultParagraphSpacing(snapshotStyledDocument(owner)))));
+  return omitDefaultListGeometry(omitDefaultParagraphIndent(omitDefaultImageDimensions(omitDefaultTableWidths(omitDefaultParagraphSpacing(snapshotStyledDocument(owner))))));
 }
 let onChangeMode: (() => Promise<void>) | null = null;
 let canLeaveOther: () => Promise<boolean> = async () => true;
@@ -508,6 +510,7 @@ export function closeAuthoring() {
 async function create(content?: JSONContent, ask = true) {
   const initial = content ?? {type: 'doc', attrs: {styleProfile: STANDARD_WORD_STYLE_PROFILE}, content: [{type: 'paragraph'}]};
   documentStyleProfile(initial);
+  validateListGeometryDocument(initial);
   validateEmptyParagraphFontDocument(initial);
   validateParagraphSpacingDocument(initial);
   validateTableWidthsDocument(initial);
@@ -524,7 +527,7 @@ async function create(content?: JSONContent, ask = true) {
   editor = new Editor({
     editable: !paused,
     element: el('editor-content'),
-    extensions: [EmptyParagraphFont.configure({onError: message => showNotice(message, true)}),FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
+    extensions: [PreservedListGeometry.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),EmptyParagraphFont.configure({onError: message => showNotice(message, true)}),FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
       WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, ParagraphIndent.configure({onIndentError: message => showNotice(message, true)}), PageBreak, TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
     content: initial,
     editorProps: {
@@ -537,7 +540,7 @@ async function create(content?: JSONContent, ask = true) {
       // Do not load remote images pasted from web/Office HTML. Preserve text.
       transformPastedHTML: html => {
         // Audit raw empty-font metadata before remote-image removal can erase it.
-        const parsed = new DOMParser().parseFromString(preflightEmptyParagraphFontHTML(html), 'text/html');
+        const parsed = new DOMParser().parseFromString(preflightEmptyParagraphFontHTML(preflightListGeometryHTML(html)), 'text/html');
         parsed.querySelectorAll('img').forEach(image => {
           if (!/^data:image\/(png|jpeg);base64,/.test(image.getAttribute('src') ?? '')) image.remove();
         });

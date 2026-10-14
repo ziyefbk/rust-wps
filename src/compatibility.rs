@@ -463,6 +463,7 @@ pub(crate) struct DocxGeometryAudit {
     pub images: Vec<crate::image_dimensions::ImageGeometry>,
     pub page: Option<crate::document::PageGeometry>,
     pub paragraph_indents: crate::paragraph_indentation::ParagraphIndentAudit,
+    pub list_geometry: crate::list_geometry::Audit,
     pub contextual_spacing: crate::paragraph_contextual_spacing::ContextualSpacingAudit,
 }
 
@@ -487,6 +488,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
     let mut vertical_tables = crate::table_vertical::VerticalAudit::default();
     let mut page = None;
     let mut paragraph_indents = crate::paragraph_indentation::ParagraphIndentAudit::default();
+    let mut list_geometry = crate::list_geometry::Audit::default();
     let mut contextual_spacing =
         crate::paragraph_contextual_spacing::ContextualSpacingAudit::default();
     // Inspect exactly the main/style parts that the downstream parser will
@@ -657,12 +659,39 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
                     .insert(crate::page_geometry::PAGE_GEOMETRY_RISK.into());
             }
         }
+        // A failed new proof leaves every historical list refusal intact.
+        let list_proof = (|| -> Result<crate::list_geometry::Audit> {
+            if let Some(raw) = raw_relationships.as_deref() {
+                crate::image_dimensions::audit_list_relationships(raw)?;
+            }
+            ensure!(
+                relationships.duplicate_ids().is_empty(),
+                "Ambiguous list relationships"
+            );
+            let list_theme = relationships
+                .first_by_type(rel_types::THEME)
+                .map(|r| {
+                    let target = main.resolve_relative(&r.target)?;
+                    package.read_part(&target)
+                })
+                .transpose()?;
+            crate::list_geometry::analyze(
+                normalized_main.as_deref().expect("main read"),
+                styles,
+                spacing_parts.get(rel_types::NUMBERING).map(Vec::as_slice),
+                list_theme.as_deref(),
+                table_settings,
+                page.as_ref(),
+            )
+        })();
+        list_geometry = list_proof.unwrap_or_default();
         match crate::paragraph_indentation::analyze(
             normalized_main.as_deref().expect("main read"),
             styles,
             spacing_parts.get(rel_types::NUMBERING).map(Vec::as_slice),
             table_settings,
             page.as_ref(),
+            &list_geometry,
         ) {
             Ok(audit) => paragraph_indents = audit,
             Err(_) => {
@@ -984,6 +1013,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         images,
         page,
         paragraph_indents,
+        list_geometry,
         contextual_spacing,
     })
 }

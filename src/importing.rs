@@ -327,6 +327,11 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         report.compatibility.risks.insert("Image-only paragraph indentation normalized; text paragraph indentation preservation does not include images".into());
     }
     crate::paragraph_indentation::verify_converted(&audit.paragraph_indents, &report.document)?;
+    crate::list_geometry::attach(
+        &audit.list_geometry,
+        &mut report.document,
+        &mut report.compatibility.risks,
+    )?;
     if !audit.images.is_empty() {
         report
             .compatibility

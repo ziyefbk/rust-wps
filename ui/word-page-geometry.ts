@@ -1,3 +1,4 @@
+import {listGeometryStateSnapshot, validateListGeometryDocument} from './word-list-geometry-model';
 import {omitDefaultTableVertical, validateTableVerticalDocument} from './word-table-vertical-layout';
 import {omitDefaultTableCellMargins, validateTableCellMarginsDocument} from './word-table-cell-margins';
 import {omitDefaultParagraphIndent, validateParagraphIndentDocument} from './word-paragraph-indent-model';
@@ -117,6 +118,7 @@ function validateProspectivePage(document: Node) {
   }
   const snapshot = omitDefaultPageGeometry(document.toJSON());
   validatePageGeometryDocument(snapshot);
+  validateListGeometryDocument(listGeometryStateSnapshot(snapshot));
   validateTableCellMarginsDocument(omitDefaultTableCellMargins(snapshot));
   validateTableVerticalDocument(omitDefaultTableVertical(snapshot));
   validateParagraphIndentDocument(omitDefaultParagraphIndent(snapshot));

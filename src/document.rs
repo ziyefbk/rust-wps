@@ -975,6 +975,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "firstLineIndentTwips",
             ],
             "paragraph" => &[
+                "listGeometry",
                 "emptyParagraphFont",
                 "textAlign",
                 "spaceBefore",
@@ -984,7 +985,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "indentRightTwips",
                 "firstLineIndentTwips",
             ],
-            "orderedList" => &["start", "type"],
+            "orderedList" => &["start", "type", "markerFont"],
             "table" => &[
                 "columnWidthsTwips",
                 "tableAlign",
@@ -1330,6 +1331,7 @@ pub fn validate(doc: &Node) -> Result<()> {
     validate_table_cell_content(doc, page.as_ref())?;
     validate_table_vertical(doc, page.as_ref())?;
     validate_paragraph_indents(doc)?;
+    crate::list_geometry::validate(doc)?;
     // A size edit must not create a valid-looking draft which later fails the
     // existing writer's media-count/aggregate limits. Preserve the historical
     // validation route for documents with no explicit image dimensions.
@@ -1376,6 +1378,7 @@ struct Writer {
     image_styles: Vec<String>,
     link_rels: Vec<String>,
     nums: Vec<String>,
+    list_definitions: Vec<String>,
     has_spacing: bool,
     image_bytes: usize,
     cell_text_auto: bool,
@@ -1396,7 +1399,8 @@ impl Writer {
         }
         let explicit_indent = PARAGRAPH_INDENT_FIELDS
             .iter()
-            .any(|key| node.attrs.contains_key(*key));
+            .any(|key| node.attrs.contains_key(*key))
+            || node.attrs.contains_key("listGeometry");
         let mut deferred_alignment = String::new();
         if let Some(alignment) = node.attrs.get("textAlign").and_then(Value::as_str) {
             let alignment = if alignment == "justify" {
@@ -1424,6 +1428,12 @@ impl Writer {
         {
             let attribute = if value < 0 { "hanging" } else { "firstLine" };
             indentation.push_str(&format!(" w:{attribute}=\"{}\"", value.abs()));
+        }
+        if let Some(g) = crate::list_geometry::geometry(node)? {
+            indentation = format!(
+                " w:left=\"{}\" w:right=\"{}\" w:hanging=\"{}\"",
+                g.left_twips, g.right_twips, g.hanging_twips
+            );
         }
         let mut spacing = String::new();
         for (key, attribute) in [
@@ -1546,7 +1556,15 @@ impl Writer {
             "bulletList" | "orderedList" => {
                 ensure!(level < 9, "Lists support at most nine nesting levels");
                 let num = self.nums.len() + 1;
-                let abstract_id = usize::from(node.kind == "orderedList");
+                let abstract_id = if let Some(font) = crate::list_geometry::marker_font(node)? {
+                    let id = self.list_definitions.len() + 2;
+                    let family = escaped(&font.font_family);
+                    let size = font.font_size;
+                    self.list_definitions.push(format!(r#"<w:abstractNum w:abstractNumId="{id}"><w:multiLevelType w:val="singleLevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:suff w:val="tab"/><w:lvlText w:val="%1."/><w:lvlJc w:val="left"/><w:rPr><w:rFonts w:ascii="{family}" w:hAnsi="{family}" w:eastAsia="{family}" w:cs="{family}"/><w:b w:val="0"/><w:i w:val="0"/><w:color w:val="000000"/><w:sz w:val="{size}"/><w:szCs w:val="{size}"/></w:rPr></w:lvl></w:abstractNum>"#));
+                    id
+                } else {
+                    usize::from(node.kind == "orderedList")
+                };
                 self.nums.push(format!("<w:num w:numId=\"{num}\"><w:abstractNumId w:val=\"{abstract_id}\"/><w:lvlOverride w:ilvl=\"{level}\"><w:startOverride w:val=\"{}\"/></w:lvlOverride></w:num>", integer(node, "start", 1)?));
                 let mut result = String::new();
                 for item in &node.content {
@@ -1842,6 +1860,7 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
         }
         numbering.push_str("</w:abstractNum>");
     }
+    numbering.push_str(&writer.list_definitions.concat());
     numbering.push_str(&writer.nums.concat());
     numbering.push_str("</w:numbering>");
     let mut rels = format!(

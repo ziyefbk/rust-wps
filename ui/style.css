@@ -192,3 +192,19 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
 #print-document .tiptap [data-cell-text-color-mode="auto"] :is(p,h1,h2,h3,code) { color:inherit; }
 /* A selection must remain visible without replacing the authored fill. */
 .tiptap [data-cell-fill-rgb].selectedCell { outline:2px solid #477fc6; outline-offset:-2px; }
+
+/* Preserved decimal geometry only. The same .tiptap DOM is cloned for print.
+   L/R frame both first and wrapped lines; the independently styled marker
+   starts at L-H. An inline zero-width box shares the first-line baseline.
+   These bounded declarations do not prove font availability or pagination. */
+.tiptap ol[data-word-list-marker-font] { list-style:none; margin:0; padding:0; }
+.tiptap ol[data-word-list-marker-font] > li { display:block; margin:0; padding:0; counter-increment:word-preserved-decimal; }
+.tiptap ol[data-word-list-marker-font] > li > p[data-word-list-geometry] {
+  margin-left:var(--word-list-left); margin-right:var(--word-list-right); text-indent:0; text-align:left;
+}
+.tiptap ol[data-word-list-marker-font] > li > p[data-word-list-geometry]::before {
+  content:counter(word-preserved-decimal, decimal) "."; display:inline-block; width:0;
+  position:relative; left:calc(-1 * var(--word-list-hanging)); white-space:pre; vertical-align:baseline;
+  font-family:var(--word-list-marker-family); font-size:var(--word-list-marker-size);
+  font-weight:400; font-style:normal; text-decoration:none; color:#000; line-height:1;
+}

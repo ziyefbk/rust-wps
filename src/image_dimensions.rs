@@ -1230,6 +1230,33 @@ fn audit_relationships(data: &[u8]) -> Result<()> {
     }
     Ok(())
 }
+pub(crate) fn audit_list_relationships(data: &[u8]) -> Result<()> {
+    audit_relationships(data)?;
+    let root = xml(data)?;
+    let mut roles = BTreeSet::new();
+    for r in &root.children {
+        let kind = r
+            .attr(Ns::None, "Type")?
+            .context("Missing list relationship type")?;
+        let role = kind.rsplit('/').next().unwrap_or("");
+        if matches!(role, "styles" | "numbering" | "theme" | "settings") {
+            ensure!(
+                kind == format!(
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/{role}"
+                ) || kind
+                    == format!("http://purl.oclc.org/ooxml/officeDocument/relationships/{role}"),
+                "Unsupported list relationship type"
+            );
+            ensure!(
+                roles.insert(role)
+                    && r.attr(Ns::None, "TargetMode")?
+                        .is_none_or(|v| v == "Internal"),
+                "Ambiguous or external list relationship"
+            );
+        }
+    }
+    Ok(())
+}
 fn audit_content_types(data: &[u8]) -> Result<()> {
     let root = xml(data)?;
     ensure!(
@@ -1631,6 +1658,148 @@ pub(crate) fn resolve_empty_paragraph_fonts(
             resolved.insert(font.clone(), font.resolved(theme.as_ref())?);
         }
         result.push(resolved[&font].clone());
+    }
+    Ok(result)
+}
+
+/// Resolve the plain Latin marker base independently from body run fonts.
+/// The list source proof separately validates numbering, paragraph geometry,
+/// and the full body identity. Mark overrides remain outside this subset.
+pub(crate) fn resolve_list_marker_fonts(
+    main: &[u8],
+    styles: &[u8],
+    theme: Option<&[u8]>,
+    body_indices: &[usize],
+) -> Result<Vec<crate::list_geometry::MarkerFont>> {
+    let document = xml(main)?;
+    document.audit_section_direction()?;
+    let body = document.one(Ns::W, "body")?;
+    let styles = xml(styles)?;
+    // Numbering and all active paragraph layers are proved by list_geometry.
+    // The shared font-only style validator excludes numPr for its older image
+    // contract; remove only those already-proved direct references here.
+    let mut font_styles = styles.clone();
+    for style in &mut font_styles.children {
+        if style.is(Ns::W, "style") {
+            for props in &mut style.children {
+                if props.is(Ns::W, "pPr") {
+                    props.children.retain(|n| !n.is(Ns::W, "numPr"));
+                }
+            }
+        }
+    }
+    let theme = theme.map(xml).transpose()?;
+    fn overlay(font: &mut FontState, props: &Xml, style: bool) -> Result<()> {
+        props.children(&[
+            (Ns::W, "rFonts"),
+            (Ns::W, "sz"),
+            (Ns::W, "szCs"),
+            (Ns::W, "lang"),
+            (Ns::W, "b"),
+            (Ns::W, "bCs"),
+            (Ns::W, "i"),
+            (Ns::W, "iCs"),
+            (Ns::W, "noProof"),
+        ])?;
+        if let Some(lang) = props.optional(Ns::W, "lang")? {
+            lang.empty(&[(Ns::W, "val"), (Ns::W, "eastAsia"), (Ns::W, "bidi")])?;
+            ensure!(
+                lang.attr(Ns::W, "val")?.is_none_or(|v| matches!(
+                    v.split('-')
+                        .next()
+                        .unwrap_or("")
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "en" | "es" | "fr" | "de" | "it" | "pt" | "nl"
+                )),
+                "Unproved marker language"
+            );
+        }
+        for tag in ["bCs", "iCs"] {
+            if let Some(n) = props.optional(Ns::W, tag)? {
+                ensure!(!on_off(n)?, "Complex marker emphasis unsupported");
+            }
+        }
+        font.overlay(props, style)
+    }
+    let mut base = FontState::default();
+    if let Some(defaults) = styles.optional(Ns::W, "docDefaults")? {
+        defaults.attributes(&[])?;
+        defaults.children(&[(Ns::W, "pPrDefault"), (Ns::W, "rPrDefault")])?;
+        if let Some(w) = defaults.optional(Ns::W, "pPrDefault")? {
+            w.attributes(&[])?;
+            w.children(&[(Ns::W, "pPr")])?;
+            if let Some(p) = w.optional(Ns::W, "pPr")? {
+                ensure!(
+                    p.optional(Ns::W, "rPr")?.is_none(),
+                    "Default marker formatting unsupported"
+                );
+            }
+        }
+        if let Some(w) = defaults.optional(Ns::W, "rPrDefault")? {
+            w.attributes(&[])?;
+            w.children(&[(Ns::W, "rPr")])?;
+            if let Some(p) = w.optional(Ns::W, "rPr")? {
+                overlay(&mut base, p, false)?;
+            }
+        }
+    }
+    fn size(n: &Xml) -> usize {
+        1 + n.children.iter().map(size).sum::<usize>()
+    }
+    let style_work = size(&styles);
+    let theme_work = theme.as_ref().map_or(0, size);
+    let mut work = style_work;
+    let mut result = Vec::new();
+    let mut cache = BTreeMap::new();
+    for &index in body_indices {
+        let p = body
+            .children
+            .get(index)
+            .context("Marker paragraph identity mismatch")?;
+        ensure!(p.is(Ns::W, "p"), "Marker target must be paragraph");
+        let direct = p.optional(Ns::W, "pPr")?;
+        if let Some(p) = direct {
+            ensure!(
+                p.optional(Ns::W, "rPr")?.is_none(),
+                "Paragraph marker overrides unsupported"
+            );
+        }
+        let id = style_id(direct, "pStyle")?;
+        if !cache.contains_key(&id) {
+            ensure!(cache.len() < 10000, "Marker font proof exceeds bounds");
+            work = work
+                .checked_add(style_work + 2 * theme_work)
+                .context("Marker font work overflow")?;
+            ensure!(work <= 5_000_000, "Marker font proof exceeds work budget");
+            let mut font = base.clone();
+            for layer in style_chain(&font_styles, id.as_deref(), "paragraph")? {
+                if let Some(p) = layer.optional(Ns::W, "pPr")? {
+                    ensure!(
+                        p.optional(Ns::W, "rPr")?.is_none(),
+                        "Inherited marker overrides unsupported"
+                    );
+                }
+                if let Some(p) = layer.optional(Ns::W, "rPr")? {
+                    overlay(&mut font, p, true)?;
+                }
+            }
+            let font = font
+                .resolved(theme.as_ref())?
+                .context("Unresolved marker font")?;
+            ensure!(
+                !font.bold && !font.italic,
+                "Emphasized marker font unsupported"
+            );
+            cache.insert(
+                id.clone(),
+                crate::list_geometry::MarkerFont {
+                    font_family: font.family,
+                    font_size: font.half_points,
+                },
+            );
+        }
+        result.push(cache[&id].clone());
     }
     Ok(result)
 }

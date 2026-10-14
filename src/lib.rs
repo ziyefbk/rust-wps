@@ -1,5 +1,6 @@
 mod empty_paragraph_fonts;
 mod image_dimensions;
+mod list_geometry;
 mod page_geometry;
 mod paragraph_contextual_spacing;
 mod paragraph_indentation;

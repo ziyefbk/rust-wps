@@ -56,6 +56,7 @@ pub(crate) struct Xml {
     pub(crate) raw: String,
     pub(crate) wml: bool,
     pub(crate) attrs: BTreeMap<String, (String, bool)>,
+    pub(crate) attribute_namespaces: BTreeMap<String, String>,
     pub(crate) children: Vec<Xml>,
     pub(crate) text: String,
     pub(crate) size: usize,
@@ -178,6 +179,10 @@ pub(crate) fn xml(data: &[u8]) -> Result<Xml> {
                         continue;
                     }
                     let (ns, _) = reader.resolver().resolve_attribute(attr.key);
+                    if let ResolveResult::Bound(namespace) = &ns {
+                        node.attribute_namespaces
+                            .insert(attr.key.as_ref().to_owned(), namespace.as_ref().to_owned());
+                    }
                     ensure!(
                         node.attrs
                             .insert(
@@ -883,6 +888,7 @@ pub(crate) fn analyze(
     numbers: Option<&[u8]>,
     config: Option<&[u8]>,
     page: Option<&crate::document::PageGeometry>,
+    lists: &crate::list_geometry::Audit,
 ) -> Result<ParagraphIndentAudit> {
     let margin_proofs = crate::table_widths::paragraph_margin_proofs(main, styles)?;
     let main = xml(main)?;
@@ -904,8 +910,13 @@ pub(crate) fn analyze(
         table_depth: usize,
         used: &mut BTreeSet<(u32, u8)>,
         audit: &mut ParagraphIndentAudit,
-        body_page: Option<&crate::document::PageGeometry>,
+        layout: (
+            Option<&crate::document::PageGeometry>,
+            Option<usize>,
+            &crate::list_geometry::Audit,
+        ),
     ) -> Result<()> {
+        let (body_page, body_index, lists) = layout;
         match node.tag.as_str() {
             "p" => {
                 node.identity()?;
@@ -953,7 +964,8 @@ pub(crate) fn analyze(
                 if let Some(reference) = effective.numbering.filter(|(id, _)| *id != 0) {
                     used.insert(reference);
                     ensure!(
-                        !effective.indent.nonzero(),
+                        !effective.indent.nonzero()
+                            || body_index.is_some_and(|i| lists.body_indices.contains(&i)),
                         "Custom paragraph indentation on lists is unsupported"
                     );
                     // Explicit zero in an ordinary list is normalized with its
@@ -1025,7 +1037,7 @@ pub(crate) fn analyze(
                         table_depth + 1,
                         used,
                         audit,
-                        None,
+                        (None, None, lists),
                     )?;
                 }
                 if audit.paragraphs.len() > before {
@@ -1045,7 +1057,7 @@ pub(crate) fn analyze(
             }
             _ => {}
         }
-        for child in &node.children {
+        for (index, child) in node.children.iter().enumerate() {
             walk(
                 child,
                 sheet,
@@ -1053,12 +1065,28 @@ pub(crate) fn analyze(
                 table_depth,
                 used,
                 audit,
-                if node.tag == "body" { body_page } else { None },
+                (
+                    if node.tag == "body" { body_page } else { None },
+                    if node.tag == "body" {
+                        Some(index)
+                    } else {
+                        None
+                    },
+                    lists,
+                ),
             )?;
         }
         Ok(())
     }
-    walk(body, &sheet, None, 0, &mut used, &mut audit, page)?;
+    walk(
+        body,
+        &sheet,
+        None,
+        0,
+        &mut used,
+        &mut audit,
+        (page, None, lists),
+    )?;
     ensure!(
         sheet.margin_proofs.borrow_mut().next().is_none(),
         "Source table margin proof was not consumed"
