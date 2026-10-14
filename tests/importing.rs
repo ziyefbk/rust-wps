@@ -497,3 +497,62 @@ fn legacy_minimal_pagination_fixture_without_mandatory_styles_is_refused() {
     assert!(importing::import_doc(&source).is_err());
     assert_eq!(std::fs::read(&source).unwrap(), bytes);
 }
+
+#[test]
+fn legacy_single_section_page_changes_only_root_geometry_and_preserves_exact_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let old_source = dir.path().join("old-page-unproved.doc");
+    let source = dir.path().join("letter.doc");
+    std::fs::write(
+        &old_source,
+        include_bytes!("fixtures/doc-typography/blank.doc"),
+    )
+    .unwrap();
+    let bytes = include_bytes!("fixtures/doc-page-geometry/letter.doc");
+    std::fs::write(&source, bytes).unwrap();
+    let old = importing::import_doc(&old_source).unwrap();
+    let report = importing::import_doc(&source).unwrap();
+    let mut expected = serde_json::to_value(&old.document).unwrap();
+    expected["attrs"]["pageGeometry"] = serde_json::json!({
+        "widthTwips":12240,"heightTwips":15840,
+        "marginTopTwips":1440,"marginRightTwips":1800,
+        "marginBottomTwips":1440,"marginLeftTwips":1800
+    });
+    assert_eq!(serde_json::to_value(&report.document).unwrap(), expected);
+    assert_eq!(
+        report.compatibility.paragraphs,
+        old.compatibility.paragraphs
+    );
+    assert!(!report.compatibility.fidelity_verified);
+    assert!(
+        report
+            .compatibility
+            .risks
+            .iter()
+            .any(|s| s.contains("exact encoded twips"))
+    );
+    assert!(
+        !report
+            .compatibility
+            .risks
+            .iter()
+            .any(|s| s.contains("page geometry is not preserved"))
+    );
+    assert!(
+        old.compatibility
+            .risks
+            .iter()
+            .any(|s| s.contains("page geometry is not preserved"))
+    );
+    let output = dir.path().join("letter.docx");
+    document::export_docx(&report.document, &output).unwrap();
+    assert_eq!(
+        serde_json::to_value(document::load_authored_docx(&output).unwrap().unwrap()).unwrap(),
+        expected
+    );
+    let exported = std::fs::read(&output).unwrap();
+    assert!(document::export_docx(&report.document, &output).is_err());
+    assert_eq!(std::fs::read(&output).unwrap(), exported);
+    assert!(document::export_docx(&report.document, &source).is_err());
+    assert_eq!(std::fs::read(&source).unwrap(), bytes);
+}

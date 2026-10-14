@@ -170,10 +170,10 @@ fn stream(reader: &mut CfbReader<Cursor<&[u8]>>, name: &str, limit: usize) -> Re
     Ok(data)
 }
 
-pub(crate) fn audit(source: &[u8]) -> Result<Audit> {
+pub(crate) fn audit(source: &[u8]) -> Result<(Audit, Option<crate::legacy_page_geometry::Audit>)> {
     audit_inner(source).context("Cannot prove legacy DOC typography; source remains read-only")
 }
-fn audit_inner(source: &[u8]) -> Result<Audit> {
+fn audit_inner(source: &[u8]) -> Result<(Audit, Option<crate::legacy_page_geometry::Audit>)> {
     let mut cfb = CfbReader::new(Cursor::new(source))?;
     ensure!(
         cfb.warnings().is_empty(),
@@ -190,7 +190,43 @@ fn audit_inner(source: &[u8]) -> Result<Audit> {
         },
         source.len(),
     )?;
-    audit_streams(&word, &table)
+    let typography = audit_streams(&word, &table)?;
+    // Do not broaden or alter the historical Unsupported typography route.
+    // Its source identity is not strong enough to authorize page attachment.
+    let page = if let Audit::Proven(blocks) = &typography {
+        // The proof decodes one Windows-1252 source byte to one Unicode scalar.
+        // Reuse that exact body identity to locate possible section-end marks;
+        // no second piece-table parser or inferred paragraph boundary is needed.
+        let mut cp = 0u32;
+        let mut break_ends = BTreeSet::new();
+        for block in blocks {
+            match block {
+                Block::NormalParagraph { runs, .. } => {
+                    for run in runs {
+                        cp += run.text.chars().count() as u32;
+                    }
+                    cp += 1; // Encoded CR, including true empty paragraphs.
+                }
+                Block::PageBreak => {
+                    cp += 1; // Encoded U+000C before the paragraph CR.
+                    break_ends.insert(cp);
+                    cp += 1;
+                }
+            }
+        }
+        ensure!(
+            cp as usize == u32_at(&word, 0x4c)?,
+            "DOC page body CP identity mismatch"
+        );
+        Some(crate::legacy_page_geometry::audit_streams(
+            &word,
+            &table,
+            &break_ends,
+        )?)
+    } else {
+        None
+    };
+    Ok((typography, page))
 }
 
 fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {

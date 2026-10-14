@@ -25,7 +25,7 @@ pub fn import_doc(path: &Path) -> Result<ImportReport> {
         bytes.starts_with(&[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
         "Input is not a binary DOC compound file"
     );
-    let typography = crate::legacy_typography::audit(&bytes)?;
+    let (typography, page) = crate::legacy_typography::audit(&bytes)?;
     let parsed = office_oxide::Document::from_reader(
         std::io::Cursor::new(bytes),
         office_oxide::DocumentFormat::Doc,
@@ -116,6 +116,13 @@ pub fn import_doc(path: &Path) -> Result<ImportReport> {
         &mut report.document,
         &mut report.compatibility.risks,
     )?;
+    if let Some(page) = page {
+        crate::legacy_page_geometry::attach(
+            page,
+            &mut report.document,
+            &mut report.compatibility.risks,
+        )?;
+    }
     fn count(n: &Node, paragraphs: &mut usize, tables: &mut usize) {
         if matches!(n.kind.as_str(), "paragraph" | "heading") {
             *paragraphs += 1;

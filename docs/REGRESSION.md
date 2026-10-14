@@ -1,5 +1,84 @@
 # 当前跨格式回归记录
 
+## 本轮：旧二进制 DOC 的单节页面几何（2026-10-14）
+
+基于 `493be77e9ae173ba41a5c8c8440d078cf0dfe42f`，只在既有完整 Latin 字体 / 编码 Normal 正文证明内，新增有界 DOP / PlcfSed / SEPX 页面证明。纸张宽高和四边正文边距以原始六整数进入现有 `pageGeometry`；不吸附预设或经消费者舍入，未改变模型、writer、UI、vendor 或通用 IR 转换。合法复杂 / 缺失页面证据只回退几何，原字体 / Normal / 间距及分页原子仍保持；损坏声明拒绝，全文绑定与候选模型验证成功后才提交。支持子集与完整物理版式边界见 [LEGACY_DOC_PAGE_GEOMETRY.md](LEGACY_DOC_PAGE_GEOMETRY.md)。
+
+### 核心门禁与执行身份
+
+- Rust 1.99 / 1.88 **各 724 项核心测试通过**，原 697 + 26 单元 / 1 集成控制。覆盖源整数与纸张容差、横纵向、最后优先、缺 DOP / 节 / 分量、全部页面 flag、版本长度、单栏 / 网格 / 固定负边距、未知及截断操作、覆盖前损坏、CP / SEPX / 表边界、已证明多节结束标记、资源配额与完整模型 / 提示原子回滚。独立作者的 Letter 集成保持真实空段 / 分页顺序、精确完整可信重开及原件 / 目标不覆盖
+- 两工具链原始严格 Clippy 各只报告既有单项：stable `spreadsheet_xls.rs:129` 的 `chunks_exact_to_as_chunks`，MSRV `presentation_import.rs:97` 的 `uninlined_format_args`；各仅排除对应项后的 all-targets Clippy 与 build 全通过，无新增源码 lint 豁免。定向 rustfmt、checker 语法与 `git diff --check` 通过，报告 `tmp/legacy-doc-page-geometry-hygiene-final1.json` SHA `b5a379aee2a31e797cbbcc21df24717ed6789a2ae5948eb4b9ac7cf8c66fae35`
+- stable 完整新运行 `tmp/legacy-doc-page-geometry-gates-stable-final2.json` SHA **`7ca3b694a24e3788a8101dad7a763d9e2d92681cf28d62925141211836512ad7`**，记录精确 argv、环境、源码前后身份与所有日志。核心日志 SHA `2ce93d993139346ce538c9de242b643ea7fa3fe08409a81368fa647b67631378`；全门禁最低观察空闲 `1,021,894,656` bytes，无空间终止
+- MSRV 完整新运行 `tmp/legacy-doc-page-geometry-gates-msrv-final1.json` SHA **`fb71f594a24f15cee29162f5aabed98d9af0e043d0d4b8c72de99bb928b7c42a`**，724 测试 / raw 与 scoped Clippy / build 全部重新执行，源码前后不变；核心日志 SHA `44ead01f23ae2b796c076bece3b34d1f501e69caec2fe3e63c327b5bf718a627`，最低观察空闲 `1,566,515,200` bytes。MSRV CLI SHA **`9d3be86e47f2d8fe292c7bd83c20bc0f58f38c2d1c66f16b9125668d162040b4`**；`tmp/msrv-target/debug/librust_wps.rlib` SHA **`f3025f17238242a31b20adfd6e0abeb09c965d1d3cb52d9d4253f839874f2bb5`**
+- 最终生产 CLI `target/debug/rust-wps` 及独立 inode 冻结副本 `tmp/legacy-doc-page-geometry-final-cli` SHA **`af649bffb9a1adc82a42ae3ba7c006d159633a9cd126eb9b29777ca3ab9c2652`**；stable `target/debug/librust_wps.rlib` SHA **`8a9c2f310c89af43c8ce9df568600ca72431ca3b3a265d0bee044ea3be6c3962`**。前轮 spacing-only baseline `tmp/legacy-doc-spacing-final-cli` SHA `b2c7d87e448397b6fac61892c97b9cee32d1662212a2851ff877a60f9742c6b3` 保持
+- 冻结页面模块 `src/legacy_page_geometry.rs` SHA `d616d2b7c7b9fee4fb9ac874c79c45e4c52479b004fd3550b312b9140a50a312`；`src/legacy_typography.rs` SHA `d19229c76fba6a9f0f64290fe6c20eda4e391accb6b4f5c6622bd6406fc2efb7`；集成 `tests/importing.rs` SHA `1a3cac4ee3f620a33a9eaf5e64671f6abbe647fdecbe9f51574a491fe3fb9e2d`。没有修改 RUSTFLAGS、profile、锁文件或依赖
+- 133 件 vendor 源码 / 夹具身份与前轮相同，两份补丁的 `git apply --reverse --check` 通过；不把 target 缓存当作源码。报告 `tmp/legacy-doc-page-geometry-vendor-check.json` SHA `41ee3e0c3dc47f3efb85ef5d6760c557232c58f34a1587cb72faf93733cff7b3`
+- 沿用既有 stable `target` / MSRV `tmp/msrv-target`、`CARGO_INCREMENTAL=0` 与 `-j1`，没有新建 target 或调编译选项迁就空间。每 0.5 秒观察空闲空间，低于 600 MiB 时终止本门禁的 Cargo 进程组；这不是硬文件系统配额
+
+两份最终门禁记录相同的工具链路径、串行命令和未变源码身份。`CARGO_HOME` / `RUSTUP_HOME` 指向工作区 `toolchains/cargo` / `toolchains/rustup`；原始严格 lint 失败与限定排除后的通过分别留档：
+
+```sh
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo test --locked --quiet -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo clippy --locked --all-targets -j1 -- -D warnings
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo clippy --locked --all-targets -j1 -- -D warnings -A clippy::chunks_exact_to_as_chunks
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo build --locked -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 test --locked --quiet -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 clippy --locked --all-targets -j1 -- -D warnings
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 clippy --locked --all-targets -j1 -- -D warnings -A clippy::uninlined_format_args
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 build --locked -j1
+```
+
+### 前端
+
+本轮新执行 prepare-pdf / TypeScript / Vite build 与 **622 项无浏览器前端检查**，全部通过。报告 `tmp/legacy-doc-page-geometry-frontend-final-gates.json` SHA **`888a821ab928cb6c3560eb067047808abead34a78b6ba50caab03714169367eb`**；四份精确 argv / 日志分别保存，前端源码未改。这些是无浏览器模块检查，不是实际浏览器 / Windows WebView2 / 系统打印验收。
+
+### 生产后端
+
+两工具链各新运行 **35 项 Tauri-free 生产后端测试通过**，链接本轮最终 core rlib，精确 rustc argv / 编译器 / 环境 / 全部链接依赖与源码前后身份记录完整；这不是 Tauri IPC / WebView2 / 对话框验收。
+
+- stable 报告 `tmp/legacy-doc-page-geometry-regression/backend-stable-test-z_5xtyvd/report.json` SHA **`c5fce6ced415a74037e77d13081e00ab1cdb1a52d71421e5d44114936372e74c`**
+- MSRV 报告 `tmp/legacy-doc-page-geometry-regression/backend-msrv-test-b0ssrozo/report.json` SHA **`08d60ee8a8a035d931745dc3f6a0ef501b647c5bca29afc7bd4eff3e54fc5a07`**
+- 生产 worker probe 独立重建成功，SHA **`cdb71ef35cb9038f12f54d7cd21672fca6a922dc077afc7b5bac2a296d29398d`**；编译报告 `tmp/legacy-doc-page-geometry-regression/backend-stable-worker-dmctqkvg/report.json` SHA **`3cbee5f972951ff108cf29b54b35b570ee45215f18dbcde2f547ba6e96d1b96c`**。实际进程运输结果与编译分别验证，详见下方
+
+生产 `worker::run` 实际子进程运输重新执行全部 **306 来源**：**164 份完整导入响应、142 份完整原因链精确拒绝、306 次只读 Open、34 份根几何保留、102 份几何 fallback、28 份整份原样 Unsupported、136 次可信输出 Open 与 136 次不覆盖**。142 个编辑拒绝源（86 既有 / 56 新几何损坏拒绝）仍可沿只读路径打开，不将只读成功称为编辑兼容。只规范化 CLI 多行 anyhow 与 Rust 字符串冒号分隔的展示形式，完整原因链与独立响应相等，原 stdout / stderr 留档。
+
+运输报告 `tmp/legacy-doc-page-geometry-regression/worker-bclqwq3s/report.json` SHA **`bf183f8ef9057fae14b6203c643b6f3373a6e53b96d89c2698d04ff43081b47d`**；运输驱动 `tmp/legacy-doc-page-geometry-regression/worker.py` SHA **`f7fb6d2ff39761f2c544702d7614f560f19ed3fbc37036713d7378aa5db35ed0`**。849 件保护项身份前后不变；这是实际生产模块 / 进程运输，仍不等于原生 Tauri IPC、真实浏览器或新增消费者 PDF 验收。
+
+### 独立二进制来源、完整模型与消费者
+
+最终报告 `tmp/legacy-doc-page-geometry-verify/geometry-run-y4vwa5nb/report.json` SHA **`2d04a340d85f9f41cea7bd1106d784b48fed3659b6380ee52ad0507181fddc0d`**，状态 `PASS-with-explicit-source-layout-break-font-and-compatibility-limits`。checker `scripts/check-legacy-doc-page-geometry.py` SHA **`bc06d2ff7b9a5fad7fbfe4fdeea25207fc6f3e0bb88cd8aedabab55c6db16d82`**；manifest `tmp/legacy-doc-page-geometry-verify/geometry-fixtures-h3lca5t4/manifest.json` SHA **`a466ee867af2857f075d8e4d5a3973bde818b0a43ef83e5fc2b3a13be14a3576`**。独立作者直接读写二进制 CFB / FIB / DOP / PlcfSed / SEPX，以冻结 spacing-only baseline 完整模型加独立源整数建立预期，不以产品 parser 或 DOCX 消费者舍入作源 oracle。
+
+完整 **306 输入**：**34 证明保留、102 几何专属 fallback、28 整份原样 Unsupported、86 与既有相同的拒绝、56 新识别损坏拒绝**。**306 次只读 inspect 精确相等**（仅排除 elapsed_ms）、**306 次完整可信重开、612 次不覆盖、34 份 DOCX XML 几何 oracle、20 个定向篡改拒绝**通过。已证明来源仅允许根 `pageGeometry` 与精确对应提示变化，其他模型完整比较；合法复杂或缺证据页保持完整旧模型，所有原先字体 / Normal / 间距控制与旧失败断言保留。**346 件**受保护源码 / checker / CLI / 输入身份前后相等，原件未改。
+
+固定消费者 LibreOfficeDev `26.8.0.0.alpha0 2c87e51eeaa2b413ff4ae097b2705eea1995d8e5`，实际 `soffice.bin` SHA `d905a74dc92eaccb22481ba2de1345666a074a5f0d48322aaad1b6dc8a9e1e40`；PyMuPDF `1.26.6`、Poppler `pdftotext` SHA `7fe3559cac3ba61dd93650a1ba90499b9fc488184ef8d0f2f1305ddf52c0378b`。**31 份新 PDF，逐文件隔离 profile / HOME / cache / config**。其中 **12 对产品 / 独立几何参考**的全文、字体 / 字号、span / 字符、页面与完整光栅精确相等，最大坐标差 **0 pt**、变化像素 **0**；其余 7 份为两份真实源、各自冻结 baseline，以及三份独立作者二进制源，不重复计算。
+
+- 未改造 `simple.doc` 的源 / 新输出均为 **Letter 612×792 pt**，首字符原点精确相同 `[90.0999984741211, 81.3499755859375]`；原冻结 baseline 为 A4 `[595.303955078125, 841.8897705078125]`、首字 x≈72.1 pt。新输出的整页字符 / span / 光栅与真实源精确相同，恢复源约 18 pt 的横向边距差
+- 未改造 `SampleDoc.doc` 原始整数 **11907×16840 twip，四边 1440** 精确保留；其源 / 新输出在固定消费者中均为 `[595.303955078125, 841.8897705078125] pt`。相对于原整数除以 20，消费者 MediaBox 仍有约 **−0.0460 / −0.1102 pt** 差，不把消费者舍入写回源值。第一页字符与完整光栅精确相同
+- 独立作者的 **非对称边距、Letter 横向、已安装字体 A5 窄页换行**三组，真实二进制源 / 新输出的全文、字体、几何与整页光栅精确相等；这些受控源证据与产品 / 参考的 12 对比较分别计数
+- SampleDoc 第二页仍为源 `NotoSans-Regular` / 输出 `NotoSerif-Regular`（均 16 pt），首字 y 为 **114.55078125 / 89.10076904296875 pt**；缺失 Arial Black 替代、独立分页段间距 / 基线字体、空段基线字体和文字兼容设置尚未解决。上轮独立作者的**缺 DOP 控制（`lcbDop=0`）**在该固定消费者中仍有相邻段距相加 / 取最大值的 **12 pt** 差异：这是缺失 / 历史 DOP 默认行为的受测结果，既不是所有 DOC 对 DOCX 的固有规则，也不是显式编码 flag 的证明。本轮保留此限制，未全局改兼容模式、放宽容差或声明完整源布局一致
+
+复现必须使用该 CLI / manifest / checker 身份，每次新建证据目录；没有 `--render` 时仅验证来源 / 模型 / XML，不产生新消费者 PDF：
+
+```sh
+python3 scripts/check-legacy-doc-page-geometry.py --prepare
+python3 scripts/check-legacy-doc-page-geometry.py --manifest tmp/legacy-doc-page-geometry-verify/geometry-fixtures-h3lca5t4/manifest.json --cli tmp/legacy-doc-page-geometry-final-cli --expected-cli-sha256 af649bffb9a1adc82a42ae3ba7c006d159633a9cd126eb9b29777ca3ab9c2652 --render
+```
+
+### 历史跨格式契约
+
+最终候选 CLI **新执行 1,520 条 DOCX 读取响应，全部与冻结 spacing-only baseline 报告逐字节相等**，**0 变化 / 0 新增 DOCX 导入拒绝**。baseline 读取明确复用前轮已完成且哈希绑定的响应，不声称本轮重新执行 baseline 的 1,520 次读取；冻结 baseline CLI 身份单独核对。302 份唯一作者模型由**两个 CLI 各自新导出**，各 **302 份完整包与历史金样字节相同、604 次完整可信重开、604 次不覆盖**。
+
+历史报告 `tmp/legacy-doc-page-geometry-regression/historical-k200ia9o/report.json` SHA **`10076daf3b79b43ddb462189f1661ba6a67e8450c0e1d9ab5038e114f1dabb36`**；驱动 `tmp/legacy-doc-page-geometry-regression/verify.py` SHA **`869f7d058e16e95bbc0130ce1bd4836ce930e7052fdc5d5adc78e9202c9a1756`**。2,660 件历史源 / 包 / 报告 / journal / CLI 等受保护身份前后不变；**325 份历史 PDF 仅保留 / 核对，0 份重新渲染**。这与上述独立消费者新渲染的 31 份分别统计，不能合计为 356 份新 PDF。
+
+最终后端 / 历史 / 运输汇总 `tmp/legacy-doc-page-geometry-regression/summary.json` SHA **`de7c584d30c5fa32a6673b2506b54223b355bfdf066285034da9fee63d6fe64a`**：联合 **8,686 件**源码、报告、日志、输入、CLI、probe、链接依赖和 PDF 等保护项全部重新核验不变。包括仅核验哈希的 325 份历史 PDF，以及本轮独立消费者新生成的 31 份 PDF；新渲染计数仍为 31，不将历史图像重用算作新消费者执行。
+
+### 中断与证据保护
+
+stable `final1` 已通过 724 核心测试及仅含上述既有项的 raw Clippy；随后 scoped Clippy 日志只记录开始，执行环境重启，未留下该步和 build 的完成证明。因此整轮不计为完整通过。原报告 `tmp/legacy-doc-page-geometry-gates-stable-final1.json` SHA **`cc2942d05a201dd8a9d792844d4b7079d3369e2bbfc4eda7f1507cf90875ce17`** 与日志保持，`final2` 从完整门禁重新执行，没有拼接中断结果。
+
+stable 完整通过后才冻结新 CLI，并建立全部 42 件已完成测试专用可执行文件的只读缓存清单：`tmp/legacy-doc-page-geometry-stable-cache-manifest-final2.json` SHA **`7dd17e6bb55949456c87b41511faf444ec2bffc33d7e60a2299cc28125ddee9f`**。逐件记录 SHA / 大小 / 单链接 inode、Cargo test-only fingerprint 与合计 724 项的 `--list` 清单，另保护所有生产 CLI / rlib。该清单本身未删除任何文件。随后为 MSRV 链接峰值逐件重新核验并回收其中 14 件已完成的 stable 测试可执行文件，共 `2,025,988,128` bytes；账本 `tmp/test-cache-cleanup-20261014T042800Z.json` SHA `8670b9930c4918ae277067be788d2cff6fae09d587f61fc9f57de5a71701709e`。没有执行全量 cargo clean；原件、生产 CLI / rlib、probe、源码、报告、日志和独立证据全部保持。
+
+本轮没有新增实际浏览器、Windows WebView2、系统打印、Microsoft Word 或 WPS 验收。编码值相同与产品 / 独立参考相同都不能推导原二进制 DOC 的完整物理排版相同。
 
 ## 本轮：旧二进制 DOC 的编码 Normal 段落间距（2026-10-14）
 
