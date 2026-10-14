@@ -184,6 +184,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         "Import cannot preserve {}; source remains read-only",
         blocking.join("; ")
     );
+    let font_families = crate::docx_font_families::analyze(&bytes);
     let parsed = office_oxide::Document::from_reader(
         std::io::Cursor::new(bytes),
         office_oxide::DocumentFormat::Docx,
@@ -408,6 +409,11 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
             .insert(format!("Empty paragraph font proof unavailable: {error}"));
     }
     crate::document::validate(&report.document)?;
+    crate::docx_font_families::attach(
+        font_families,
+        &mut report.document,
+        &mut report.compatibility.risks,
+    );
     Ok(report)
 }
 

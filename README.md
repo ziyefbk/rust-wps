@@ -1,5 +1,7 @@
 # Rust WPS exploration
 
+外部 DOCX 的已证明 Latin 正文及实际保留的真正空段基线新增源 Roman / Swiss 字体类别保留，沿用根模型、草稿、DOCX fontTable 和可信重开。实际 OPC 关系、完整字体名集合与逐范围源 / 模型身份须共同通过；缺证或歧义整组回退，旧导入拒绝和既有字面字体名 / 布局属性不变。SampleDoc 在固定云端消费者中恢复字体 / 字形 / 横向度量，原 RGB 与整页光栅失败仍保留；裸分页默认字体、浏览器 / 原生替代与完整 Office 版式不在保证内，见 [外部 DOCX 字体类别](docs/DOCX_FONT_FAMILIES.md)。
+
 旧二进制 DOC 的已证明 Latin 正文新增源 Roman / Swiss 字体类别保留，随严格根模型、草稿、DOCX fontTable 和可信重开贯通。仅采用实际输出字体的源声明，活动冲突 / 大小写别名 / 合法其他类别整组回退，已有字体名与布局属性保持；不改字面名、不安装字体或猜测粗体，浏览器 / 打印仍明确提示替代可能不同，见 [旧 DOC 字体类别](docs/LEGACY_DOC_FONT_FAMILIES.md)。
 
 旧二进制 DOC 的源明确 split-page-break 语义与独立分页段 Latin 字体 / 字号 / 间距新增有界保留：完整正文、DOP 和逐段 break / CR / 节界证明共同通过才整组应用，保留原七块身份，不插空段或补坐标。作者模型允许独立 flag / metrics，新分页遵循目标文档语义；编辑器 / 浏览器打印明确不模拟保留行框，缺失字体替代和完整 Office 版式仍未解决，见 [旧 DOC 独立分页段](docs/LEGACY_DOC_BREAK_PARAGRAPHS.md)。

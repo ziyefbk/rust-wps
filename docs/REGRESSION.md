@@ -1,5 +1,108 @@
 # 当前跨格式回归记录
 
+## 本轮：外部 DOCX 的源 Roman / Swiss 字体类别（2026-10-14，发布 35）
+
+发布 35 取代下方发布 34 当时“通用外部导入不读取 fontTable 类别”的边界；此前全部回归正文及数字保持历史原文。基于已发布 `eac6ee27b18f89b2cbe91f0d0d785fd06ad65534`，只为完整证明的外部 DOCX Latin 正文 / 标题及已实际保留的真正空段基线附加 Roman / Swiss 根元数据。实际 OPC fontTable 关系、原始关系 / 内容类型 / 唯一物理条目、逐范围有效字体与最终模型绑定共同核对；不用名字、PANOSE、粗体或消费者替代结果猜测类别。一个保留名字缺证、合法其他类别或完整 ASCII 折叠类出现重复 / 别名时全部新类别共同回退。已有拒绝优先；成功模型只新增根字段及固定诊断，不改旧字体名、字号、颜色、间距、页面、空段或分页原子。范围和资源预算见 [DOCX_FONT_FAMILIES.md](DOCX_FONT_FAMILIES.md)。
+
+无权威 fontTable 关系、合法空表或没有实际保留字体的已证明正文保持完整旧响应。缺证 / 模糊 / 超过新证明预算只追加一条稳定分类诊断，不扩大旧拒绝或提交部分类别。普通外部 `import-docx` 必须完成源证明；内嵌作者模型不是字体来源认证，可信 `read-docx-model` 仍保留合法未使用作者条目。旧 DOC 的索引引用 FFN 规则和本轮按名字引用的 DOCX 唯一性规则不同。writer、前端、依赖、锁文件与 vendor 未为本增量修改。
+
+裸独立手动分页只证明 XML / 顺序 / 无属性原子身份，仍继承目标 V2 Arial 默认字体，不声称保留源 Calibri 分页行框。完整字体集合包括已证明文字与真实保留空段基线，不包括所有隐式输出字体；文档级 fontTable 仍可能影响采用同名默认字体的分页。`fidelity_verified` 保持 false。
+
+### 工具链门禁、冻结身份与实际执行
+
+- stable Rust 1.99 **801 项核心测试通过**，原 757 + 9 单元 / 35 集成；全部零失败 / 忽略 / 过滤。完整最终报告 `tmp/docx-font-family-design-20261014/final2-stable.json` SHA **d738ee92acda88f7cad6b38d4669229932c0e792b18169cd1d9e795996d7892e**；核心日志 `tmp/docx-font-family-design-20261014/final2-stable-core.log` SHA `b6ff001cf5f452de12a30d790b85645fb0efbfcc578da461c920c2710b924c6c`
+- 原始严格 stable all-target Clippy exit 101，仍仅为既有 `src/spreadsheet_xls.rs:129` 的 `chunks_exact_to_as_chunks`；日志 `tmp/docx-font-family-design-20261014/final2-stable-clippy-raw.log` SHA `e836dc1c9bd16e1bfeeaf7d57dfc4b49d84861034e9c273ef39ff58304539cd8`。只排除该单项后的 all-target Clippy 与 build exit 0；日志 SHA 分别 `2f025d5f6d3593fd7f1b57a5fb44bc53fcc017f6ee4b50fcd9e0893aa0775d3a`、`a5f4c585ee974ca44916ac30a98bbc189e067a7e0a6bc6d2e8d6bc525be724af`，路径同目录 `final2-stable-clippy-scoped.log` / `final2-stable-build.log`；无新增源码 lint 豁免
+- MSRV Rust 1.88 **801 项新鲜完整核心测试通过**，零失败 / 忽略 / 过滤；最终 `tmp/docx-font-family-design-20261014/final2-msrv.json` SHA **5b6372d0849daf139d2533e3909d591fe67f7f47a57e5c3ce7a51e0d4407dd8b**。核心日志同目录 `final2-msrv-core.log` SHA `a5cf1fa0d633534d98a2cbe81ef87bedce022fb860be4638cdb44f9d87bddfd9`；原始 all-target Clippy 仅既有 `src/presentation_import.rs:97` 的 `uninlined_format_args`，exit 101，日志 `final2-msrv-clippy-raw.log` SHA `7b76e656bed3ec5e2d20187b5678ad0da75924d12eed940278db4a06bf09b642`。仅排除既有单项后的 Clippy / build 均 exit 0，日志 `final2-msrv-clippy-scoped.log` SHA `4d1e00a4dc87acd28d1066d2a1b9c131ad34de323db681093d138ebc65fe272b`、`final2-msrv-build.log` SHA `4cf86278c1e6d659943a46a3d7e3da429ac15be90f0f17742e24ef85228e7d3e`
+- MSRV 独立 inode 冻结 `tmp/docx-font-family-final2-msrv-cli` SHA **7fc1a5a38e54faaff230d975cd453338906b12a1b0356097b37287e7dce2dd4f**；`tmp/msrv-target/debug/librust_wps.rlib` SHA **5228662632a08ca18ca08378d89dbcb963c7342e526ffaaee35794971a630755**，stable CLI / rlib 前后保持。两工具链最终源码清单共同绑定 `tmp/docx-font-family-design-20261014/final-source-pins.json` SHA `691067cb8a6fd3457682842f549fef0ad38f0d3d5b6fdb764fdfe96e5e611a33`
+- stable 独立 inode 冻结 `tmp/docx-font-family-final2-stable-cli` 与 `target/debug/rust-wps` SHA 均为 **0a3b8989776adc75dd5aac6698caefa92b28e83cee22aed3a02070b28d51b14f**；stable `target/debug/librust_wps.rlib` SHA **9bf98a7c854ab8262f0cd4d0e6982e6d83cd8552eb265b07e15b6ea240fbbc03**。旧基线仍为 `tmp/legacy-doc-font-metadata-final-cli`，SHA `9d789ea59a9a42bfc588bba48a1fd445e0da8b0d8d247c680c6927c92a581c5b`
+- 最终源码前后身份相同，详尽清单在 stable 报告：`src/docx_font_families.rs` SHA `fddc9f25b95777a5d84829453e25d454e10514ac8bf3226db80763d5444cabec`；`src/image_dimensions.rs` SHA `c846dcd0212a1f33a49c937c5e62bba49f548ea257b99bb4653306935b63d053`；`src/empty_paragraph_fonts.rs` SHA `d21ae28b4c6ffac14e64f12e2335d8c3db1679552315ae309e89446695aa843e`；`src/importing.rs` SHA `f763b89cc2f511fd5aa0779f605c3842001ec43f7c0006193962d880a4317c52`；`tests/word_docx_font_family_metadata.rs` SHA `e0cf64627c9734b6b84261e601f4ed29ba411c87f52a95c85a4aec62159ca33b`
+
+门禁使用工作区固定 `CARGO_HOME` / `RUSTUP_HOME` / `PATH`、原 target、`CARGO_INCREMENTAL=0` 与 `-j1`。stable 实际命令为 `cargo test --locked --quiet -j1`、`cargo clippy --locked --all-targets -j1 -- -D warnings`、`cargo clippy --locked --all-targets -j1 -- -D warnings -A clippy::chunks_exact_to_as_chunks`、`cargo build --locked -j1`。入口要求 950 MiB，0.5 秒观察、低于 600 MiB 停本门禁进程组；stable 最低观察空闲 1,226,702,848 bytes，没有触发运行时停止。该保护是观察式停止，不是硬磁盘配额。
+
+MSRV 使用 `CARGO_TARGET_DIR=tmp/msrv-target`，实际命令为 `cargo +1.88.0 test --locked --quiet -j1`、`cargo +1.88.0 clippy --locked --all-targets -j1 -- -D warnings`、`cargo +1.88.0 clippy --locked --all-targets -j1 -- -D warnings -A clippy::uninlined_format_args`、`cargo +1.88.0 build --locked -j1`。同一入口 / 运行时磁盘保护下最低观察空闲 **1,543,151,616 bytes**；两套最终门禁均没有 guard stop，早期失败另列。
+
+只对白名单中有完整已通过测试记录、可重建的 integration-test 可执行缓存做分批回收；逐文件核对 SHA / inode / fingerprint / depfile、持有 Cargo 锁，保存 before / journal / after 与保护身份。原件、原始报告、源码、CLI / rlib、未执行的中断构建产物和字体配置不在清理范围。最终门禁汇总 `tmp/docx-font-family-design-20261014/FINAL_GATE_HANDOFF.md` SHA `20b93ddaebea381d2bbec63f64fcbd8718b57da29004a4c29ceb2079e269ab31` 复核以下五份 after-ledger：
+
+- `tmp/test-cache-cleanup-20261014T073800Z-after.json` SHA `a2636267cdec9215eed98840ad6cd773f10fcfcae22853e04c9d0e4967f41915`：33 个旧 stable 已完成测试可执行
+- `tmp/test-cache-cleanup-20261014T075200Z-after.json` SHA `f839c20019e5bdd8d39c675a30dff385aab8d893232a3c4326dc305679757f17`：再回收 6 个旧 stable 已完成测试可执行，保留全部 45 个 MSRV 测试可执行
+- `tmp/test-cache-cleanup-20261014T080200Z-after.json` SHA `ef9163533616a75b2da43ed702e3df7d6bed2122b4007b7f85239b999c0247be`：33 个旧候选 MSRV 已完成测试可执行
+- `tmp/test-cache-cleanup-20261014T081100Z-after.json` SHA `0eefc3d9943c6680d9cc6e0ac708f7ebf473fcbf83cbc6ca4c44ca0302e90382`：10 个旧 MSRV 已完成测试可执行，保留中断 stable 的全部 268 个未执行产物 / 临时文件。运行时 guard 之前已经发生的磁盘低水位保持明记；释放后约 1.73 GB，不声称达到 1.8 GB
+- `tmp/test-cache-cleanup-20261014T082500Z-after.json` SHA `584d222d1a87647049a5678b12128ad271f742efefe82d1f71516615f727efc6`：41 个已完成 final2 stable integration-test 可执行，保护两代源 / 消费者原始证据、全部 CLI / rlib 和 MSRV 剩余产物，为最后完整 MSRV 运行提供约 7.01 GB 入口空间。该容量不是后续构建一定能放下的保证
+
+### 独立源、精确响应、包与可信完整性
+
+独立 `scripts/check-docx-font-metadata.py` SHA **0a3e169bca90e87f6dff1bdc92b0cef3a92b6acd59e1f6ca59dbae67bd4ed899** 先用原始 stdlib ZIP / XML / OPC、样式 / 主题及完整有序范围生成 oracle，候选调用前冻结预期。准备 manifest `tmp/docx-font-family-verify/prepared-h0vci4d6/manifest.json` SHA **35f40f7c8c359e60f256f2115e65e20eb74dfb1fd5b9add24ed174698997059f**。随后对全部新来源新执行旧冻结 CLI，用于绑定旧模型 / 旧拒绝；独立记录 `tmp/docx-font-family-verify/verified-vgrr1y04/baseline-bound-source-manifest.json` SHA **be03a815ff31f286114e53294530d0fb5aaa355eace1e1057fa6f66a78fed361** 在候选运行前保存。
+
+最终源报告 `tmp/docx-font-family-verify/verified-vgrr1y04/report.json` SHA **f3a7a2cffe2b70dfef154fc35f3663ad1d88d08f1acc46edc431bc9e271f9082**，全部 stage flag / 源身份通过，保存 1,073 个完整命令记录：
+
+- **166 来源**：43 精确源类别正向、91 单条精确分类回退、32 完整原响应，其中 26 为旧硬拒绝。155 份是独立编写的 OPC / XML / 样式 / 主题 / 正文 / 范围 / 配额控制，7 份为未改造真实来源，4 份为明确标记的早期集成夹具重建诊断。后者未固定编辑前哈希，不称为原始编辑前快照
+- 91 回退为包身份 25、有效字体 / 样式 / 主题 24、正文子集 13、缺少 / 不支持分类 8、字体表结构 8、证明配额 8、保留名字重复 / ASCII 别名 4、精确源 / 模型范围绑定 1。最后一项为缺 clrScheme 的主题：即便源声明自身可解，旧 reader 未生成字体 mark，不能只凭源证明升级元数据
+- **140 成功导入**全部新执行旧 / 新导出，完成 140 个完整可信重开、280 次不覆盖、21 个可信篡改拒绝和 4 组通用重导入 / 内嵌作者模型非来源权威检查。缺省 / 回退包对旧基线整文件字节相同；正向只改根字段 / integrity 和 fontTable wiring，原渲染部件完整保持
+- 两个 DTD 重建控制仍是旧 `DTD is not supported in DOCX XML` 拒绝；两个启用 RTL 重建控制仍是旧段落缩进不支持拒绝。优先级来自实际新执行旧 / 新 CLI 的完整响应，不把它们改称为新 family validator 的回退
+
+本次 166 是先前 157 加 9 个通用属性 / 证明优先级控制，最终重新执行全部 166，而不是把两代通过数相加。源修订完成记录 `tmp/docx-font-family-verify/oracle-helper-grammar-km9yr2wb/completion.json` SHA **76bc26129e5e27675477962a9e4183f8142c7b8fdd9915cad18e550de9a0b4db** 验证先前 157 个完整响应及 131 个旧 / 新导出包对本次完全相同；并明确引用同一未变 final2 CLI 的既有 26 份消费者证据。新增九个控制未作消费者渲染。
+
+### 新鲜实际产品消费与没有关闭的失败
+
+本轮消费者有 **26 份新 PDF、42 页、84 张 72 / 144 dpi 全页 PNG，零复用 PDF**；136 个工件路径独立重算哈希。每输入独立 LibreOffice 进程 / profile / HOME / XDG / cache / temp，已安装字体清单相同，未安装字体或调整全局配置。LibreOfficeDev **26.8.0.0.alpha0**，revision `2c87e51eeaa2b413ff4ae097b2705eea1995d8e5`，二进制 SHA `d905a74dc92eaccb22481ba2de1345666a074a5f0d48322aaad1b6dc8a9e1e40`；PyMuPDF **1.26.6**，Arial Black / Calibri / Cambria 仍未安装。
+
+三个未改造真实原件与新导入 / 导出的旧基线、实际冻结产品、独立精确 family ZIP 参考、name-only、故意错误 family、完整源表及完整源表减去 family 控制共同对照；无表 55733 另有新鲜源 / 产品渲染。源原件身份：SampleDoc `tmp/corpus/SampleDoc.docx` SHA `ea2c517bd7be4628887eb97f630334b93b894f4522d2c0adae263e602d76df92`；NoHeadFoot `tmp/paragraph-indentation-source/poi/NoHeadFoot.docx` SHA `dc6a67b1c118658acadc87ba41200f0b90ead05ada95e7ce6fa72a97700430c5`；Styles 同目录 `Styles.docx` SHA `63f3fe4c3b4fbdc211eca8fa7fd31a799ff4438afbf4ca6e771b3aef107c732e`。
+
+实际产品保留在 `tmp/docx-font-family-consumer-20261014/fresh-product-comz5z56/`：`SampleDoc-product.docx` SHA `b9f291a80b31f3c0068c40edf8505edf95ac8778c3e8654f5a8fd6a51c7c273e`；`NoHeadFoot-product.docx` SHA `02ebd81d20e84d9a0bde6f316810c563759f7df555d780071197bb3e8582c5b5`；`Styles-product.docx` SHA `b510c3085fd799a98e5928e9024d9390617816eeb6fe93531bcfc03c4eda9e05`。完整文字 / 字符身份、字体流、glyph ID、advance、origin / bounds、资源与整页光栅均保留：
+
+- **SampleDoc**：实际产品恢复源字体流、字形与逐字符位置 / advance，旧最大 x 差 **8.81591796875 pt → 0.0 pt**；全部 y 原本已精确。第二页 **61 个字符仍有颜色差异**：源 `548DD4`，输出 `558ED5`。第一页 72 / 144 dpi 光栅通过，第二页仍全部失败
+- **NoHeadFoot**：12 个标题字符仍为源 `365F91`、输出 `376092`，第一页光栅失败，第二页通过；有无正确 family 在固定消费者中没有效果，不能宣称新的可见收益
+- **Styles**：8 个 Heading1 字符仍有同样 RGB 差异，完整页面光栅失败；同样没有新增消费者效果
+- **55733**：无类别表，Cambria 不被猜为 Roman，完整旧响应相同；源 Letter 与目标规范化 A4-like 页面及既有微小 advance / 位置差异仍在
+
+**三个实际产品与独立精确 family ZIP 参考的全部文字 / 字形 / 坐标 / advance / 字体流 / 光栅相同；最终这一代 SampleDoc 的原始字体资源只差 PDF 文档局部 xref 19 / 24，严格资源比较仍失败。** 逐字段分析证明同一资源行顺序、其他全部字段及嵌入字体字节相同；NoHeadFoot / Styles 产品 / ZIP 原始资源严格相同。源原件对实际产品是另一个方向：本代 SampleDoc、NoHeadFoot、Styles 的原始资源均严格相同，源颜色 / 完整轨迹 / 光栅失败仍保留。19 / 24 资格仅用于本代 SampleDoc 产品 / ZIP 对照，不排序资源、不删除字段、不把严格失败写成通过。早一代 `fresh-product-62rllz5x` 的对象号差异出现在相反方向，该历史报告保留，不能替代本代实测结论。
+
+**11 个不同 144 dpi 全页组均实际查看**，文字可读，无意外裁切 / 重叠；SampleDoc 从 serif 恢复 sans 的变化可见。既有空白间隔、标题顺序、手动分页与无表页面尺寸差异都保留。视觉近似不把量测 RGB / raster 失败改成通过，未使用坐标、颜色或像素容差。
+
+- 原始消费报告 `tmp/docx-font-family-consumer-20261014/fresh-product-comz5z56/report.json` SHA **10984747e4a7b80c027f184253f41ca182f76717d90faadac26ffb61128623f4**；只读分析同目录 `analysis.json` SHA **8d6b971b1f9da0cab86fcb799f7e9bb51ca53e2bce9c690ddddaa4eabe2568e6**
+- 原始报告与分析保留当时尚待目视的状态。后续实际目视单列 `visual-review.json` SHA **60c60c4dd1e71bf628ccf554674e9cf963e763f2b8a4c989a1ed0790739e5050**，完成记录 `completion.json` SHA **ab5c3b9debe2758484e4bd25481cb1a3cea9fcc9931394ac43cd0304fe921ab4** 为有保留颜色失败的完成状态；没有覆盖早先报告
+- 本代对象号逐字段资格说明 `source-resource-qualification.json` SHA **2597badb30f98901e074145049d5935a78b564b79c5f0510010e25b24900e44b**；消费者阶段说明 `tmp/docx-font-family-consumer-20261014/REPORT.md` SHA **bf57d0fd729f490e504815ab2192e90ef7992d8016f73513fcd3f6441e78c756**，其中保留当时 157 来源 / 26 消费者及两代 CLI 的实际范围；后来的 166 来源桥接由上方 oracle completion 单列，不覆盖此说明，也不沿用上一代相反方向的对象号资格说明
+
+修正前后的每一代各自新渲染 26 份 PDF；本轮最终验收只计 final2 的 26 份，不将两代算为 52 份独立覆盖。两代冻结预期完全相同，新执行 baseline binding 字节相同；157 完整响应和 131 导出包逐件精确相同，记录 `tmp/docx-font-family-verify/verified-59gnxlx5/prior-generation-exact-response-package-check.json` SHA `a8fde2b9bd2a4f400eef33c7c625c8179f7cfdc9fdac9ea231bf64846e781c06`。84 张 PNG 整文件字节相同，但最终 11 组仍重新实际查看。额外跨代严格消费比较在 4 页原始资源 xref 处失败，其他完整页字段 / 字体流 / 光栅精确；保留 `tmp/docx-font-family-consumer-20261014/fresh-product-comz5z56/prior-generation-consumed-pages-diagnostic.json` SHA `ca258492ec37d4982cf155f363f42a65a819fde5088a67111679333e3827f597`，不改写为完全严格相等。
+
+最终 166 来源 verifier 最低观察空闲 **1,018,339,328 bytes**，原 final2 消费者阶段为 **1,136,549,888 bytes**，始终高于 600 MiB。逐命令超时、输出上限和串行进程保护生效；原件、旧报告、冻结 CLI、字体与渲染配置均未改变。
+
+### 前端、提取后端、历史与生产 worker
+
+最终汇总 `tmp/docx-font-family-regression/summary-final-gqfpnmfz/summary.json` SHA **71ac308e02deae4ae2e98ea34f7de45934be9cbbdd16cff64f960b668358a6f6** 为 PASS，重新核对 **21,215 个当前受保护身份不变**。该汇总包含实际核心 / 源 / 前端 / 后端 / 历史 / worker 报告及独立消费者限定结果；其 `full_source_consumer_equality` 明确为 false，PASS 不表示源原件完整颜色 / 光栅 / 所有严格资源比较通过。回归执行器没有新增 PDF 渲染或删除文件。
+
+- 前端 prepare-PDF、TypeScript、Vite build 与 **658 项无浏览器检查全新通过**；原生产源码 / 测试按精确身份复制到隔离 staging，未修改产品或测试。报告 `tmp/docx-font-family-regression/frontend-full-kmnbw5zm/report.json` SHA **19fea287d2337ce405a238bef0e039a993969e6cb7aecb368447215e7f70e925**；测试日志同目录 `03.stdout.log` SHA `5d769da20bb9a497cbdd265d6f3868412476003bf3a8a8de4ca9a7acc81444bd`。大于 500 kB 的既有 chunk 警告仍在，不据此宣称加载 / 启动性能达标
+- 编辑器完整生命周期 **64 状态 / 64 完整可信重开 / 64 不覆盖、195 次真实 CLI 调用通过**，包含三份新执行通用导入的真正 SampleDoc / NoHeadFoot / Styles、编辑 / 改字体 / 清空 / 撤销重做 / 草稿恢复及显式根元数据清除 / 撤销重做。报告 `tmp/docx-font-family-regression/frontend-editor-lhsmyiv8/report.json` SHA **5203e89e64cab787b3635328baaa01c1b64d52995a601ddb17767109fe87d3a6**；完整驱动报告同目录 `editor-states/report.json` SHA `999b12f125877b00183418545b5434c15cc628c726d0648b0ddba528e5f55535`。输入对编辑器初始表示仅允许已知 paragraph / heading 的 `textAlign:null` 缺省和 mark 数组次序；每个 mark 对象 / 值及其他字段保留。保存的实际编辑器快照与可信重开模型仍完整 JSON 精确比较，不删字段或忽略根状态。这是完整实际插件 / 事务与 DOM 运输检查，不是真实浏览器按键 / IME / 打印
+- stable 生产后端提取 **35 项通过**，绑定最终 stable rlib，报告 `tmp/docx-font-family-regression/backend-stable-test-rpxbc691/report.json` SHA **da986772b34d2af6c3d58d344b3e395890c1736cc95b0d6c0fdd35a946e00b82**；MSRV 同样绑定最终 rlib，**35 项通过**，报告 `tmp/docx-font-family-regression/backend-msrv-test-s4xml_8u/report.json` SHA **1a8645ab713ae8c3cf4c47f34ceb3c1d3632c442d16b7dafa785eebceea7ceaf**。这是生产模块提取，不是完整 Tauri / 原生 IPC / 对话框 / 打印验收
+- 历史 **1,520 个候选读取全部新执行并与完整预期响应三元组精确相等**：1,297 完整旧响应、220 单条分类回退（169 正文子集、48 缺少 / 不支持分类、3 有效字体 / 样式 / 主题身份）、3 准确根类别正向（SampleDoc、test_indentation、indents）；357 旧硬拒绝保持，零未分类差异 / 新拒绝。报告 `tmp/docx-font-family-regression/historical-wv4re_j_/report.json` SHA **4446e7b1fb9b4b75cad395fc0fe42ea206750639d0d902c9ef479bac59c50bc3**。505 audit / 771 import / 244 trusted read；比较端复用发布 34 已冻结的完整原始响应并复核旧 CLI / 报告身份，明确没有再执行旧 CLI 的这 1,520 个读取，不用删除字段 / 诊断来比较
+- 同一报告中 **302 个无新属性作者 golden 全部通过**；旧 / 新 CLI 各新导出 302 份包，各执行 302 次整文件 golden 字节比较、604 次完整可信重开（原包 + 新包）和 604 次不覆盖（原包 + 新包）。两 CLI 合计 604 新导出 / 604 整包比较 / 1,208 可信重开 / 1,208 不覆盖，不把同一 302 个作者样本加算为 604 个独立样本。325 份历史 PDF 仅复核保留哈希，零新渲染，另有同产品 final2 消费者 26 份，不混为新渲染
+- 实际生产 worker **157 来源通过**：131 成功导入（40 正向 / 85 回退 / 6 完整旧成功）、26 精确旧导入拒绝；154 完整只读 Open 相等、3 精确旧只读拒绝，其中 23 个导入拒绝来源仍能只读打开。131 完整可信输出 Open、262 不覆盖和 91 个未升级模型整包字节相同；报告 `tmp/docx-font-family-regression/worker-q6xp1ay7/report.json` SHA **b77b3a6bd1e1f4c681ec8a28217b314db6df32f18066e3943772157e300c132d**。源 / 模型 / 成功及错误完整比较，不称为 26 个都能只读打开，也不把全部拒绝称为损坏文件。生产 probe 构建 `tmp/docx-font-family-regression/backend-stable-worker-ymxuvrod/report.json` SHA `00424a4faf16b01fac2e5079a6eccd477a59278a984e88c50428f2e815475305`；同目录 `worker-probe` SHA `0b48fd66ba43e4aa3c17367cfb5ca53312b68f3d0b43cb28f76b0bd2446c0ab9`
+- oracle 修正新增的 **9 来源单独 worker 补验通过**，没有覆盖旧 157 报告：9 个完整导入 / 只读 / 可信 Open、18 不覆盖、6 个未升级模型整包精确，3 正向 / 6 回退。报告 `tmp/docx-font-family-regression/worker-supplement-d27ki0gw/report.json` SHA **0ac0f41ee944128e7e8f3f717468600272d8094c578f93e40cc8bd6d0bc330d2**。明确不重叠的两组并集为 **166 来源、140 成功导入 / 可信 Open、26 精确旧导入拒绝、280 不覆盖、163 只读 Open + 3 精确旧只读拒绝、97 个未升级整包精确**。这九项没有新增消费者渲染；不把两次全来源 checker 运行累计成更多独立来源
+
+### 保留的失败、修正与证据范围
+
+- `tmp/docx-font-family-design-20261014/focused-first.json`：模块编译 / 单元通过，集成失败揭示若干夹具 / 契约预期问题和真实的字面 `w:` 属性 guard 问题。活动 altName / charset / embed 从表结构回退改为有效字体身份回退；缺 clrScheme 的主题不能当正向，补全正向并另留原形状 Binding 反例；空白 `w:t` 是真实文字范围，不是空段。启用 RTL 和任意部件 DTD 保留旧拒绝优先，后由最终旧 / 新 CLI 完整证明
+- 修正详情 `tmp/docx-font-family-design-20261014/integration-fixture-corrections/corrections.json` 保留准确 before / after 与重建来源；没有伪称重建夹具为已固定的编辑前字节。`same:rFonts` 错前缀仍应回退，修复 guard 未放宽该期望
+- `focused-second.json` 在共享 Work 参数缺失处编译失败；`focused-third.json` / `focused-fourth.json` 分别 116 / 119 项定向通过，是中间子集，不与最终 801 项相加
+- `stable-first.json` 核心 801 通过，原始 Clippy 有已知 lint，限定 Clippy 另拒绝测试模块后的 helper；当次 build / freeze 未运行。两个 helper 仅移动到测试模块前，`clippy-helper-movement.json` 通过重建原字节验证纯移动；`stable-second.json` 是当时完整新运行（SHA `68a50e1862999343d8a64ea247c38c16df9b478a85328a0e8fdaba38eeed1204`），但其后 MSRV 发现 lint 所需的两行修正使该源码身份不再是最终候选，最终以 `final2-stable.json` 为准
+- 独立准备的 XML 增量硬化最初漏处理延迟 Expat close events，source-only 自检捕获后修复并重新准备；失败报告保留。只读 stable-report 预检查曾错误期望大写 PASS，而门禁写小写 passed；另存复查确认实际状态及全部最终源码未变，记录 `tmp/docx-font-family-consumer-20261014/stable-source-identity-review.json` SHA `211946cf6dcdab3f35f5b7a5e96f4bb5b5d4badbb69ce89348c9a6dfacb4d835`，没有修改产品、来源预期或消费结果
+- 首次 MSRV `msrv-final1.json` core 801 通过，但 Clippy 前可用空间 828,162,048 bytes，未达 950 MiB 入口阈值，因此状态为 `blocked-entry-space`，没有运行时磁盘保护停止；报告 SHA `d5a139cb797414ad98a76e3a0a2ada962418eba9ce0cb441d38c63f5266af5e4`。随后 `msrv-final1-resumed.json` 原始 Clippy 揭示新增 `manual_flatten` lint，exit 101，报告 SHA `3a57b3121e03205adc75f4a9db976e0ceb15f1105e884d91e4d5c72ec5e77b7e`；未新增 lint 豁免，也未把这次失败当作只含既有 lint 的通过
+- 只修改 `src/image_dimensions.rs:1988–1989`，把 Option 遍历改为 `.into_iter().flatten()`；ASCII 后 hAnsi 的次序、Named 跳过、Theme 分支及首错误顺序保持。`tmp/docx-font-family-design-20261014/manual-flatten-delta.json` SHA `a0d7ac82bb405a729d43a821e4cbb5258d17bd748423059f1d3cc37edc344425` 记录独立反向替换恢复精确原字节；新文件 SHA `c846dcd0212a1f33a49c937c5e62bba49f548ea257b99bb4653306935b63d053`。修正后两工具链 Clippy 预检 `clippy-preflight.json` SHA `5b86d8c953cb770488595068b3db2ee44035b5ac418126de62b595efc6fa6e8d` 仅保留各自既有 lint，限定检查通过；该预检不代替最终完整门禁
+- 修正后首次完整 stable `tmp/docx-font-family-design-20261014/final-stable.json` 在编译 / 链接阶段因 600 MiB 运行时观察保护停止，exit -15，最低观察空闲 574,742,528 bytes；core 日志为空，零项测试执行，后续阶段未进入，报告 SHA `128f08ac909a3bd6b85fbd577b1ce8bdca2f9e33ecee2aac13d01fd6d1fc2ccf`。保留失败和监控日志，不将终止记作测试通过
+- final2 源验证首次调用误传截短 CLI SHA，在身份 guard 即停止，未执行产品命令；原失败报告 `tmp/docx-font-family-verify/attempt-verify-eh40pazt/report.json` SHA `228ea42bfeffed55a9d3929cf6acd9df95c71bec332ea05d6659f97d541cf71c` 和日志保留，精确 64 位 SHA 的新调用从旧基线 / 候选完整重新运行，不改预期或阈值
+- 首次隔离前端运行 **657 通过 / 1 失败**，缺少既有 `docs/examples/presentation-v1.json` staging 夹具导致 ENOENT；报告 `tmp/docx-font-family-regression/frontend-full-pcqelpo2/report.json` SHA `6b65e310161e16591b30f84934e72eec29ba525980f0884ca353b5b1c83a4190` 保留。只修正回归 runner 的夹具复制清单并复核，产品 / 测试 / 断言未改；之后 prepare-PDF、tsc、Vite 和全部 658 项在新目录完整重新运行
+- 历史 1,520 首次新运行（`tmp/docx-font-family-regression/historical-318ao_zi/report.json` SHA `9e44386bfd9a5db01b7ff50835c406b761ac7ae95323b7e3908868e90cd42dac`）有三处 oracle 理由优先级遗漏，该次 golden 尚未开始。显式 `vanish=0`、空 `tabs`、`sectPr textDirection=lrTb` 会被既有严格字体解析的保守预检挡在 family join 之前，旧 oracle 漏过这些声明；模型、进程状态及其他诊断完整相同，产品没有变更
+- checker 窄修正按一般属性语法 / 预检次序处理，不按文件名特判；旧脚本保存在 `tmp/docx-font-family-verify/oracle-helper-grammar-km9yr2wb/check-docx-font-metadata.before.py`。冻结 transition 同目录 `transition.json` SHA **76405c9f2c9771c832246dc31f8a4a550952139f5f58589a34451e7c2287098a** 证明仅三条历史响应的 family 回退理由由 Missing 改为 Typography，其余 1,517 条完整响应及原 157 来源预期逐字不变；357 旧拒绝不变。新增 9 个独立控制包含 3 正向 / 6 回退，已由最终全部 166 来源验证；不把消费者 26 份扩大为这九个控制的消费验收
+- 两套最终 Rust 门禁实际绑定旧 checker SHA **bd7a55da8a916f93c01ec3984cbce1b9b08466741c64f9dfe17c8a40b67c53c9**；后置 oracle-only 修正的最新 checker SHA **0a3e169bca90e87f6dff1bdc92b0cef3a92b6acd59e1f6ca59dbae67bd4ed899** 单列，不篡改旧门禁记录。后置 AST / diff-check 与 77 个最终 Rust source pins 不变检查 `tmp/docx-font-family-hygiene-post-oracle.json` SHA **a17d18c9bf935d8750ea8bf6256f437656cd999d6b9d6b6b4ad8d3ca991843df** 通过；这一步没有重跑 Rust 核心，也未声称如此
+- 纠正后的完整历史 / golden 已在上述 `historical-wv4re_j_` 新目录从头执行并通过；早期失败 `historical-318ao_zi` 保持，不能用后来的正确期望回写旧结果
+
+定向 Rust formatting（`skip_children`）、diff-check、最终 checker AST 与源码前后身份检查通过，报告 `tmp/docx-font-family-hygiene-final.json` SHA `9f39a0d473acbbb32cb5cdf96a901dd80332c7985d5ee37e2b3a83efd26dddb9`。133 件 vendor 源码 / 夹具相对发布 34 身份不变，两份补丁反向检查通过，记录 `tmp/docx-font-family-vendor-check.json` SHA `d80050c28b948037926e56ea32ece0db594f5600b63c956e27dc164f160f4b6d`。本轮没有重新执行 vendor 测试，不借用历史测试数。
+
+本轮只证明有界 Latin 源类别和固定 Linux 消费者中的列明结果。没有安装或重命名字体、改源颜色、补坐标、迁移旧 DOC split-page-break 语义或更改 CSS 通用回退。用户明确要求仅云端；没有重试本地、真实浏览器、Windows WebView2、IME、系统剪贴板 / 对话框、原生打印、Microsoft Word 或 WPS 验收。原主题 RGB 差异和整页失败、缺省 / 裸分页字体及完整 Office 版式缺口仍有效。
+
+以下为此前各轮的原始历史记录；其中计数、工具链和“当轮未支持”边界按各轮日期理解，不作为发布 35 当前状态或本轮新执行证据。
+
+
 ## 本轮：旧 DOC 的源 Roman / Swiss 字体类别（2026-10-14）
 
 基于已发布 `691bb91775a3a2d745a0e99d15a99fefca366553`，在既有完整 Latin / 编码 Normal 正文证明上保留 FFN 的 Roman / Swiss 类别。只收集实际输出文字与已保留分页段的有效字体，两个 Latin 槽及 break / CR 类别须一致；同名字体类别冲突、不同 ASCII 大小写别名、合法其他类别使全部新类别共同回退，已证明的旧属性保持。未使用字体、普通 CR、真正空段和未保留度量的分页不提供新类别证据。模型与诊断完整校验后才共同提交，未改变 vendor、源文字、字号 / 粗体、字体安装或渲染器选择。范围见 [旧 DOC 字体类别](LEGACY_DOC_FONT_FAMILIES.md)。

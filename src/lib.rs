@@ -1,3 +1,4 @@
+mod docx_font_families;
 mod empty_paragraph_fonts;
 mod image_dimensions;
 mod legacy_page_geometry;

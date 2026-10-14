@@ -300,8 +300,8 @@ fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
     document::export_docx(&report.document, &output).unwrap();
     let reopened = importing::import_docx(&output).unwrap();
     let mut exported_expected = expected;
-    // Generic external import does not yet preserve fontTable classification;
-    // only the full trusted authored-model reopen retains this root metadata.
+    // The generic source proof includes the retained Arial blank baseline,
+    // absent from this table; the complete family set therefore stays omitted.
     exported_expected["attrs"]
         .as_object_mut()
         .unwrap()

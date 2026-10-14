@@ -1,5 +1,7 @@
 # dot 接手说明
 
+外部 DOCX 的已证明 Latin 正文及实际保留的真正空段基线新增源 Roman / Swiss 字体类别保留，沿用根模型、草稿、DOCX fontTable 和可信重开。实际 OPC 关系、完整字体名集合与逐范围源 / 模型身份须共同通过；缺证或歧义整组回退，旧导入拒绝和既有字面字体名 / 布局属性不变。SampleDoc 在固定云端消费者中恢复字体 / 字形 / 横向度量，原 RGB 与整页光栅失败仍保留；裸分页默认字体、浏览器 / 原生替代与完整 Office 版式不在保证内，见 [外部 DOCX 字体类别](DOCX_FONT_FAMILIES.md)。
+
 旧二进制 DOC 的已证明 Latin 正文新增源 Roman / Swiss 字体类别保留，随严格根模型、草稿、DOCX fontTable 和可信重开贯通。仅采用实际输出字体的源声明，活动冲突 / 大小写别名 / 合法其他类别整组回退，已有字体名与布局属性保持；不改字面名、不安装字体或猜测粗体，浏览器 / 打印仍明确提示替代可能不同，见 [旧 DOC 字体类别](LEGACY_DOC_FONT_FAMILIES.md)。
 
 旧二进制 DOC 的源明确 split-page-break 语义与独立分页段 Latin 字体 / 字号 / 间距新增有界保留：完整正文、DOP 和逐段 break / CR / 节界证明共同通过才整组应用，保留原七块身份，不插空段或补坐标。作者模型允许独立 flag / metrics，新分页遵循目标文档语义；编辑器 / 浏览器打印明确不模拟保留行框，缺失字体替代和完整 Office 版式仍未解决，见 [旧 DOC 独立分页段](LEGACY_DOC_BREAK_PARAGRAPHS.md)。
@@ -68,6 +70,8 @@ PDF 核心使用已打开 reader 的 64 MiB 有界快照，签名、实际字节
 工具栏、Ctrl+Alt+0–3 和段首 Markdown 标题输入规则已用同一应用候选事务逐段保留格式，包含切回正文、混合选区、标记删除、Backspace 撤回和自动补尾段历史；列表首段不转标题、不解除列表。仅替换应用入口，不修改 node_modules 或所有上游程序命令；详见 [BLOCK_TYPE_CONVERSION.md](BLOCK_TYPE_CONVERSION.md)。
 
 ## 首次运行与检查
+
+最新外部 DOCX 字体类别轮（2026-10-14，发布 35）：Rust 1.99 / 1.88 各 801 项核心、限定已有单项 lint 的 Clippy / build、两套提取后端各 35 项、658 项无浏览器检查和 64 个完整编辑器 / CLI 往返通过；历史 1,520 响应与逐来源预期相等、302 作者整包 golden 保持，生产 worker 原 157 + 新 9 的不重叠并集 166 通过。最终独立 166 来源为 43 正向 / 91 精确回退 / 32 完整旧响应（含 26 旧拒绝），140 可信重开、280 不覆盖和 21 篡改拒绝通过；26 份隔离新 PDF、42 页、84 张 PNG 与 11 组实际完整页面目视完成。SampleDoc 字体 / 字形 / 坐标恢复，但第二页 61 个 RGB 差异和光栅失败保留；NoHeadFoot / Styles 的 12 / 8 个颜色差异同样保留。实际产品与独立 family ZIP 参考的文字 / 度量 / 字体流 / 光栅相同；最终 SampleDoc 产品 / ZIP 原始资源只差局部 xref 19 / 24，严格失败另列，源 / 产品原始资源精确相同。用户要求仅云端，未新增浏览器 / Windows / Word / WPS 验收，详见 [DOCX_FONT_FAMILIES.md](DOCX_FONT_FAMILIES.md) 与 REGRESSION。
 
 最新旧 DOC 独立分页段轮：Rust 1.99 / 1.88 核心各 742 项、提取生产后端各 35 项；前端 637 项无浏览器检查、TypeScript 与构建通过；1,520 历史原始响应和 302 整包 golden 保持，365 源经实际 worker 运输核对；365 源输入、21 合法 / 63 非法作者状态、28 篡改拒绝、429 可信重开与 408 不覆盖通过。14 份隔离新 PDF 的 5 组产品 / 独立参考、4 份安装字体二进制源均精确相同；真实 SampleDoc 源 PDF 明确复用，第一页保持，第二页全部 61 个 y 坐标及首基线 114.55078125 pt 恢复，缺失字体替代仍在。编辑器 / 浏览器打印不模拟保留标记行，界面明确提示。连接桌面验证启动即遇额度限制，随后用户要求仅用云端，因此没有新增实际浏览器 / Windows 原生验收；范围和最终证据见 [LEGACY_DOC_BREAK_PARAGRAPHS.md](LEGACY_DOC_BREAK_PARAGRAPHS.md) 与 REGRESSION。
 

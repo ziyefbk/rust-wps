@@ -988,7 +988,7 @@ impl FontState {
         }
         Ok(())
     }
-    fn resolved(&self, theme: Option<&Xml>) -> Result<Option<ImageParagraphFont>> {
+    fn resolved_latin_pair(&self, theme: Option<&Xml>) -> Result<(Option<String>, Option<String>)> {
         fn family(choice: &Option<FontChoice>, theme: Option<&Xml>) -> Result<Option<String>> {
             match choice {
                 None => Ok(None),
@@ -1038,8 +1038,10 @@ impl FontState {
                 }
             }
         }
-        let ascii = family(&self.ascii, theme)?;
-        let h_ansi = family(&self.h_ansi, theme)?;
+        Ok((family(&self.ascii, theme)?, family(&self.h_ansi, theme)?))
+    }
+    fn resolved(&self, theme: Option<&Xml>) -> Result<Option<ImageParagraphFont>> {
+        let (ascii, h_ansi) = self.resolved_latin_pair(theme)?;
         if let (Some(a), Some(h)) = (&ascii, &h_ansi) {
             ensure!(a == h, "Image baseline uses conflicting Latin font slots");
         }
@@ -1189,7 +1191,7 @@ fn image_paragraph(
     let formatting = image_paragraph_format(paragraph, run, styles, theme)?;
     Ok((width, height, rid, formatting))
 }
-fn audit_relationships(data: &[u8]) -> Result<()> {
+pub(crate) fn audit_relationships(data: &[u8]) -> Result<()> {
     let root = xml(data)?;
     ensure!(
         root.is(Ns::Relationships, "Relationships"),
@@ -1257,7 +1259,7 @@ pub(crate) fn audit_list_relationships(data: &[u8]) -> Result<()> {
     }
     Ok(())
 }
-fn audit_content_types(data: &[u8]) -> Result<()> {
+pub(crate) fn audit_content_types(data: &[u8]) -> Result<()> {
     let root = xml(data)?;
     ensure!(
         root.is(Ns::ContentTypes, "Types"),
@@ -1802,6 +1804,266 @@ pub(crate) fn resolve_list_marker_fonts(
         result.push(cache[&id].clone());
     }
     Ok(result)
+}
+
+/// Font-name-only facade for a separate, additive external font-table proof.
+/// The caller proves complete body syntax/text and authoritative OPC identities.
+/// Existing image/empty/list APIs retain their prior contracts.
+pub(crate) fn resolve_body_latin_fonts(
+    main: &[u8],
+    styles: &[u8],
+    theme: Option<&[u8]>,
+    settings: Option<&[u8]>,
+    requests: &[(usize, Option<usize>)],
+    work: &mut crate::docx_font_families::Work,
+) -> Result<Vec<String>> {
+    fn size(n: &Xml) -> usize {
+        1 + n.children.iter().map(size).sum::<usize>()
+    }
+    fn latin_language(value: &str) -> bool {
+        let value = value.to_ascii_lowercase();
+        let mut parts = value.split('-');
+        if !matches!(
+            parts.next(),
+            Some("en" | "es" | "fr" | "de" | "it" | "pt" | "nl")
+        ) {
+            return false;
+        }
+        let mut script = false;
+        let mut region = false;
+        for part in parts {
+            if part == "latn" && !script && !region {
+                script = true;
+            } else if !region
+                && ((part.len() == 2 && part.bytes().all(|b| b.is_ascii_alphabetic()))
+                    || (part.len() == 3 && part.bytes().all(|b| b.is_ascii_digit())))
+            {
+                region = true;
+            } else {
+                return false;
+            }
+        }
+        true
+    }
+    fn overlay(font: &mut FontState, props: &Xml, style: bool) -> Result<()> {
+        if let Some(lang) = props.optional(Ns::W, "lang")? {
+            lang.empty(&[(Ns::W, "val"), (Ns::W, "eastAsia"), (Ns::W, "bidi")])?;
+            ensure!(
+                lang.attr(Ns::W, "val")?.is_none_or(latin_language),
+                "Unproved body font language"
+            );
+        }
+        font.overlay(props, style)
+    }
+    fn paragraph(props: &Xml) -> Result<()> {
+        properties(props, true)?;
+        if let Some(bidi) = props.optional(Ns::W, "bidi")? {
+            ensure!(!on_off(bidi)?, "Unproved body font direction");
+        }
+        Ok(())
+    }
+    let document = xml(main)?;
+    ensure!(
+        document.is(Ns::W, "document"),
+        "Unproved body font document"
+    );
+    document.audit_section_direction()?;
+    let body = document.one(Ns::W, "body")?;
+    let styles = xml(styles)?;
+    ensure!(styles.is(Ns::W, "styles"), "Unproved body font styles");
+    crate::docx_font_families::limit(styles.count("style") <= 4093)?;
+    ensure!(
+        styles.count("docDefaults")
+            == usize::from(styles.optional(Ns::W, "docDefaults")?.is_some()),
+        "Wrapped body font defaults"
+    );
+    let theme = theme.map(xml).transpose()?;
+    let settings = settings.map(xml).transpose()?;
+    let mut base = FontState::default();
+    if let Some(defaults) = styles.optional(Ns::W, "docDefaults")? {
+        defaults.attributes(&[])?;
+        defaults.children(&[(Ns::W, "pPrDefault"), (Ns::W, "rPrDefault")])?;
+        for (wrapper, tag) in [("pPrDefault", "pPr"), ("rPrDefault", "rPr")] {
+            if let Some(wrapper) = defaults.optional(Ns::W, wrapper)? {
+                wrapper.attributes(&[])?;
+                wrapper.children(&[(Ns::W, tag)])?;
+                if let Some(props) = wrapper.optional(Ns::W, tag)? {
+                    ensure!(
+                        props
+                            .optional(Ns::W, if tag == "pPr" { "pStyle" } else { "rStyle" })?
+                            .is_none(),
+                        "Default font style reference"
+                    );
+                    if tag == "pPr" {
+                        paragraph(props)?;
+                    } else {
+                        overlay(&mut base, props, false)?;
+                    }
+                }
+            }
+        }
+    }
+    let style_work = size(&styles);
+    let theme_work = theme.as_ref().map_or(0, size);
+    let settings_work = settings.as_ref().map_or(0, size);
+    let paragraph_work: BTreeMap<usize, usize> = requests
+        .iter()
+        .map(|(p, _)| *p)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|p| (p, body.children.get(p).map_or(0, size)))
+        .collect();
+    work.spend(10 * (size(&document) + style_work + theme_work + settings_work))?;
+    let mut paragraphs = BTreeMap::new();
+    let mut characters = BTreeMap::new();
+    let mut resolved = BTreeMap::new();
+    let mut out = Vec::new();
+    for &(p, r) in requests {
+        // Charge before repeated whole-paragraph sibling/property scans.
+        work.spend(32 * paragraph_work[&p])?;
+        let p = body
+            .children
+            .get(p)
+            .context("Body font paragraph identity")?;
+        ensure!(p.is(Ns::W, "p"), "Body font target is not a paragraph");
+        let direct_p = p.optional(Ns::W, "pPr")?;
+        if let Some(props) = direct_p {
+            paragraph(props)?;
+        }
+        let p_id = style_id(direct_p, "pStyle")?;
+        if !paragraphs.contains_key(&p_id) {
+            work.spend(64 * style_work)?;
+            let mut font = base.clone();
+            let chain = style_chain(&styles, p_id.as_deref(), "paragraph")?;
+            work.links(chain.len())?;
+            for layer in chain {
+                if let Some(props) = layer.optional(Ns::W, "pPr")? {
+                    paragraph(props)?;
+                }
+                if let Some(props) = layer.optional(Ns::W, "rPr")? {
+                    overlay(&mut font, props, true)?;
+                }
+            }
+            paragraphs.insert(p_id.clone(), font);
+        }
+        let direct_r = if let Some(index) = r {
+            let r = p.children.get(index).context("Body font run identity")?;
+            ensure!(r.is(Ns::W, "r"), "Body font target is not a run");
+            r.optional(Ns::W, "rPr")?
+        } else {
+            let mark = direct_p
+                .map(|p| p.optional(Ns::W, "rPr"))
+                .transpose()?
+                .flatten();
+            ensure!(
+                mark.is_none_or(|m| m.optional(Ns::W, "rStyle").is_ok_and(|s| s.is_none())),
+                "Unproved blank character style"
+            );
+            mark
+        };
+        let r_id = style_id(direct_r, "rStyle")?;
+        let key = (p_id.clone(), r_id.clone());
+        if !characters.contains_key(&key) {
+            let mut font = paragraphs[&p_id].clone();
+            // The text converter does not apply an implicit default character
+            // style. Only an actual rStyle names this cascade layer.
+            if let Some(id) = r_id.as_deref() {
+                work.spend(64 * style_work)?;
+                let chain = style_chain(&styles, Some(id), "character")?;
+                work.links(chain.len())?;
+                for layer in chain {
+                    if let Some(props) = layer.optional(Ns::W, "rPr")? {
+                        overlay(&mut font, props, true)?;
+                    }
+                }
+            }
+            characters.insert(key.clone(), font);
+        }
+        let mut font = characters[&key].clone();
+        if let Some(props) = direct_r {
+            overlay(&mut font, props, false)?;
+        }
+        if !resolved.contains_key(&font) {
+            work.spend(64 * (1 + theme_work + settings_work))?;
+            for choice in [&font.ascii, &font.h_ansi].into_iter().flatten() {
+                if let FontChoice::Theme(choice) = choice {
+                    if let Some(settings) = &settings {
+                        ensure!(
+                            settings.is(Ns::W, "settings"),
+                            "Unproved theme language settings"
+                        );
+                        let language = settings.optional(Ns::W, "themeFontLang")?;
+                        ensure!(
+                            settings.count("themeFontLang") == usize::from(language.is_some()),
+                            "Wrapped theme font language"
+                        );
+                        if let Some(language) = language {
+                            language.empty(&[
+                                (Ns::W, "val"),
+                                (Ns::W, "eastAsia"),
+                                (Ns::W, "bidi"),
+                            ])?;
+                            ensure!(
+                                language.attr(Ns::W, "val")?.is_none_or(latin_language),
+                                "Unproved theme font language"
+                            );
+                        }
+                    }
+                    if let Some(theme) = &theme {
+                        let collection = theme
+                            .one(Ns::A, "themeElements")?
+                            .one(Ns::A, "fontScheme")?
+                            .one(
+                                Ns::A,
+                                if choice.starts_with("major") {
+                                    "majorFont"
+                                } else {
+                                    "minorFont"
+                                },
+                            )?;
+                        ensure!(
+                            collection.count("font")
+                                == collection
+                                    .children
+                                    .iter()
+                                    .filter(|n| n.tag == "font")
+                                    .count(),
+                            "Wrapped supplemental theme font"
+                        );
+                        let mut scripts = BTreeSet::new();
+                        for extra in collection.children.iter().filter(|n| n.tag == "font") {
+                            ensure!(extra.is(Ns::A, "font"), "Unproved supplemental theme font");
+                            extra.empty(&[(Ns::None, "script"), (Ns::None, "typeface")])?;
+                            let script = extra
+                                .attr(Ns::None, "script")?
+                                .context("Missing supplemental font script")?;
+                            ensure!(
+                                scripts.insert(script) && script != "Latn",
+                                "Ambiguous or active supplemental theme font"
+                            );
+                            ensure!(
+                                extra
+                                    .attr(Ns::None, "typeface")?
+                                    .is_some_and(|v| !v.is_empty()),
+                                "Missing supplemental font face"
+                            );
+                        }
+                    }
+                }
+            }
+            let (ascii, h_ansi) = font.resolved_latin_pair(theme.as_ref())?;
+            let (Some(ascii), Some(h_ansi)) = (ascii, h_ansi) else {
+                bail!("Unresolved body Latin slots")
+            };
+            ensure!(ascii == h_ansi, "Conflicting body Latin slots");
+            resolved.insert(font.clone(), ascii);
+        }
+        out.push(resolved[&font].clone());
+    }
+    let blanks = requests.iter().filter(|(_, run)| run.is_none()).count();
+    work.spend(size(&document) + style_work + theme_work)?;
+    work.spend_product(64 * blanks, style_work + 2 * theme_work + 1)?;
+    Ok(out)
 }
 
 #[cfg(test)]

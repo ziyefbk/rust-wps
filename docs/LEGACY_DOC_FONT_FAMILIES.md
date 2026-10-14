@@ -1,5 +1,13 @@
 # 旧 DOC 的有界 Roman / Swiss 字体类别保留
 
+## 2026-10-14 发布 35 补充：外部 DOCX 的边界已另行扩展
+
+下文保留发布 34 的旧 DOC 实现与当轮证据；其中“通用外部 `import-docx` 不读取 fontTable”的描述是该轮历史状态。发布 35 已新增独立的 [外部 DOCX 字体类别源证明](DOCX_FONT_FAMILIES.md)：实际 OPC 关系、完整保留字体集合、活动样式 / 主题与逐范围模型身份共同通过时，可保留 Roman / Swiss；不是任意字体表导入，也不信任内嵌作者模型。旧 DOC FFN 规则未改：按索引引用的未使用记录与 DOCX 按名字引用的完整 ASCII 折叠类有不同歧义边界。
+
+原 `tests/importing.rs` 的 exported blank.doc 外部重导入仍省略类别，因为实际保留的真正空段为 Arial 22，源表却只有 Times New Roman / roman，完整集合无法证明；该期望不再代表所有外部 DOCX 一律省略。新增路径沿用同一严格模型 / writer / 可信重开，保留浏览器与原生替代限制。发布 35 的精确门禁与仍失败的源颜色 / 光栅见 [REGRESSION.md](REGRESSION.md)。
+
+## 发布 34 的实现与验证记录（2026-10-14）
+
 本增量只保留源明确声明的字体类别，不重命名字体、不安装字体，也不按名字、粗体、PANOSE、已安装替代字体或某个渲染器规则猜测类别。`fontFamily` 字符标记仍表示字面字体名；新增根 `fontFamilyMetadata` 表示字体表的 Roman / Swiss 分类，二者含义不同。
 
 ## 源证明与回退

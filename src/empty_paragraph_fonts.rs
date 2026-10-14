@@ -21,8 +21,8 @@ pub(crate) struct Audit {
     fonts: Vec<(usize, ImageParagraphFont)>,
     pub warnings: Vec<String>,
 }
-#[derive(Debug, PartialEq, Eq)]
-enum Block {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Block {
     Text(String),
     PageBreak,
     Image,
@@ -88,7 +88,7 @@ fn paragraph(n: &Xml) -> Result<Block> {
         Ok(Block::Text(text))
     }
 }
-fn true_blank(n: &Xml) -> Result<bool> {
+pub(crate) fn true_blank(n: &Xml) -> Result<bool> {
     // A text node containing even whitespace, a tab, break or drawing is
     // not empty. Bare zero-content runs have no metrics of their own.
     n.identity()?;
@@ -297,6 +297,26 @@ pub(crate) fn apply(audit: &Audit, document: &mut Node) -> Result<()> {
     if audit.fonts.is_empty() {
         return Ok(());
     }
+    verify_body_identity(&audit.blocks, document)?;
+    for (index, _) in &audit.fonts {
+        ensure!(
+            document.content[*index].content.is_empty(),
+            "True blank source became a nonempty paragraph"
+        );
+    }
+    for (index, font) in &audit.fonts {
+        let node = &mut document.content[*index];
+        node.attrs
+            .insert("emptyParagraphFont".into(), serde_json::to_value(font)?);
+    }
+    Ok(())
+}
+
+/// Exact body identity shared by additive source proofs; does not attach state.
+pub(crate) fn source_body_identity(main: &[u8]) -> Result<Vec<Block>> {
+    Ok(blocks(main)?.0)
+}
+pub(crate) fn verify_body_identity(blocks: &[Block], document: &Node) -> Result<()> {
     let mut actual = Vec::new();
     for n in &document.content {
         actual.push(match n.kind.as_str() {
@@ -318,19 +338,8 @@ pub(crate) fn apply(audit: &Audit, document: &mut Node) -> Result<()> {
         });
     }
     ensure!(
-        actual == audit.blocks,
+        actual == blocks,
         "Converted body/table text or block order differs from empty-font source proof"
     );
-    for (index, _) in &audit.fonts {
-        ensure!(
-            document.content[*index].content.is_empty(),
-            "True blank source became a nonempty paragraph"
-        );
-    }
-    for (index, font) in &audit.fonts {
-        let node = &mut document.content[*index];
-        node.attrs
-            .insert("emptyParagraphFont".into(), serde_json::to_value(font)?);
-    }
     Ok(())
 }
