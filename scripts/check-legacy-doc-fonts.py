@@ -563,7 +563,15 @@ def consumer_checks(dest,report,run,flush):
     require(sha(lo_bin)==consumer_pin,'Consumer executable changed during run')
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--root',type=Path,default=DEFAULT);ap.add_argument('--prepare',action='store_true');ap.add_argument('--write-owned-fixture',action='store_true');ap.add_argument('--check-owned-fixture',action='store_true');ap.add_argument('--manifest',type=Path);ap.add_argument('--cli',type=Path);ap.add_argument('--expected-cli-sha256');ap.add_argument('--render',action='store_true');args=ap.parse_args()
+    ap=argparse.ArgumentParser();ap.add_argument('--root',type=Path,default=DEFAULT);ap.add_argument('--prepare',action='store_true');ap.add_argument('--write-owned-fixture',action='store_true');ap.add_argument('--check-owned-fixture',action='store_true');ap.add_argument('--manifest',type=Path);ap.add_argument('--cli',type=Path);ap.add_argument('--expected-cli-sha256');ap.add_argument('--render',action='store_true');ap.add_argument('--normal-identity',action='store_true');args=ap.parse_args()
+    if args.normal_identity:
+        # Keep iteration 29's font-only oracle and explicit historical heading
+        # failure assertions intact. The next increment has its own frozen
+        # baseline, source identity proof and narrowly changed expectation.
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('normal_identity',ROOT/'scripts/check-legacy-doc-normal-identity.py')
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        module.main(args);return
     if args.write_owned_fixture or args.check_owned_fixture:owned_blank_fixture(args.write_owned_fixture);return
     if args.prepare:prepare(args.root);return
     require(args.manifest and args.cli and args.expected_cli_sha256,'Use --prepare or give manifest and pinned CLI')

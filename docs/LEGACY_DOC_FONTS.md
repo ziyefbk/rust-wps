@@ -30,7 +30,7 @@
 | [simple.doc](https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/simple.doc) | `4876e828e62d490fa188c7c4e47013e2e0dfdf02f5903dfd374bc0d2b2049ca1` | Times New Roman / 20 half-points（10 pt），来自 STSHI + 规范缺省 |
 | [SampleDoc.doc](https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/SampleDoc.doc) | `717585c0a88f20862c86220163dd03da87cd743970354c6b29add32725f2e833` | 第 1 页 Calibri / 22，第 2 页 Arial Black / 32；后者为直接 CHPX |
 
-SampleDoc 首段真正是 Normal，旧读取器仍按短首行启发式转成 Heading1。显式字号已恢复 11 pt，标题的粗体 / 间距仍不同，报告另外提示这一点。没有顺便修改标题猜测，也没有把字体修复说成完整首段修复。
+字体轮验证时，SampleDoc 首段真正是 Normal，旧读取器仍按短首行启发式转成 Heading1。显式字号已恢复 11 pt，标题的粗体 / 间距仍不同，该轮报告保留这一失败。后续 [Normal 段落身份](LEGACY_DOC_NORMAL_PARAGRAPHS.md) 在完全相同的已证明子集内修复编辑副本的编码身份；原始字体-only 报告不重写，只读 / IR 标题猜测仍保持。源间距与页面依然不代表完整首段修复。
 
 固定 LibreOffice 消费时，原始 Arial Black DOC 与最小导出 DOCX 分别选用 NotoSans 和 NotoSerif；字体族元数据没有传到 DOCX，是一个可能原因，尚未独立隔离证明因果。字面 Arial Black 保持，实际替代字体不同的失败保留。simple 的原 Letter 页面 / 90 pt 左边距与应用 A4 / 72 pt 也不同。原布局、颜色校准历史失败和这些字体替代限制均未提高容差隐藏。
 

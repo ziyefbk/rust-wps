@@ -1,5 +1,72 @@
 # 当前跨格式回归记录
 
+
+## 本轮：旧二进制 DOC 的编码 Normal 段落身份（2026-10-14）
+
+基于 `f5074dcab55f85ddd52a98a3ae02f9e713b91a26`，仅在前轮完整字体源证明成功的 Normal 正文子集内，修复编辑副本的启发式标题身份。匹配 `heading` 改为 `paragraph` 并只移除 `level`；其余属性 / 标记 / 精确文字 / 字体 / 字号 / 颜色 / 空段 / 分页原子保持。显式命名的 Normal 证明变体防止后续字体范围扩大时误降真实标题。Unsupported、损坏拒绝、vendor 和只读 / IR 元数据保持，范围与尚存布局差异见 [LEGACY_DOC_NORMAL_PARAGRAPHS.md](LEGACY_DOC_NORMAL_PARAGRAPHS.md)。
+
+### 核心门禁与执行身份
+
+- Rust 1.99 / 1.88 **各 680 项核心测试通过**，原 668 + 11 单元 / 1 集成；新增覆盖全部猜测级别、根 / 页面与段落属性、字符标记及精确多字体拆分、空段字体 / 分页顺序、同长度错误及边缘空白、迟到失败原子回滚、大纲与非 Normal / 继承边界。集成的独立作者夹具同长度正文派生同时验证原 IR 猜测标题及元数据未变、完整模型 / 可信重开 / 原件及目标不覆盖
+- 两工具链原始严格 Clippy 各仅有原有单项：stable XLS `chunks_exact_to_as_chunks`、MSRV `presentation_import.rs` 的 `uninlined_format_args`；各仅排除对应既有项后 all-targets 通过，build、定向 rustfmt 与 `git diff --check` 通过，无新增 lint 豁免
+- stable 完整门禁 `tmp/legacy-doc-normal-gates-stable-final2.json` SHA **`f00869bc54b7a7f5e6a4a63095c28a9c7e29fc824b21bf08b4de691d96aacdcf`**，记录 argv、环境、源码前后身份、日志及 CLI 哈希
+- MSRV 完整重跑门禁 `tmp/legacy-doc-normal-gates-msrv-final2.json` SHA **`0793c62914600c1a40035bd0857c75c6bc88be2d1b99a02cdecf87dbcf20cd70`**；CLI SHA `3dca5d3be136090cb8ada8f828ddeb1e39f0342a42705664f9ede203fbb6f9bf`。680 测试、严格 / scoped Clippy 和 build 均为新运行，源身份前后不变
+- 最终 stable CLI `target/debug/rust-wps` SHA **`a4414930e0b4049dd781b733b4893b23c91b17d5d7afee402c6ab1eb3b9ab441`**；冻结前版本 `tmp/legacy-doc-font-final-cli` SHA `1977766cd91f48bb0cec0a4dc8d964ca3c339ac1cfcd548a8d6b4bba90a9c5bc` 为独立 inode
+- 产品 `src/legacy_typography.rs` SHA `05c7c05d438c26daff125551394c3bcb03b6629d1da4b84eaf07d0352d35de97`、集成 `tests/importing.rs` SHA `75bcd858acd01a81f3929f55e6850aa6aae1f2c1231e1d97b519ca48ea1ce648`；没有改 RUSTFLAGS、profile、锁文件、依赖或 vendor
+- 两份既有 vendor 补丁的 `git apply --reverse --check` 均通过，所有 vendor 文件身份前后不变；报告 `tmp/legacy-doc-normal-vendor-check.json` SHA `b683f4fe987bf7087df781bba385b58b7df160024ac3d7e7b07173a8933bba18`。两个 checker 的 Python 语法检查通过
+- 初次 `final1` 编译失败是新集成夹具的借用 Cursor 不满足 vendor reader 的 `'static` 约束；改成持有相同字节的 Cursor，没有改产品。失败日志及报告 `tmp/legacy-doc-normal-gates-stable-final1.json`（SHA `4f2695aff5adce22eaadd08bf97199825ff11354e28593256a987be9bf118169`）保留，成功 `final2` 从完整门禁重新执行
+- 沿用既有 stable / MSRV target 和 `CARGO_INCREMENTAL=0`，串行 `-j1`。驱动每 0.5 秒采样空间并在观察到低于 600 MiB 时终止自己的 Cargo 进程组，不称其为硬文件系统配额。成功的 stable / MSRV 核心最低观察空闲分别为 `1,118,068,736` / `1,002,909,696` bytes；成功轮次均无空间终止
+
+### 前端与生产后端
+
+- 本轮新运行 **622 项无浏览器前端检查**、prepare-pdf / TypeScript / Vite build 全部通过；复用既有精确 argv，未安装依赖或改前端源码。报告 `tmp/legacy-doc-normal-frontend-final-gates.json` SHA `4e46d5db403a1e1ee0008f6b6e3c45d09d1613fd55b7204d6d61e4412c84630f`，不等于浏览器 / Windows 原生验收
+- 两工具链 **各 35 项 Tauri-free 生产后端测试通过**；stable 报告 `tmp/legacy-doc-normal-regression/backend-stable-test-jucqcovq/report.json` SHA `7fe2311767c070b1864bc53752a09703c03b5510f9cb146c420280329b5f566f`；MSRV 报告 `tmp/legacy-doc-normal-regression/backend-msrv-test-l5ey53bm/report.json` SHA `b9cfd8f3c7a61cbf58d538aeb3e25faf50b866d4bbf32a0cb9231a6f017dfb09`。实际 worker probe 独立重建，SHA `b320322e8afd5aa2732fa5adb6989582875e64fb8975b9250afe5c13b01d2d5c`；编译报告 `tmp/legacy-doc-normal-regression/backend-stable-worker-lt2g8kxn/report.json` SHA `ff70ed04babeeedd43c35ee52b1841ef77dd1eb6664e1524a4aa926530f7b8ba`。精确 rustc argv、依赖 rlib 身份与日志分别保留
+
+生产 probe 实际子进程运输通过：**93 次只读 Open 与冻结 baseline Inspect 相等**（排除 elapsed_ms）；**46 份完整编辑导入报告、47 份相同原因链拒绝、25 份完整原样 Unsupported 响应、21 份可信输出模型 Open**。47 份导入拒绝来源仍能沿已有路线只读打开；没有将只读成功称为编辑兼容。报告 `tmp/legacy-doc-normal-regression/worker-plc8o6e1/report.json` SHA **`d863ec7423a70fe378140951aa80bc2329e066540b9621046e1e88002a64692b`**，状态 PASS。这是实际进程运输，仍不等于真实 Tauri IPC / WebView2 / 对话框验收。
+
+### 独立来源、完整模型与原件保护
+
+独立二进制来源 / CLI / XML 检查 **93 输入：21 证明保留、25 未证明整份导入响应精确相同、47 相同损坏 / 身份 / 超限拒绝且无部分模型**。六份模型的七个源已证明 Normal 段落解除猜测标题；另 15 份正向模型及其导出包字节保持。21 份成功来源都新增明确的 Normal 身份提示，其中六份修复模型的响应同时移除旧“推断标题仍可能不同”警告；未证明来源不新增该提示。没有把所有节点类型先抹掉再比较。
+
+**93 次只读 inspect 精确相等**（仅排除 elapsed_ms）、**63 次完整可信重开、126 次不覆盖、5 个篡改拒绝**通过；1,824 件旧报告 / 模型 / 源文件 / 当前及冻结 CLI / checker 身份前后不变。七处受修复段落独立核对无 Heading `pStyle`、标题大纲和 `keepNext` 默认继承，同时保持字体 / 字号 / RGB、空段和分页。
+
+来源专用报告 `tmp/legacy-doc-normal-independent/normal-run-11o_jsmv/report.json` SHA **`933c8323bea43e87cb13eb5bcd54899add0ae0b386121a2b09d100d6a6826905`**，状态 `PASS-with-explicit-source-spacing-page-font-substitution-limits`，本次 **0 PDF**。Manifest `tmp/legacy-doc-normal-independent/normal-fixtures-3wegn_1j/manifest.json` SHA `3baba34439f42143cbb0bba6cb29203d47fc3a1c134c4f96496f62c976f40af9`。新 checker `scripts/check-legacy-doc-normal-identity.py` SHA `e59a6a2e90cc51b80814934ce5d4b2fcbaff01e11b7082cc257e8c70e6825894`；原 checker dispatcher SHA `18787d17213a10a7a7c2c43ec90f20a308c2a9cf5f011a7452db48df193776db`。原字体-only 模式及其标题粗体失败断言保留，`--normal-identity` 进入本轮独立路径。
+
+复现使用新模式与本轮固定 CLI；每次执行建立新目录，未覆盖先前结果。仅添加 `--render` 才运行本轮消费者，不把旧 PDF 计作新渲染：
+
+```sh
+python scripts/check-legacy-doc-fonts.py --normal-identity --prepare
+python scripts/check-legacy-doc-fonts.py --normal-identity --manifest tmp/legacy-doc-normal-independent/normal-fixtures-3wegn_1j/manifest.json --cli target/debug/rust-wps --expected-cli-sha256 a4414930e0b4049dd781b733b4893b23c91b17d5d7afee402c6ab1eb3b9ab441
+```
+
+### 最终独立消费者与真实源文件
+
+最终消费者运行**重新完整执行同一 93 输入矩阵**，计数仍为 21 / 25 / 47、93 次只读相等、63 次可信重开、126 次不覆盖及 5 次篡改拒绝；不把上面的来源专用运行重复累计成更多独立输入。最终报告 `tmp/legacy-doc-normal-independent/normal-run-dxabllcc/report.json` SHA **`e2da47e8698270b9514d453d1d2bb059eed890d5816cfcbcff3b763d054ed7c8`**，同样明确保留源间距 / 页面 / 字体替代限制。
+
+**45 份新 PDF / 45 个独立进程 profile / HOME**，包括 21 对产品输出与独立 XML 参考，以及两份真实 DOC 和一份冻结 SampleDoc 输出。**21 对全文、字体 / 物理字号、span / 字符、坐标和完整页面光栅严格相等**，最大坐标差 0 pt、变化像素 0；参考只在冻结前版本导出包中删除已由独立二进制源证明的 Heading `pStyle`，不放宽节点、字体或几何比较。
+
+真实 SampleDoc 首行源 / 新输出都是 **Carlito 常规 11 pt**，原点精确为 `[72.0999984741211, 82.70074462890625]`；冻结前版本是 Carlito-Bold 11 pt、y 为 `94.70074462890625`。错误标题粗体和额外 12 pt 段前空隙已消除。其余源间距未恢复：相邻文字基线间距仍为源约 25.4500 pt / 输出约 26.1500 pt。第二页的输出文字、格式、坐标与光栅和冻结前版本完全相同；源 NotoSans 16 pt / 输出 NotoSerif 16 pt 的 Arial Black 替代差异保留。simple 的源 Letter 612×792 pt / 首字 x≈90.1 pt，与输出 A4 595.304×841.890 pt / x≈72.1 pt 仍不同。
+
+独立检查实际查看 **9 张代表 PNG**，覆盖真实原件 / 输出 / 冻结基线、多字体 RGB 与空段 / 分页；另复核 SampleDoc 源 / 基线 / 当前的第一页，确认下方间距差异仍可见。没有用“PDF 存在”或仅光栅哈希代替全部视觉检查，也未新增实际浏览器 / Windows 原生打印 / Word / WPS 验收。
+
+### 历史跨格式和作者包字节契约
+
+最终历史重放 **1,520 条新 CLI 读取响应全部逐字节精确相等，0 变化、0 新增 DOCX 导入拒绝**。比较基准为上轮字体版本已保存且哈希绑定的 1,520 条原始响应；这些 baseline 读取明确复用，没有再执行。对应冻结 CLI 哈希已单独核对。
+
+**302 份唯一作者模型**由旧 / 新两个 CLI 各自新导出，每个 CLI 的 302 份整包均与原金样逐字节相同；每个 CLI **各 604 次完整可信重开、604 次不覆盖检查**通过。该历史门禁的 1,747 件受保护输入 / 报告 / CLI 身份不变；**325 份历史 PDF 仅核对并保留，0 份重渲染**，本轮新 PDF 数量仍为上述独立消费者的 45 份。
+
+报告 `tmp/legacy-doc-normal-regression/historical-lw5_rvl7/report.json` SHA **`42bc1f5686e2b3f8bf6b76d871a93728b33d6248569eedbb61a403feeabfed9f`**，状态 PASS。最终生产后端 / worker / 历史汇总 `tmp/legacy-doc-normal-regression/summary.json` SHA **`443883ff5e8f497b9a030d74c28b8eb975e06ec72da6db4a32ba0f491bd00416`**，联合 1,977 件受保护源码 / 报告 / CLI / probe / 链接依赖身份重新核对全部不变。
+
+### 执行中断和证据保护
+
+首次 MSRV `final1` 在编译期间观察空闲 `587,481,088` bytes，监控终止 Cargo 子进程组（exit -15），没有把这次运行计为测试通过。报告 `tmp/legacy-doc-normal-gates-msrv-final1.json` SHA `8f760b4b0bd48e528d737fb10d4a21ac203cafdfbb074bf491f9f520713fcba1` 及空编译日志保留。
+
+独立校验完整 stable 门禁、Cargo test 指纹、每个候选的大小 / SHA / 单链接 inode 和受保护 CLI / rlib / 冻结基线后，仅回收三件已完成且不再需要的 stable 测试可执行文件；清理记录 `tmp/test-cache-cleanup-20261014T025700Z.json`。最初按大小列出的一个 `rust_wps-*` 候选经 inode 检查发现是生产 CLI 硬链接，立即撤回并列为受保护对象，从未删除；修正记录保存在 `tmp/legacy-doc-normal-completed-stable-tests.json`。旧源码、原件、消费者文件、失败记录与所有报告保持。
+
+首次历史重放的执行运输在进度记录 800 条时中断，原进程随后确认不存在且没有最终报告；不计任何部分结果。`tmp/legacy-doc-normal-regression/historical-xs1m8kqp/interruption.json` SHA `d55ecdef780519e7245cc93271fcd36c8f2ee204fa0944dd0101f759c2249332` 与原驱动日志保持。最终 `historical-lw5_rvl7` 从第一条重跑完整 1,520 响应及两个 CLI 的全部作者包 / 重开 / 不覆盖门禁，没有拼接部分运行。
+
+真实源间距、页面、Arial Black 缺失字体替代和全部历史主题色失败仍保留；本轮不提高容差，也不宣称完整 DOC / Word / WPS 兼容。
+
 ## 本轮：旧二进制 DOC 的受审计 Latin 字体与字号（2026-10-14）
 
 基于 `4c210f01df8eb69034edf1c8bcf424b2e07f7265`，应用侧新增同一 64 MiB 快照内的 FFN / STSH / CLX / PAPX / CHPX 独立证明。对未继承 Normal、单块压缩 Windows-1252 正文保留字面名字与有效半点字号，精确绑定文字 / run / 分页后附加到现有模型。没有修改 vendor、模型、DOCX writer 或 UI。受支持范围、三种结果、原件身份与未修复视觉差异见 [LEGACY_DOC_FONTS.md](LEGACY_DOC_FONTS.md)。

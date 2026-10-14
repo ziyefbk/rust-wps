@@ -211,6 +211,77 @@ fn legacy_import_rejects_disguised_corrupt_and_oversized_inputs() {
 }
 
 #[test]
+fn encoded_normal_import_repairs_guessed_headings_without_changing_legacy_ir() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("normal-titles.doc");
+    // A same-length text-only derivative of the independently authored fixture;
+    // this changes no source style, run, blank or manual-break boundary.
+    let mut bytes = include_bytes!("fixtures/doc-typography/blank.doc").to_vec();
+    for (from, to) in [(b"hello.", b"Title!"), (b"world.", b"LATER!")] {
+        let matches: Vec<_> = bytes
+            .windows(from.len())
+            .enumerate()
+            .filter_map(|(index, value)| (value == from).then_some(index))
+            .collect();
+        assert_eq!(matches.len(), 1);
+        let start = matches[0];
+        bytes[start..start + from.len()].copy_from_slice(to);
+    }
+    std::fs::write(&source, &bytes).unwrap();
+    let parsed = office_oxide::Document::from_reader(
+        std::io::Cursor::new(bytes.clone()),
+        office_oxide::DocumentFormat::Doc,
+    )
+    .unwrap();
+    let ir = parsed.to_ir();
+    assert_eq!(ir.metadata.title.as_deref(), Some("Title!"));
+    let guessed_levels: Vec<_> = ir
+        .sections
+        .iter()
+        .flat_map(|section| &section.elements)
+        .filter_map(|element| match element {
+            office_oxide::ir::Element::Heading(heading) => Some(heading.level),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(guessed_levels, vec![1, 2]);
+    let report = importing::import_doc(&source).unwrap();
+    let expected = serde_json::json!({"type":"doc","attrs":{"styleProfile":"standard-v2"},"content":[
+        {"type":"paragraph","content":[{"type":"text","text":"Title!","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]},
+        {"type":"paragraph"}, {"type":"pageBreak"},
+        {"type":"paragraph","content":[{"type":"text","text":"LATER!","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]}
+    ]});
+    assert_eq!(serde_json::to_value(&report.document).unwrap(), expected);
+    assert!(
+        report
+            .compatibility
+            .risks
+            .iter()
+            .any(|risk| risk.contains("encoded Normal paragraph identity is preserved"))
+    );
+    assert!(
+        !report
+            .compatibility
+            .risks
+            .iter()
+            .any(|risk| risk.contains("inferred heading"))
+    );
+    assert!(!report.compatibility.fidelity_verified);
+    assert_eq!(report.compatibility.paragraphs, 3);
+    let output = dir.path().join("normal-titles.docx");
+    document::export_docx(&report.document, &output).unwrap();
+    assert_eq!(
+        serde_json::to_value(document::load_authored_docx(&output).unwrap().unwrap()).unwrap(),
+        expected
+    );
+    let exported = std::fs::read(&output).unwrap();
+    assert!(document::export_docx(&report.document, &output).is_err());
+    assert_eq!(std::fs::read(&output).unwrap(), exported);
+    assert!(document::export_docx(&report.document, &source).is_err());
+    assert_eq!(std::fs::read(&source).unwrap(), bytes);
+}
+
+#[test]
 fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("blank.doc");

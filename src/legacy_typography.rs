@@ -1,4 +1,5 @@
-//! Independent, deliberately bounded source proof for binary DOC Latin fonts.
+//! Independent, deliberately bounded source proof for binary DOC Latin fonts
+//! and encoded Normal paragraph identity.
 //!
 //! This does not trust permissive legacy formatting recovery, implement a general
 //! Word style engine, or promise appearance. All reads use the import snapshot.
@@ -11,6 +12,8 @@ const MAX_PROPERTIES: usize = 1024 * 1024;
 const MAX_RUNS: usize = 10_000;
 const MAX_CP: usize = 1_000_000;
 const PRESERVED: &str = "Legacy DOC literal Latin font names and effective sizes are preserved for audited body text; layout and local font substitution may differ";
+const NORMAL_PRESERVED: &str =
+    "Legacy DOC encoded Normal paragraph identity is preserved for audited body paragraphs";
 
 #[derive(Debug)]
 pub(crate) enum Audit {
@@ -19,7 +22,12 @@ pub(crate) enum Audit {
 }
 #[derive(Debug)]
 pub(crate) enum Block {
-    Paragraph(Vec<Run>),
+    /// Requires built-in Normal (istd/sti 0, paragraph kind), unbased, unlinked
+    /// and unrevisioned, with no active paragraph modifiers except spacing.
+    /// In particular, outline declarations and actual heading styles are never
+    /// represented here. A future broader font proof needs a separate variant;
+    /// font evidence alone must not authorize removal of heading identity.
+    NormalParagraph(Vec<Run>),
     PageBreak,
 }
 #[derive(Debug)]
@@ -399,7 +407,9 @@ fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
             }
             k += 1;
         }
-        blocks.push(Block::Paragraph(runs));
+        // The complete source proof above also establishes encoded Normal
+        // identity. Neither the display name nor legacy title heuristics do.
+        blocks.push(Block::NormalParagraph(runs));
     }
     ensure!(
         blocks.len() <= MAX_RUNS,
@@ -1024,7 +1034,9 @@ fn walk_sprms(
 fn apply_paragraph(data: &[u8], reasons: &mut BTreeSet<String>) -> Result<()> {
     walk_sprms(data, true, |op, _| {
         match op {
-            // Spacing is not a font selector. Existing DOC normalization remains.
+            // Spacing cannot change encoded Normal identity. Existing DOC
+            // spacing normalization remains; outline/heading SPRMs may not be
+            // added here merely because they do not select a font.
             0x6412 | 0xa413 | 0xa414 => {}
             _ => unsupported(
                 reasons,
@@ -1212,7 +1224,7 @@ pub(crate) fn attach(
                 node.kind == "pageBreak",
                 "DOC typography manual-break identity mismatch"
             ),
-            Block::Paragraph(runs) => {
+            Block::NormalParagraph(runs) => {
                 ensure!(
                     matches!(node.kind.as_str(), "paragraph" | "heading")
                         && node
@@ -1232,7 +1244,8 @@ pub(crate) fn attach(
                     "DOC typography source-to-editor text identity mismatch; source remains read-only"
                 );
                 if node.kind == "heading" {
-                    risks.insert("Legacy DOC inferred heading type and weight may differ from the source Normal paragraph".into());
+                    node.kind = "paragraph".into();
+                    node.attrs.remove("level");
                 }
                 let mut output = Vec::new();
                 let mut source_start = 0;
@@ -1310,6 +1323,7 @@ pub(crate) fn attach(
     crate::document::validate(&candidate)?;
     *document = candidate;
     risks.insert(PRESERVED.into());
+    risks.insert(NORMAL_PRESERVED.into());
     risks.insert("Font names are preserved; unavailable fonts may be substituted locally".into());
     Ok(())
 }
@@ -1367,6 +1381,267 @@ mod tests {
             font: "Arial".into(),
             hps,
             direct_hps: None,
+        }
+    }
+    fn heading(text: &str, level: u8) -> Node {
+        let mut node = document(text).content.remove(0);
+        node.kind = "heading".into();
+        node.attrs.insert("level".into(), level.into());
+        node
+    }
+    fn assert_unchanged_after_refusal(audit: Audit, mut document: Node) {
+        let before = serde_json::to_value(&document).unwrap();
+        let mut risks = BTreeSet::from(["existing risk".into()]);
+        let old_risks = risks.clone();
+        assert!(attach(audit, &mut document, &mut risks).is_err());
+        assert_eq!(serde_json::to_value(document).unwrap(), before);
+        assert_eq!(risks, old_risks);
+    }
+    #[test]
+    fn encoded_normal_replaces_each_inferred_heading_level() {
+        for level in 1..=3 {
+            let mut n = document("Encoded Normal title");
+            n.content[0] = heading("Encoded Normal title", level);
+            let mut risks = BTreeSet::new();
+            attach(
+                Audit::Proven(vec![Block::NormalParagraph(vec![run(
+                    "Encoded Normal title",
+                    22,
+                )])]),
+                &mut n,
+                &mut risks,
+            )
+            .unwrap();
+            assert_eq!(n.content[0].kind, "paragraph");
+            assert!(n.content[0].attrs.is_empty());
+            assert_eq!(
+                n.content[0].content[0].text.as_deref(),
+                Some("Encoded Normal title")
+            );
+            assert!(risks.contains(NORMAL_PRESERVED));
+            assert!(!risks.iter().any(|r| r.contains("inferred heading")));
+        }
+    }
+    #[test]
+    fn normal_identity_repair_preserves_other_attrs_marks_and_exact_runs() {
+        let mut n = document("A’bc");
+        n.attrs = serde_json::from_value(serde_json::json!({
+            "styleProfile":"standard-v2", "pageGeometry":{
+                "widthTwips":11906,"heightTwips":16838,"marginTopTwips":1440,
+                "marginRightTwips":1440,"marginBottomTwips":1440,"marginLeftTwips":1440
+            }
+        }))
+        .unwrap();
+        n.content[0] = heading("A’bc", 2);
+        n.content[0].attrs.extend(serde_json::Map::from_iter([
+            ("textAlign".into(), "center".into()),
+            ("spaceBefore".into(), 80.into()),
+            ("spaceAfter".into(), 140.into()),
+            ("lineSpacing".into(), 300.into()),
+            ("indentLeftTwips".into(), 120.into()),
+            ("indentRightTwips".into(), 240.into()),
+            ("firstLineIndentTwips".into(), 60.into()),
+            ("keepNext".into(), false.into()),
+            ("keepLines".into(), true.into()),
+            ("pageBreakBefore".into(), false.into()),
+        ]));
+        n.content[0].content[0].marks = serde_json::from_value(serde_json::json!([
+            {"type":"bold"}, {"type":"italic"}, {"type":"underline"},
+            {"type":"strike"}, {"type":"superscript"}, {"type":"code"},
+            {"type":"textColor","attrs":{"rgb":"1234AB"}}
+        ]))
+        .unwrap();
+        let mut expected = n.clone();
+        expected.content[0].kind = "paragraph".into();
+        expected.content[0].attrs.remove("level");
+        let mut first = expected.content[0].content[0].clone();
+        first.text = Some("A’".into());
+        first.marks.extend(
+            serde_json::from_value::<Vec<Mark>>(serde_json::json!([
+                {"type":"fontSize","attrs":{"halfPoints":22}},
+                {"type":"fontFamily","attrs":{"name":"Arial"}}
+            ]))
+            .unwrap(),
+        );
+        let mut second = expected.content[0].content[0].clone();
+        second.text = Some("bc".into());
+        second.marks.extend(
+            serde_json::from_value::<Vec<Mark>>(serde_json::json!([
+                {"type":"fontSize","attrs":{"halfPoints":32}},
+                {"type":"fontFamily","attrs":{"name":"Times New Roman"}}
+            ]))
+            .unwrap(),
+        );
+        expected.content[0].content = vec![first, second];
+        let mut second_source = run("bc", 32);
+        second_source.font = "Times New Roman".into();
+        attach(
+            Audit::Proven(vec![Block::NormalParagraph(vec![
+                run("A’", 22),
+                second_source,
+            ])]),
+            &mut n,
+            &mut BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(n).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+    }
+    #[test]
+    fn normal_identity_repair_keeps_blank_and_break_positions() {
+        let mut n: Node = serde_json::from_value(serde_json::json!({"type":"doc","content":[
+            {"type":"paragraph"}, {"type":"paragraph"},
+            {"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"Title"}]},
+            {"type":"paragraph"}, {"type":"pageBreak"}, {"type":"paragraph"},
+            {"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"LATER"}]},
+            {"type":"paragraph"}
+        ]}))
+        .unwrap();
+        let before = n.clone();
+        attach(
+            Audit::Proven(vec![
+                Block::NormalParagraph(vec![]),
+                Block::NormalParagraph(vec![]),
+                Block::NormalParagraph(vec![run("Title", 20)]),
+                Block::NormalParagraph(vec![]),
+                Block::PageBreak,
+                Block::NormalParagraph(vec![]),
+                Block::NormalParagraph(vec![run("LATER", 20)]),
+                Block::NormalParagraph(vec![]),
+            ]),
+            &mut n,
+            &mut BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(n.content.len(), 8);
+        for index in [0, 1, 3, 4, 5, 7] {
+            assert_eq!(
+                serde_json::to_value(&n.content[index]).unwrap(),
+                serde_json::to_value(&before.content[index]).unwrap()
+            );
+        }
+        for index in [2, 6] {
+            assert_eq!(n.content[index].kind, "paragraph");
+            assert!(n.content[index].attrs.is_empty());
+        }
+    }
+    #[test]
+    fn empty_normal_identity_repair_retains_existing_baseline_font() {
+        let mut n: Node = serde_json::from_value(serde_json::json!({"type":"doc","content":[
+            {"type":"heading","attrs":{"level":1,"textAlign":"right",
+                "emptyParagraphFont":{"family":"Arial","halfPoints":22,"bold":false,"italic":true}}}
+        ]}))
+        .unwrap();
+        let mut expected = n.clone();
+        expected.content[0].kind = "paragraph".into();
+        expected.content[0].attrs.remove("level");
+        attach(
+            Audit::Proven(vec![Block::NormalParagraph(vec![])]),
+            &mut n,
+            &mut BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(n).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+    }
+    #[test]
+    fn unsupported_keeps_heading_identity_and_entire_model() {
+        let mut n = document("Title");
+        n.content[0] = heading("Title", 1);
+        let before = serde_json::to_value(&n).unwrap();
+        let mut risks = BTreeSet::from(["existing risk".into()]);
+        attach(
+            Audit::Unsupported(BTreeSet::from(["active outline".into()])),
+            &mut n,
+            &mut risks,
+        )
+        .unwrap();
+        assert_eq!(serde_json::to_value(n).unwrap(), before);
+        assert_eq!(
+            risks,
+            BTreeSet::from([
+                "existing risk".into(),
+                "Legacy DOC font names and effective sizes are not preserved: active outline"
+                    .into(),
+            ])
+        );
+    }
+    #[test]
+    fn same_length_or_trimmed_text_cannot_authorize_normal_repair() {
+        for source in ["Other", " Title", "Title "] {
+            let mut n = document("Title");
+            n.content[0] = heading("Title", 1);
+            assert_unchanged_after_refusal(
+                Audit::Proven(vec![Block::NormalParagraph(vec![run(source, 20)])]),
+                n,
+            );
+        }
+    }
+    #[test]
+    fn late_identity_failure_rolls_back_normal_repair_and_notices() {
+        let mut n = document("Title");
+        n.content[0] = heading("Title", 1);
+        n.content.push(document("Actual").content.remove(0));
+        assert_unchanged_after_refusal(
+            Audit::Proven(vec![
+                Block::NormalParagraph(vec![run("Title", 20)]),
+                Block::NormalParagraph(vec![run("Wrong!", 20)]),
+            ]),
+            n,
+        );
+    }
+    #[test]
+    fn late_break_failure_rolls_back_normal_repair_and_notices() {
+        let mut n = document("Title");
+        n.content[0] = heading("Title", 1);
+        n.content.push(document("Actual").content.remove(0));
+        assert_unchanged_after_refusal(
+            Audit::Proven(vec![
+                Block::NormalParagraph(vec![run("Title", 20)]),
+                Block::PageBreak,
+            ]),
+            n,
+        );
+    }
+    #[test]
+    fn final_validation_failure_rolls_back_normal_repair_and_notices() {
+        let mut n = document("Title");
+        n.content[0] = heading("Title", 1);
+        n.content[0].attrs.insert("unknown".into(), true.into());
+        assert_unchanged_after_refusal(
+            Audit::Proven(vec![Block::NormalParagraph(vec![run("Title", 20)])]),
+            n,
+        );
+    }
+    #[test]
+    fn outline_declarations_never_prove_encoded_normal_identity() {
+        for level in 0..=9 {
+            let mut reasons = BTreeSet::new();
+            apply_paragraph(&[0x40, 0x26, level], &mut reasons).unwrap();
+            assert!(reasons.iter().any(|r| r.contains("0x2640")));
+        }
+        assert!(apply_paragraph(&[0x40, 0x26], &mut BTreeSet::new()).is_err());
+    }
+    #[test]
+    fn non_normal_and_inherited_style_identities_are_not_proven() {
+        for (identity, base_index) in [(1u16, 0xfffu16), (2, 0xfff), (3, 0xfff), (0, 15)] {
+            let mut base = [0u8; 10];
+            base[..2].copy_from_slice(&identity.to_le_bytes());
+            base[2..4].copy_from_slice(&((base_index << 4) | 1).to_le_bytes());
+            base[6..8].copy_from_slice(&10u16.to_le_bytes());
+            let style = Style {
+                base: &base,
+                record_length: 10,
+                name_empty: false,
+                upx: vec![&[], &[]],
+            };
+            let mut reasons = BTreeSet::new();
+            validate_active_style(&style, identity, true, &mut reasons).unwrap();
+            assert!(!reasons.is_empty());
         }
     }
     #[test]
@@ -1511,7 +1786,7 @@ mod tests {
         let before = n.clone();
         assert!(
             attach(
-                Audit::Proven(vec![Block::Paragraph(vec![run("source", 20)])]),
+                Audit::Proven(vec![Block::NormalParagraph(vec![run("source", 20)])]),
                 &mut n,
                 &mut BTreeSet::new()
             )
@@ -1530,7 +1805,10 @@ mod tests {
             attrs: Default::default(),
         });
         attach(
-            Audit::Proven(vec![Block::Paragraph(vec![run("a’", 20), run("bc", 32)])]),
+            Audit::Proven(vec![Block::NormalParagraph(vec![
+                run("a’", 20),
+                run("bc", 32),
+            ])]),
             &mut n,
             &mut BTreeSet::new(),
         )
@@ -1552,7 +1830,7 @@ mod tests {
         });
         assert!(
             attach(
-                Audit::Proven(vec![Block::Paragraph(vec![run("x", 20)])]),
+                Audit::Proven(vec![Block::NormalParagraph(vec![run("x", 20)])]),
                 &mut n,
                 &mut BTreeSet::new()
             )
