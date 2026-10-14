@@ -3,7 +3,9 @@
 //!
 //! This does not trust permissive legacy formatting recovery, implement a general
 //! Word style engine, or promise appearance. All reads use the import snapshot.
-use crate::document::{BreakParagraph, BreakParagraphFont, Mark, Node};
+use crate::document::{
+    BreakParagraph, BreakParagraphFont, FontFamilyClass, FontFamilyMetadata, Mark, Node,
+};
 use anyhow::{Context, Result, ensure};
 use office_oxide::cfb::{CfbReader, EntryType};
 use std::{
@@ -40,6 +42,7 @@ pub(crate) enum Block {
     SourcePageBreak {
         cp_end: u32,
         metrics: std::result::Result<BreakParagraph, String>,
+        families: [u8; 4],
         split: bool,
         fallback: Option<String>,
     },
@@ -90,6 +93,7 @@ impl ParagraphSpacing {
 pub(crate) struct Run {
     text: String,
     font: String,
+    families: [u8; 2],
     hps: u16,
     direct_hps: Option<u16>,
 }
@@ -104,6 +108,71 @@ struct Properties {
 struct Font {
     name: String,
     charset: u8,
+    family: u8,
+}
+
+/// Font-table declarations have document-wide scope. Commit all active source
+/// classifications together, or none; an ambiguous entry must never choose the
+/// metadata of whichever FFN record happened to be visited first.
+#[derive(Default)]
+struct FamilyMetadataProof {
+    records: BTreeMap<String, FontFamilyClass>,
+    aliases: BTreeMap<String, String>,
+    reasons: BTreeSet<String>,
+}
+impl FamilyMetadataProof {
+    fn add(&mut self, name: &str, families: &[u8]) {
+        if families.iter().any(|family| !matches!(family, 1 | 2)) {
+            self.reasons.insert(
+                "an emitted Latin font has a valid family outside the supported Roman/Swiss subset"
+                    .into(),
+            );
+            return;
+        }
+        if !families.iter().all(|family| *family == families[0]) {
+            self.reasons.insert(
+                "effective Latin slots or retained break characters disagree on font family".into(),
+            );
+            return;
+        }
+        let family = if families[0] == 1 {
+            FontFamilyClass::Roman
+        } else {
+            FontFamilyClass::Swiss
+        };
+        let folded = name.to_ascii_lowercase();
+        if self
+            .aliases
+            .get(&folded)
+            .is_some_and(|previous| previous != name)
+        {
+            self.reasons
+                .insert("emitted font names contain distinct ASCII-case aliases".into());
+        }
+        self.aliases.insert(folded, name.to_owned());
+        if self
+            .records
+            .get(name)
+            .is_some_and(|previous| *previous != family)
+        {
+            self.reasons
+                .insert("one emitted literal font name has conflicting source families".into());
+        }
+        self.records.insert(name.to_owned(), family);
+    }
+    fn metadata(&self) -> Vec<FontFamilyMetadata> {
+        if self.reasons.is_empty() {
+            self.records
+                .iter()
+                .map(|(name, family)| FontFamilyMetadata {
+                    name: name.clone(),
+                    family: *family,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
 }
 #[derive(Debug)]
 struct Style<'a> {
@@ -504,16 +573,22 @@ fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
     for (paragraph, spacing) in paragraphs.into_iter().zip(paragraph_spacing) {
         let content = paragraph.start..paragraph.end - 1;
         if &word[content.clone()] == b"\x0c" {
-            let metric = |position: usize| -> Result<BreakParagraphFont> {
+            let metric = |position: usize| -> Result<(BreakParagraphFont, [u8; 2])> {
                 let index = character_runs.partition_point(|run| run.range.end <= position);
                 let properties = &effective[index];
-                Ok(BreakParagraphFont {
-                    family: fonts[properties.ascii as usize].name.clone(),
-                    half_points: properties.hps,
-                })
+                Ok((
+                    BreakParagraphFont {
+                        family: fonts[properties.ascii as usize].name.clone(),
+                        half_points: properties.hps,
+                    },
+                    [
+                        fonts[properties.ascii as usize].family,
+                        fonts[properties.other as usize].family,
+                    ],
+                ))
             };
-            let font = metric(content.start)?;
-            let mark_font = metric(content.end)?;
+            let (font, font_families) = metric(content.start)?;
+            let (mark_font, mark_families) = metric(content.end)?;
             let metrics = if font != mark_font {
                 Err("page-break character and trailing paragraph mark have different Latin font metrics".into())
             } else {
@@ -527,6 +602,12 @@ fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
             blocks.push(Block::SourcePageBreak {
                 cp_end: (content.end - range.start) as u32,
                 metrics,
+                families: [
+                    font_families[0],
+                    font_families[1],
+                    mark_families[0],
+                    mark_families[1],
+                ],
                 split: false,
                 fallback: None,
             });
@@ -552,6 +633,10 @@ fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
                 runs.push(Run {
                     text: decode_latin(&word[start..end], &mut reasons)?,
                     font: fonts[props.ascii as usize].name.clone(),
+                    families: [
+                        fonts[props.ascii as usize].family,
+                        fonts[props.other as usize].family,
+                    ],
                     hps: props.hps,
                     direct_hps: props.direct_hps,
                 });
@@ -653,6 +738,7 @@ fn parse_fonts(data: &[u8]) -> Result<Vec<Font>> {
         out.push(Font {
             name,
             charset: entry[3],
+            family: (entry[0] >> 4) & 7,
         });
         offset += length;
     }
@@ -1417,6 +1503,11 @@ pub(crate) fn attach(
             .contains_key("splitPageBreakAndParagraphMark"),
         "DOC parser introduced unproved split-page-break compatibility"
     );
+    ensure!(
+        !candidate.attrs.contains_key("fontFamilyMetadata"),
+        "DOC parser introduced unproved font family metadata"
+    );
+    let mut family_proof = FamilyMetadataProof::default();
     let mut generated = 1 + candidate.content.len();
     let mut preserved_spacing = 0;
     let mut unsupported_spacing = BTreeMap::<String, usize>::new();
@@ -1437,6 +1528,7 @@ pub(crate) fn attach(
                 );
                 if let Block::SourcePageBreak {
                     metrics,
+                    families,
                     split,
                     fallback,
                     ..
@@ -1444,6 +1536,7 @@ pub(crate) fn attach(
                 {
                     if split {
                         let metrics = metrics.map_err(anyhow::Error::msg)?;
+                        family_proof.add(&metrics.font.family, &families);
                         node.attrs
                             .insert("breakParagraph".into(), serde_json::to_value(metrics)?);
                         preserved_breaks += 1;
@@ -1509,6 +1602,7 @@ pub(crate) fn attach(
                         let start = source_start.max(current);
                         let end = source_end.min(next);
                         if start < end {
+                            family_proof.add(&run.font, &run.families);
                             ensure!(
                                 value.is_char_boundary(start - current)
                                     && value.is_char_boundary(end - current),
@@ -1578,8 +1672,26 @@ pub(crate) fn attach(
             .attrs
             .insert("splitPageBreakAndParagraphMark".into(), true.into());
     }
+    let metadata = family_proof.metadata();
+    if !metadata.is_empty() {
+        candidate.attrs.insert(
+            "fontFamilyMetadata".into(),
+            serde_json::to_value(&metadata)?,
+        );
+    }
     crate::document::validate(&candidate)?;
     *document = candidate;
+    if !metadata.is_empty() {
+        risks.insert(format!(
+            "Legacy DOC source Roman/Swiss font family metadata is preserved for {} emitted literal font name(s); font availability, browser printing and other consumers may differ",
+            metadata.len()
+        ));
+    }
+    for reason in family_proof.reasons {
+        risks.insert(format!(
+            "Legacy DOC source font family metadata is not preserved for any font: {reason}"
+        ));
+    }
     risks.insert(PRESERVED.into());
     risks.insert(NORMAL_PRESERVED.into());
     risks.insert("Font names are preserved; unavailable fonts may be substituted locally".into());
@@ -1666,6 +1778,7 @@ mod tests {
         Run {
             text: text.into(),
             font: "Arial".into(),
+            families: [2; 2],
             hps,
             direct_hps: None,
         }
@@ -1674,6 +1787,7 @@ mod tests {
         Block::SourcePageBreak {
             cp_end: 0,
             metrics: Err("unproved test break".into()),
+            families: [0; 4],
             split: false,
             fallback: None,
         }
@@ -1807,6 +1921,7 @@ mod tests {
     fn source_break(split: bool) -> Block {
         Block::SourcePageBreak {
             cp_end: 9,
+            families: [2; 4],
             metrics: Ok(BreakParagraph {
                 font: BreakParagraphFont {
                     family: "Calibri".into(),
@@ -1854,6 +1969,7 @@ mod tests {
             metrics,
             split,
             fallback,
+            ..
         } = &blocks[2]
         else {
             panic!("break identity");
@@ -2023,7 +2139,7 @@ mod tests {
         );
         let mut doc = document("same");
         attach(Audit::Proven(blocks), &mut doc, &mut BTreeSet::new()).unwrap();
-        assert!(doc.attrs.is_empty());
+        assert!(!doc.attrs.contains_key("splitPageBreakAndParagraphMark"));
     }
     #[test]
     fn section_end_prevents_global_manual_break_semantics() {
@@ -2545,6 +2661,14 @@ mod tests {
         expected.content[0].content = vec![first, second];
         let mut second_source = run("bc", 32);
         second_source.font = "Times New Roman".into();
+        second_source.families = [1; 2];
+        expected.attrs.insert(
+            "fontFamilyMetadata".into(),
+            serde_json::json!([
+                {"name":"Arial","family":"swiss"},
+                {"name":"Times New Roman","family":"roman"}
+            ]),
+        );
         attach(
             Audit::Proven(vec![normal(vec![run("A’", 22), second_source])]),
             &mut n,
@@ -2870,6 +2994,288 @@ mod tests {
             serde_json::to_value(n).unwrap(),
             serde_json::to_value(before).unwrap()
         );
+    }
+    #[test]
+    fn raw_font_family_values_preserve_ignored_bits_and_existing_invalid_refusal() {
+        for family in 0..=7 {
+            let mut raw = font_table("Literal");
+            raw[5] = (raw[5] & 0x0f) | (family << 4) | 0x88;
+            let parsed = parse_fonts(&raw);
+            if family <= 5 {
+                assert_eq!(parsed.unwrap()[0].family, family);
+            } else {
+                assert!(parsed.is_err());
+            }
+        }
+    }
+    fn family_fixture_fonts(word: &mut [u8], table: &mut Vec<u8>, fonts: &[(&str, u8)]) {
+        let mut raw = vec![fonts.len() as u8, 0, 0, 0];
+        for (name, family) in fonts {
+            let mut entry = font_table(name);
+            entry[5] = (entry[5] & 0x0f) | (family << 4);
+            raw.extend_from_slice(&entry[4..]);
+        }
+        word[0x112..0x116].copy_from_slice(&(table.len() as u32).to_le_bytes());
+        word[0x116..0x11a].copy_from_slice(&(raw.len() as u32).to_le_bytes());
+        table.extend(raw);
+    }
+    fn family_fixture_doc() -> Node {
+        serde_json::from_value(serde_json::json!({"type":"doc","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"hello."}]},
+            {"type":"paragraph"}, {"type":"pageBreak"},
+            {"type":"paragraph","content":[{"type":"text","text":"world."}]}
+        ]}))
+        .unwrap()
+    }
+    fn family_fixture_chpx(word: &mut [u8], boundaries: &[u32], font_indices: &[u16]) {
+        assert_eq!(boundaries.len(), font_indices.len() + 1);
+        let page = &mut word[1536..2048];
+        page.fill(0);
+        page[511] = font_indices.len() as u8;
+        for (index, fc) in boundaries.iter().enumerate() {
+            page[4 * index..4 * index + 4].copy_from_slice(&fc.to_le_bytes());
+        }
+        for (index, font) in font_indices.iter().enumerate() {
+            let pos = 400 + index * 12;
+            page[4 * boundaries.len() + index] = (pos / 2) as u8;
+            page[pos] = 8;
+            for (offset, op) in [(1, 0x4a4fu16), (5, 0x4a51u16)] {
+                page[pos + offset..pos + offset + 2].copy_from_slice(&op.to_le_bytes());
+                page[pos + offset + 2..pos + offset + 4].copy_from_slice(&font.to_le_bytes());
+            }
+        }
+    }
+    #[test]
+    fn raw_ordinary_cr_empty_and_unretained_break_families_do_not_block_text_metadata() {
+        let (mut word, mut table) = fixture_spacing(&[], [&[], &[], &[], &[]]);
+        family_fixture_fonts(&mut word, &mut table, &[("Literal", 1), ("Unemitted", 5)]);
+        family_fixture_chpx(&mut word, &[1024, 1030, 1034, 1040, 1041], &[0, 1, 0, 1]);
+        let audit = audit_streams(&word, &table).unwrap();
+        let mut doc = family_fixture_doc();
+        let mut risks = BTreeSet::new();
+        attach(audit, &mut doc, &mut risks).unwrap();
+        assert_eq!(
+            doc.attrs["fontFamilyMetadata"],
+            serde_json::json!([{"name":"Literal","family":"roman"}])
+        );
+        assert!(doc.content[1].content.is_empty() && doc.content[2].attrs.is_empty());
+        assert!(
+            !risks
+                .iter()
+                .any(|risk| risk.contains("metadata is not preserved"))
+        );
+    }
+    #[test]
+    fn raw_break_and_trailing_cr_family_mismatch_keeps_prior_metric_proof() {
+        let (mut word, mut table) = fixture_spacing(&[], [&[], &[], &[], &[]]);
+        family_fixture_fonts(&mut word, &mut table, &[("Literal", 1), ("Literal", 2)]);
+        family_fixture_chpx(&mut word, &[1024, 1033, 1034, 1041], &[0, 1, 0]);
+        let Audit::Proven(mut blocks) = audit_streams(&word, &table).unwrap() else {
+            panic!("body proof")
+        };
+        let Block::SourcePageBreak {
+            families, metrics, ..
+        } = &blocks[2]
+        else {
+            panic!("break proof")
+        };
+        assert_eq!(*families, [1, 1, 2, 2]);
+        assert!(metrics.is_ok());
+        promote_break_paragraphs(
+            &mut blocks,
+            &split_page_proof(Some(true), None),
+            &BTreeSet::from([9]),
+        );
+        let mut doc = family_fixture_doc();
+        let mut risks = BTreeSet::new();
+        attach(Audit::Proven(blocks), &mut doc, &mut risks).unwrap();
+        assert!(!doc.attrs.contains_key("fontFamilyMetadata"));
+        assert_eq!(doc.attrs["splitPageBreakAndParagraphMark"], true);
+        assert_eq!(
+            doc.content[2].attrs["breakParagraph"]["font"]["family"],
+            "Literal"
+        );
+        assert!(
+            risks
+                .iter()
+                .any(|risk| risk.ends_with("disagree on font family"))
+        );
+    }
+    #[test]
+    fn unused_source_alias_conflict_or_unsupported_font_never_enters_metadata() {
+        for unused in [("literal", 1), ("Literal", 1), ("Unused", 5)] {
+            let (mut word, mut table) = fixture_spacing(&[], [&[], &[], &[], &[]]);
+            family_fixture_fonts(&mut word, &mut table, &[("Literal", 2), unused]);
+            let audit = audit_streams(&word, &table).unwrap();
+            let mut doc = family_fixture_doc();
+            let mut risks = BTreeSet::new();
+            attach(audit, &mut doc, &mut risks).unwrap();
+            assert_eq!(
+                doc.attrs["fontFamilyMetadata"],
+                serde_json::json!([
+                    {"name":"Literal","family":"swiss"}
+                ])
+            );
+            assert!(
+                !risks
+                    .iter()
+                    .any(|risk| risk.contains("metadata is not preserved"))
+            );
+        }
+    }
+    #[test]
+    fn raw_effective_same_name_slots_with_different_family_only_fall_back_metadata() {
+        let (mut word, mut table) = fixture_spacing(&[], [&[], &[], &[], &[]]);
+        family_fixture_fonts(&mut word, &mut table, &[("Literal", 1), ("Literal", 2)]);
+        // STSHI ftcOther is index 1; ftcAscii remains index 0.
+        let stsh = u32_at(&word, 0xa2).unwrap();
+        table[stsh + 18..stsh + 20].copy_from_slice(&1u16.to_le_bytes());
+        let audit = audit_streams(&word, &table).unwrap();
+        assert!(matches!(audit, Audit::Proven(_)));
+        let mut doc = family_fixture_doc();
+        let mut risks = BTreeSet::new();
+        attach(audit, &mut doc, &mut risks).unwrap();
+        assert!(!doc.attrs.contains_key("fontFamilyMetadata"));
+        assert_eq!(doc.content[0].content[0].marks[1].attrs["name"], "Literal");
+        assert!(
+            risks
+                .iter()
+                .any(|risk| risk.ends_with("disagree on font family"))
+        );
+    }
+    #[test]
+    fn unsupported_families_aliases_and_conflicts_fall_back_all_metadata_only() {
+        for (name, families, reason) in [
+            ("Other", [0, 0], "outside the supported"),
+            ("Other", [3, 3], "outside the supported"),
+            ("Other", [4, 4], "outside the supported"),
+            ("Other", [5, 5], "outside the supported"),
+            ("Other", [1, 2], "disagree on font family"),
+            ("Arial", [1, 1], "conflicting source families"),
+            ("ARIAL", [2, 2], "ASCII-case aliases"),
+        ] {
+            let mut second = run("y", 22);
+            second.font = name.into();
+            second.families = families;
+            let mut doc = document("xy");
+            let mut risks = BTreeSet::from(["existing".into()]);
+            attach(
+                Audit::Proven(vec![normal(vec![run("x", 20), second])]),
+                &mut doc,
+                &mut risks,
+            )
+            .unwrap();
+            assert!(!doc.attrs.contains_key("fontFamilyMetadata"));
+            assert_eq!(doc.content[0].attrs, spacing_attrs(0, 0, 240));
+            assert_eq!(doc.content[0].content[1].marks[1].attrs["name"], name);
+            assert!(risks.contains("existing") && risks.iter().any(|risk| risk.contains(reason)));
+            assert!(
+                !risks
+                    .iter()
+                    .any(|risk| risk.contains("metadata is preserved"))
+            );
+        }
+    }
+    #[test]
+    fn exact_duplicate_families_collapse_without_name_inference() {
+        let mut second = run("y", 22);
+        second.font = "Z Literal".into();
+        second.families = [1; 2];
+        let mut doc = document("xyz");
+        attach(
+            Audit::Proven(vec![normal(vec![run("x", 20), second, run("z", 24)])]),
+            &mut doc,
+            &mut BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            doc.attrs["fontFamilyMetadata"],
+            serde_json::json!([
+                {"name":"Arial","family":"swiss"}, {"name":"Z Literal","family":"roman"}
+            ])
+        );
+    }
+    #[test]
+    fn retained_break_family_disagreement_preserves_old_split_metrics_atomically() {
+        let mut block = source_break(true);
+        if let Block::SourcePageBreak { families, .. } = &mut block {
+            *families = [2, 2, 1, 1];
+        }
+        let mut doc = document("x");
+        doc.content.push(break_node());
+        let mut risks = BTreeSet::new();
+        attach(
+            Audit::Proven(vec![normal(vec![run("x", 20)]), block]),
+            &mut doc,
+            &mut risks,
+        )
+        .unwrap();
+        assert!(!doc.attrs.contains_key("fontFamilyMetadata"));
+        assert_eq!(doc.attrs["splitPageBreakAndParagraphMark"], true);
+        assert_eq!(
+            doc.content[1].attrs["breakParagraph"]["font"]["family"],
+            "Calibri"
+        );
+        assert!(
+            risks
+                .iter()
+                .any(|risk| risk.ends_with("disagree on font family"))
+        );
+    }
+    #[test]
+    fn only_emitted_text_and_retained_break_metrics_supply_family_evidence() {
+        let mut ignored = source_break(false);
+        if let Block::SourcePageBreak { families, .. } = &mut ignored {
+            *families = [5; 4];
+        }
+        let mut doc = document("x");
+        doc.content.extend([
+            break_node(),
+            serde_json::from_value(serde_json::json!({"type":"paragraph"})).unwrap(),
+        ]);
+        let mut empty = run("", 20);
+        empty.families = [5; 2];
+        let mut risks = BTreeSet::new();
+        attach(
+            Audit::Proven(vec![
+                normal(vec![run("x", 20)]),
+                ignored,
+                normal(vec![empty]),
+            ]),
+            &mut doc,
+            &mut risks,
+        )
+        .unwrap();
+        assert_eq!(
+            doc.attrs["fontFamilyMetadata"],
+            serde_json::json!([{"name":"Arial","family":"swiss"}])
+        );
+        assert!(
+            !risks
+                .iter()
+                .any(|risk| risk.contains("metadata is not preserved"))
+        );
+    }
+    #[test]
+    fn family_evidence_and_diagnostics_never_escape_late_identity_or_model_failure() {
+        let mut doc = document("x");
+        doc.content.push(text_node("invalid top-level node"));
+        assert_unchanged_after_refusal(
+            Audit::Proven(vec![
+                normal(vec![run("x", 20)]),
+                normal(vec![run("bad", 20)]),
+            ]),
+            doc,
+        );
+        let mut doc = document("x");
+        doc.attrs.insert("unknown".into(), true.into());
+        assert_unchanged_after_refusal(Audit::Proven(vec![normal(vec![run("x", 20)])]), doc);
+        let mut doc = document("x");
+        doc.attrs.insert(
+            "fontFamilyMetadata".into(),
+            serde_json::json!([{"name":"Arial","family":"roman"}]),
+        );
+        assert_unchanged_after_refusal(Audit::Proven(vec![normal(vec![run("x", 20)])]), doc);
     }
     #[test]
     fn exact_run_split_preserves_existing_marks() {

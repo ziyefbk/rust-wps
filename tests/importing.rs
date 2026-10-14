@@ -246,7 +246,7 @@ fn encoded_normal_import_repairs_guessed_headings_without_changing_legacy_ir() {
         .collect();
     assert_eq!(guessed_levels, vec![1, 2]);
     let report = importing::import_doc(&source).unwrap();
-    let expected = serde_json::json!({"type":"doc","attrs":{"styleProfile":"standard-v2"},"content":[
+    let expected = serde_json::json!({"type":"doc","attrs":{"styleProfile":"standard-v2","fontFamilyMetadata":[{"name":"Times New Roman","family":"roman"}]},"content":[
         {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240},"content":[{"type":"text","text":"Title!","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]},
         {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240}}, {"type":"pageBreak"},
         {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240},"content":[{"type":"text","text":"LATER!","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]}
@@ -288,7 +288,7 @@ fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
     let bytes = include_bytes!("fixtures/doc-typography/blank.doc");
     std::fs::write(&source, bytes).unwrap();
     let report = importing::import_doc(&source).unwrap();
-    let expected = serde_json::json!({"type":"doc","attrs":{"styleProfile":"standard-v2"},"content":[
+    let expected = serde_json::json!({"type":"doc","attrs":{"styleProfile":"standard-v2","fontFamilyMetadata":[{"name":"Times New Roman","family":"roman"}]},"content":[
         {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240},"content":[{"type":"text","text":"hello.","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]},
         {"type":"paragraph","attrs":{"spaceBefore":0,"spaceAfter":0,"lineSpacing":240}},
         {"type":"pageBreak"},
@@ -300,6 +300,12 @@ fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
     document::export_docx(&report.document, &output).unwrap();
     let reopened = importing::import_docx(&output).unwrap();
     let mut exported_expected = expected;
+    // Generic external import does not yet preserve fontTable classification;
+    // only the full trusted authored-model reopen retains this root metadata.
+    exported_expected["attrs"]
+        .as_object_mut()
+        .unwrap()
+        .remove("fontFamilyMetadata");
     // External re-import retains the exported page and the proven legacy spacing values.
     exported_expected["attrs"]["pageGeometry"] = serde_json::json!({"widthTwips":11906,"heightTwips":16838,"marginTopTwips":1440,"marginRightTwips":1440,"marginBottomTwips":1440,"marginLeftTwips":1440});
     for index in [0, 1, 3] {

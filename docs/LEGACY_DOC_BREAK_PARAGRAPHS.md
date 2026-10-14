@@ -1,5 +1,7 @@
 # 旧 DOC 独立分页段与段落标记
 
+后续 [Roman / Swiss 字体类别增量](LEGACY_DOC_FONT_FAMILIES.md) 在相同受证明 Latin 子集内保留源字体类别，修复固定消费者中 SampleDoc 导出副本的替代差异。本文保留当时的历史失败与验证结果；字面字体仍可能未安装，Word / WPS、浏览器 / 原生打印及一般外部 DOCX fontTable 导入限制仍有效。
+
 本增量保留源文件明确要求的“分页后把段落标记留到下一页”语义，以及该独立分页段的 Latin 字体、字号与完整间距。保留原有 `pageBreak` 原子身份，不添加空段、伪文字或坐标补偿，不修改字体替代、vendor、全局 compatibilityMode 或其他格式。
 
 ## 模型与新编辑语义

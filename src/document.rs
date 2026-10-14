@@ -55,6 +55,81 @@ pub fn supported_font_family(name: &str) -> bool {
         && xml_text(name)
 }
 
+/// Source-supplied or explicitly authored font substitution classification.
+/// This is independent of the literal face name and never selects a local font.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum FontFamilyClass {
+    Roman,
+    Swiss,
+}
+
+impl FontFamilyClass {
+    fn xml_value(self) -> &'static str {
+        match self {
+            Self::Roman => "roman",
+            Self::Swiss => "swiss",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FontFamilyMetadata {
+    pub name: String,
+    pub family: FontFamilyClass,
+}
+
+/// Root metadata may outlive its current use in the document, so ordinary
+/// deleting, formatting and undo never silently erase authored font information.
+/// Exact spelling is retained; ASCII case aliases are conservatively ambiguous.
+fn font_family_metadata(doc: &Node) -> Result<Vec<FontFamilyMetadata>> {
+    let Some(value) = doc.attrs.get("fontFamilyMetadata") else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .context("Font family metadata must be an array; omit it for the default")?;
+    ensure!(
+        (1..=256).contains(&values.len()),
+        "Font family metadata must contain 1 to 256 records"
+    );
+    let records: Vec<FontFamilyMetadata> =
+        serde_json::from_value(value.clone()).context("Invalid font family metadata")?;
+    let mut names = std::collections::BTreeSet::new();
+    for record in &records {
+        ensure!(
+            supported_font_family(&record.name),
+            "Invalid font family metadata literal name"
+        );
+        ensure!(
+            names.insert(record.name.to_ascii_lowercase()),
+            "Duplicate or ASCII-case-ambiguous font family metadata name"
+        );
+    }
+    Ok(records)
+}
+
+fn font_table_xml(doc: &Node) -> Result<Option<String>> {
+    let mut records = font_family_metadata(doc)?;
+    if records.is_empty() {
+        return Ok(None);
+    }
+    records.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut xml =
+        r#"<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#
+            .to_owned();
+    for record in records {
+        xml.push_str(&format!(
+            r#"<w:font w:name="{}"><w:family w:val="{}"/></w:font>"#,
+            escaped(&record.name),
+            record.family.xml_value()
+        ));
+    }
+    xml.push_str("</w:fonts>");
+    Ok(Some(xml))
+}
+
 #[derive(Serialize)]
 pub struct ExportReport {
     pub blocks: usize,
@@ -993,6 +1068,7 @@ pub fn validate(doc: &Node) -> Result<()> {
     ensure!(doc.kind == "doc", "Root must be doc");
     style_profile(doc)?;
     split_page_break_and_paragraph_mark(doc)?;
+    font_family_metadata(doc)?;
     let page = page_geometry(doc)?;
     let mut nodes = 0usize;
     let mut text_bytes = 0usize;
@@ -1014,6 +1090,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "styleProfile",
                 "pageGeometry",
                 "splitPageBreakAndParagraphMark",
+                "fontFamilyMetadata",
             ],
             "pageBreak" => &["breakParagraph"],
             "heading" => &[
@@ -1899,6 +1976,7 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
     validate(doc)?;
     let profile = style_profile(doc)?;
     let model_part = profile.model_part();
+    let font_table = font_table_xml(doc)?;
     let mut writer = Writer {
         profile,
         page: page_geometry(doc)?,
@@ -1976,12 +2054,16 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
     // historical V1/V2 package bytes unchanged when no spacing is authored.
     let split_break = split_page_break_and_paragraph_mark(doc)?;
     let has_settings = writer.has_spacing || split_break;
-    let types = if has_settings {
+    let mut types = if has_settings {
         rels = rels.replace("</Relationships>", r#"<Relationship Id="settings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#);
         types.replace("</Types>", r#"<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#)
     } else {
         types.to_owned()
     };
+    if font_table.is_some() {
+        rels = rels.replace("</Relationships>", r#"<Relationship Id="fontTable" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/></Relationships>"#);
+        types = types.replace("</Types>", r#"<Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/></Types>"#);
+    }
     let package_rels = format!(
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="office" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="authoring" Type="urn:rust-wps:authoring-model" Target="{model_part}"/></Relationships>"#
     );
@@ -2014,6 +2096,14 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
             zip.write_all(data.as_bytes())?;
             hashes.insert(
                 "word/settings.xml".into(),
+                format!("{:x}", Sha256::digest(data.as_bytes())),
+            );
+        }
+        if let Some(data) = &font_table {
+            zip.start_file("word/fontTable.xml", SimpleFileOptions::default())?;
+            zip.write_all(data.as_bytes())?;
+            hashes.insert(
+                "word/fontTable.xml".into(),
                 format!("{:x}", Sha256::digest(data.as_bytes())),
             );
         }

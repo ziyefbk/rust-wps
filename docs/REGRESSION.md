@@ -1,5 +1,82 @@
 # 当前跨格式回归记录
 
+## 本轮：旧 DOC 的源 Roman / Swiss 字体类别（2026-10-14）
+
+基于已发布 `691bb91775a3a2d745a0e99d15a99fefca366553`，在既有完整 Latin / 编码 Normal 正文证明上保留 FFN 的 Roman / Swiss 类别。只收集实际输出文字与已保留分页段的有效字体，两个 Latin 槽及 break / CR 类别须一致；同名字体类别冲突、不同 ASCII 大小写别名、合法其他类别使全部新类别共同回退，已证明的旧属性保持。未使用字体、普通 CR、真正空段和未保留度量的分页不提供新类别证据。模型与诊断完整校验后才共同提交，未改变 vendor、源文字、字号 / 粗体、字体安装或渲染器选择。范围见 [旧 DOC 字体类别](LEGACY_DOC_FONT_FAMILIES.md)。
+
+作者根 `fontFamilyMetadata` 是可选 1–256 项严格 `{name,family}` 数组，仅 `roman` / `swiss`；未使用作者条目可保留，独立于当前正文与来源认证。来源精确重复合并，作者任何 ASCII 折叠重名均拒绝；没有 Unicode 名字规范化。确定性 fontTable、内部关系和内容类型仅在元数据存在时添加，完整部件集合 / 哈希 / 重编码保护贯通。可信 `read-docx-model` 保留类别，通用外部 `import-docx` 仍不读取 fontTable；既有测试明确保持这条外部路径的完整旧模型期望。
+
+### 两工具链门禁与冻结身份
+
+- Rust **1.99 / 1.88 各 757 项核心测试通过**，原 742 + 10 单元 / 5 集成。覆盖原始 FFN 位、两个有效槽、未使用别名 / 冲突、普通 CR / 空段 / 未保留分页、保留分页与尾 CR 冲突、全组回退、字面名与类别的独立性、迟到身份 / 模型失败的完整回滚；作者边界、排序 / 转义、草稿原子性、条件 OPC、完整可信重开与不覆盖也通过。定向 85 + 5 + 6 项是完整门禁子集，不重复累加
+- 原始严格 all-target Clippy 仍各仅有既有单项：stable `spreadsheet_xls.rs:129` 的 `chunks_exact_to_as_chunks`；MSRV `presentation_import.rs:97` 的 `uninlined_format_args`。仅排除对应单项后的 all-target Clippy 与 build 全通过；无新增源码 lint 豁免
+- stable 最终报告 `tmp/legacy-doc-font-metadata-gates-stable-final2.json` SHA **89a55b81e27b6c4c5fa51a7b0d25150b60012636deda38d85bfb6762e59dd33c**；核心日志 `tmp/legacy-doc-font-metadata-core-stable-final2.log` SHA `e4f16afa35534e7bf6bba6a87f3cb78ee6c8b95998c1e607383191d81428926b`，最低观察空闲 1,212,514,304 bytes，源码前后相同
+- MSRV 最终报告 `tmp/legacy-doc-font-metadata-gates-msrv-final1.json` SHA **ceab0a203259c6fab5335d438ced1bced947cb8a368135ee0b6a17e622209e12**；核心日志 `tmp/legacy-doc-font-metadata-core-msrv-final1.log` SHA `3d2c1061f6c65b620d5dbea0cf004830ee64fa04b0e920768446abae975f0c48`，最低观察空闲 1,236,672,512 bytes，源码前后相同
+- stable 独立 inode 冻结 `tmp/legacy-doc-font-metadata-final-cli` SHA **9d789ea59a9a42bfc588bba48a1fd445e0da8b0d8d247c680c6927c92a581c5b**；`target/debug/librust_wps.rlib` SHA `6e8dea8ee87067391905395b711248ba0d77618fac0facd0159c9a12f1d39498`。冻结报告 `tmp/legacy-doc-font-metadata-frozen-stable-final2.json` SHA `b57369c9b2ce3cf5c6268517f72376908d8c6f8f9e0641ab5b7169e2347f6682`
+- MSRV 独立 inode 冻结 `tmp/legacy-doc-font-metadata-msrv-final-cli` SHA **b94e875e5087da477dfb695145e0dfb6063d129eb6f52206ac6921483c03741c**；`tmp/msrv-target/debug/librust_wps.rlib` SHA `9abca0691ab0a8ac65ea167329b03ecaba5ae13a5b4f48a6d5583c0e47f31e8e`。冻结报告 `tmp/legacy-doc-font-metadata-frozen-msrv-final1.json` SHA `bf300647add7af784a14a4f99329cd0861875dc69468bcdbf699987972def07c`，再次核对 stable CLI / rlib 未变
+- 最终 `src/document.rs` SHA `eef90468dd5b88927563b69a880cc61dc454870fc914da4f68f20f78d4cb2d54`；`src/legacy_typography.rs` SHA `2145d290e4f95aab4e6765bd81d5e215b18258949861350d4859ca2bee23a412`；`tests/word_font_family_metadata.rs` SHA `5728131b9ca7f87f19a9cb4365f5de0c6bd79e73ff8676c4dca74a39a37e1fb9`；`tests/importing.rs` SHA `bc8daa2c07b15da869d309d24b875624529f750e98a4f4b8f1ff502a855a77c4`
+
+两套门禁沿用已有 target，`CARGO_HOME` / `RUSTUP_HOME` 指向工作区 `toolchains/cargo` / `toolchains/rustup`，未改变 RUSTFLAGS、profile、依赖或锁文件：
+
+```sh
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo test --locked --quiet -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo clippy --locked --all-targets -j1 -- -D warnings
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo clippy --locked --all-targets -j1 -- -D warnings -A clippy::chunks_exact_to_as_chunks
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo build --locked -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 test --locked --quiet -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 clippy --locked --all-targets -j1 -- -D warnings
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 clippy --locked --all-targets -j1 -- -D warnings -A clippy::uninlined_format_args
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 build --locked -j1
+```
+
+每 0.5 秒观察空闲空间，低于 600 MiB 停止本门禁进程组；两套最终门禁均未触发。仅在已完成门禁后，按精确文件身份 / fingerprint / inode / 保护路径与 Cargo 锁核对回收可重建测试可执行缓存，未删原件、证据、冻结 CLI 或 rlib：`tmp/test-cache-cleanup-20261014T054000Z.json` SHA `a3060413d89d01fad14a7c6ad44c3fc870832ce2d18cf53ce589ba6ac90e5f2b`；`tmp/test-cache-cleanup-20261014T055900Z.json` SHA `27ea0759b2bb16f467d438a7ddafaf2ff2ae67a10fded557ae45d2cea8663025`。前两次各 26 个已完成测试可执行；后端检查前另仅回收已完成的 inspection / word_page_geometry 两个 stable 测试可执行，67 个二进制保护身份不变，记录 `tmp/test-cache-cleanup-20261014T061200Z.json` SHA `ac0662cafdeab11657ccbb899dac3f171e96f8af7c220e1d2494410780e8a561`，审计 manifest `tmp/legacy-doc-font-metadata-stable-cache-manifest-additional1.json` SHA `578ca2757dadcf9e7a58c495121321709467344f2a59317901fc79053f181e01`。此为观察式停止保护，不是硬磁盘配额。
+
+### 前端状态、草稿与实际 CLI 往返
+
+- prepare-PDF、TypeScript、Vite build 和 **658 项无浏览器检查**通过（原 637 + 21），覆盖严格根 / 条目校验、文档属性事务、复制 / 冻结、普通编辑与清空 / 撤销、独立剪贴板根状态、草稿、不可变打印 DOM 和历史省略字节。报告 `tmp/doc-font-metadata-frontend-final-gates.json` SHA **351f6e2defdec5e7d041d043e1c6a706b3959bf51589b7fd5ed79cac921abac6**；658 项日志 `tmp/doc-font-metadata-frontend-final-3.log` SHA `998554beb440cc726cd974ff77b60305274b6bd74e96036383f8fba0d10d2589`。大 chunk 构建提示仍在，不据此宣称加载性能
+- 编辑器实际快照经最终 CLI 的 **35 个完整模型往返 / 35 次不覆盖 / 105 次 CLI 调用**通过：28 个作者状态与 7 个来自真正 SampleDoc 导入的状态，包含编辑、改字面字体、清空、撤销、草稿恢复及未使用条目。报告 `tmp/font-family-metadata-frontend/editor-cli-final3/report.json` SHA **5bb814f4aa3008f9702439ce48a46a30a374778800054431c4cddf9f427f64ff**；有界执行器 `tmp/font-family-metadata-frontend/editor-cli-final3.runner/runner.json` SHA `5abfe9c0ad0614d25bb7675b08946bfd174ba0b8285e32c3670fcbd245001272`，真实源导入响应与 CLI 前后哈希不变
+- 5 个新增真实浏览器规格仅完成发现，零浏览器启动 / 执行。发现日志 `tmp/font-family-metadata-frontend/browser-discovery.log` SHA `e44b8aa1a3656a15f7fe1227098f1088404f32958c3a9831e8de35bc41c4f490`。无浏览器模型 / 插件 / DOM 运输测试和 CLI 往返不代替真实按键、IME、系统剪贴板或原生打印
+
+根元数据不进入 HTML 剪贴板，也不改变 CSS 通用字体回退；加载 / 草稿恢复 / 打印 / PDF 前明确提示浏览器尚未按此调整替代。普通格式修改不会删除合法但暂未使用的条目，编辑器内部根属性的 null 清除状态、合法赋值及撤销重做独立检验；外部输入模型的显式 null 仍拒绝。
+
+### 独立源、作者状态与固定消费者
+
+独立脚本 `scripts/check-legacy-doc-font-metadata.py` SHA **32496542c7f3f0ba9a417a29d0586515b6a2b01fdbc068e1e3d993ab4b0cc171** 从 CFB / FIB / FFN / Normal / CHPX 原始字节生成预期，不用新产品 parser 生成类别 oracle。最终输入 manifest `tmp/doc-font-family-verify/family-fixtures-mygjma3u/manifest.json` SHA `4b3ae043cd937665e6c04c4e773606672fe968eab2e7b156abd5b12cba80ee02`；报告 `tmp/doc-font-family-verify/family-run-r64tf1pq/report.json` SHA **98930bd9010a47044075e451d324f2c8665df1b7e2ea47d6b5045687a7bcce68**：
+
+- **411 源**：365 历史原件 / 控制、44 新作者二进制、2 复用不变的独立 family 因果对照。197 类别保留、15 全组类别回退、34 完整旧成功路线、165 精确旧拒绝；历史 365 内为 173 保留 / 31 原样成功 / 161 原样拒绝。所有 411 次候选与旧 CLI import、双方 inspect 均新执行；只读结果全部等价，历史包重新导出并核对冻结哈希
+- 14 个合法 / 47 个非法作者状态、26 篡改拒绝、506 完整可信重开、506 不覆盖及 260 XML / OPC oracle 通过。完整模型只能增加准确源类别根属性，原响应字段 / 诊断保留；无类别与回退包保持旧整包字节；修复哈希也不能绕过重编码绑定
+- **20 个新 PDF、零复用 PDF、34 页、68 PNG**。八组实际未修改产品输出 / 新鲜二进制源在完整文字、页 / 行结构、逐字符位置与边框、字形轨迹、相邻 advance、嵌入字体字节 / 资源及 72 / 144 dpi 全页光栅上全部精确相等，没有数值容差；原始 PDF 资源记录（含局部对象号）本次也分别精确相等
+- 八组为真实 SampleDoc、真实 simple.doc、已安装字体的普通分页、不存在名字的 Swiss / Roman 因果对照、文首 / 文末 / 连续分页；另四份旧产品 PDF 新渲染用于基线比较。13 个不同 144 dpi 页面组各实际查看一张完整页面，文字可读，无裁切 / 重叠，预期空白页正确。视觉记录 `tmp/doc-font-family-verify/family-run-r64tf1pq/visual-review.json` SHA **3915ab6ff548e7cd2bccae4072937388f0aa549e2084fb7ca7bd53b12df053ed**
+- 455 受保护身份前后不变；最小观察空闲 1,071,271,936 bytes。checker 无构建；每次消费者使用新进程 / UserInstallation / HOME / XDG / TMPDIR，实际同环境字体清单及字体 / 配置文件身份核对一致
+
+消费者固定为 LibreOfficeDev `26.8.0.0.alpha0`，revision `2c87e51eeaa2b413ff4ae097b2705eea1995d8e5`，实际二进制 SHA `d905a74dc92eaccb22481ba2de1345666a074a5f0d48322aaad1b6dc8a9e1e40`，PyMuPDF 1.26.6。真正 SampleDoc 原件 SHA `717585c0a88f20862c86220163dd03da87cd743970354c6b29add32725f2e833`，实际产品 DOCX `tmp/doc-font-family-verify/family-run-r64tf1pq/genuine-SampleDoc.output.docx` SHA `7a70ee884c525755d822647ab4d56ebb16e165173d54e7e619b3c12ca5f34e2d`。原字面 Arial Black 仍未安装；第二页从旧产品 NotoSerif-Regular 恢复到源消费 NotoSans-Regular，最大逐字符 x 差从 8.81591796875 pt 变为 0.0 pt，y 保持精确；两页光栅与新鲜源同时精确。
+
+独立不存在名字 `JwAbsentFamilyProbe62` 的 Swiss / Roman CFB 完整文件仅一个 family 字节不同，各自实际产品输出均与源相同。SampleDoc 自身仍受消费者 Arial 前缀特例影响，不能单独证明 FFN 因果。此前 23-PDF ZIP 干预实验及完整元数据的局部对象号资格说明保留；这些诊断包不计入本轮 20-PDF 真实产品或可信重开证据。
+
+### 提取后端、实际 worker 与历史契约
+
+汇总 `tmp/doc-font-family-regression/summary.json` SHA **000a6eaeae6a9146f590a22ffacf6fc2332ce8b1472a1015209529ee0dbc4682** 全通过，最终 **14,580 个受保护身份未变**。该执行器没有新渲染 PDF：325 份历史 PDF 仅核对保留哈希，另外核对独立 checker 的 20 份新 PDF 未变，两类不重复计作新渲染。
+
+- 既有生产后端提取测试连接各自最终 rlib，stable / MSRV **各 35 项通过**，无忽略 / 过滤。报告 `tmp/doc-font-family-regression/backend-stable-test-aqwx5t25/report.json` SHA `e52fae68c2ddde770590abea17a0f1800a7e48274dfe4a4f241fdd504dc5325a` 与 `tmp/doc-font-family-regression/backend-msrv-test-c75v0ejc/report.json` SHA `ccef31fb31268de80495c4dcce5ebdb5b2390688cf64437d3aa8898cdfc7dcd7`。这不是完整 Tauri / 原生 IPC / 对话框 / 打印验收
+- 历史 DOCX **1,520 次候选读取全新执行且原始响应精确相同**：505 audit、771 import、244 trusted read，零差异 / 新拒绝。比较端明确复用上轮已固定 CLI 的成功原始响应，并重新核对基线二进制及响应报告身份；不称为旧 CLI 再次读取。302 份无新属性作者 golden 由旧 / 新 CLI 分别重新导出，各自完成 302 次整包字节比较、604 次完整可信重开及 604 次不覆盖。报告 `tmp/doc-font-family-regression/historical-w_nlm0h7/report.json` SHA **0c9f135670991156dca9e26ccef78ef79fe0aaa68cd7bcae42d76788cbc4441d**
+- 生产 worker 子进程运输覆盖同一 **411 源**：411 完整导入响应与独立预期相等，411 次只读 Open / inspect 相等；246 完整成功模型、246 完整导出可信 Open 和 246 不覆盖，197 源共同保留 205 项源类别，49 未升级模型与旧模型完整相等（34 完整旧响应及 15 明确类别回退）。165 次旧拒绝及完整原因不变，均可只读打开；拒绝涵盖损坏、超限与不支持来源，不一律称为损坏文件。报告 `tmp/doc-font-family-regression/worker-1l_pxjec/report.json` SHA **ee0dc5da18d7f86e65dbf0d3a8f8a7154e22cf0ed193de6b25425f85f8252fc9**
+- 错误比较仅规范 anyhow CLI 多行与 Rust 字符串冒号连接形式，保留全因果链和原 stdout / stderr。生产 probe 构建报告 `tmp/doc-font-family-regression/backend-stable-worker-yq_gg8j8/report.json` SHA `05c58ebaa0b08d66f70449e6dafdebb5ade3c4cc3f17ba0a0e2531f341fde503`；可执行 `tmp/doc-font-family-regression/backend-stable-worker-yq_gg8j8/worker-probe` SHA `6f2009de12a7fe71acc26a2e0c34a06eea1421286fc123e11fc0a69609720043`。后端可执行、所有原件和证据保留，该验证执行器没有删除文件
+
+### 保留的失败尝试与修正
+
+- stable 初次全量门禁在两个旧 `tests/importing.rs` 精确期望缺少新根属性处失败，产品差异仅是源 Times New Roman / roman；独立原始 FFN / STSHI / CHPX 审阅确认后只增加准确期望，并维持通用外部 re-import 的原模型。失败报告 `tmp/legacy-doc-font-metadata-gates-stable-final1.json` SHA `0a5b0780729d2c5830244e113a99fb9a02e21969d1175d3a643d746c8f601288`；原日志不变，Clippy / build 当次未执行，另记 `tmp/legacy-doc-font-metadata-gates-stable-final1-failure-summary.json` SHA `cb4347ae9f39e016158b24a61f3aa9948a43c214c0cd855b2f38cc780bf82509`。最终 full stable 为完整新运行
+- 前端首次 16 通过 / 5 失败的日志 `tmp/font-family-metadata-frontend/focused-model-first.log` SHA `e274011bbcc8062bce0d4144b3fbf3d11c27c646a1652f1146072fcf6bd2887d` 保留。一个产品加固检查显式 docAttr step，阻止 undefined 被 schema 默认 null 静默吸收；另四个是新测试的 textAlign:null 期望、无 DOM 字符串插入和替身 style.cssText setter 问题。修正后 21 项通过，后来补充的合法 null / 恢复正向断言由最终 658 项全量覆盖
+- 两次编辑器 / CLI harness 失败分别是空原型 mark attrs 与普通 JSON 对象的原型差异，以及不同 Editor schema 的 NodeType 身份不能用 Node.eq 直接相等；改为完整 IPC JSON 比较及原 schema 再水合检查，没有删属性 / 标记或修改产品。原报告 `tmp/font-family-metadata-frontend/editor-cli-final1/report.json` SHA `0a1d128634dd2edcdae328f151ad659a907293e0e1a242a9d60d109cb1cc07cf`（0 完成状态 / 2 次成功 CLI），`tmp/font-family-metadata-frontend/editor-cli-final2/report.json` SHA `b05192270172f401c3b4b2611e53f2a9389ebfdc23af7ad49fa810f5ec72a542`（6 完成状态 / 18 次 CLI）均保持；最终 35 项为新运行
+- 独立夹具准备的 Path 参数及扩展 Normal 后 FFN 偏移错误保留在 `tmp/doc-font-family-verify/preparation-attempts.json` SHA `136b19c2e94281fc0a16411166e16643db4eef7f7bf193955c94576d9e760c81`；当时原重定向 stderr / 单独脚本快照不存在，记录明确说明从保留工具输出逐字复制 traceback，没有伪称原始 stderr 工件
+- 首次 411 源扫查有 39 个 JSON tuple / list 表示比较失败，零 PDF，作者 / 篡改 / 消费者阶段未进入；报告 `tmp/doc-font-family-verify/family-run-raz43bgc/report.json` SHA `7912d55a6b0d5b52cbf8fd601133fbadb98992b178ea3e1cd4b7dcb6be3f1128` 不变。仅 oracle 改为原生 JSON lists，完整模型 / 诊断 / XML / 度量 / 光栅断言未放宽；修正记录 `tmp/doc-font-family-verify/oracle-json-representation-correction.json` SHA `cb036e4056820a0efab764b98b689ffb63439ac8c8d7e4c889ba6f38bdbb2c51`，最终报告为全部阶段新执行
+
+### 范围与未验收部分
+
+定向 Rust formatting / diff / 最终 checker AST 检查通过，记录 `tmp/doc-font-metadata-hygiene-final2.json` SHA `a72679647781c1b882b9cf34bb66c975a5e3dcb53927549bcabc66ba933e4613`。133 件 vendor 源码 / 夹具身份与上轮相同，两份既有补丁反向检查通过，记录 `tmp/doc-font-metadata-vendor-check.json` SHA `6376384c34a34372208a50e05ab205e0b77186d715593a8ce7ae8c66c68f3cbc`；没有把历史 vendor 测试计作本轮新执行。
+
+本轮实际产品结果只证明受支持 Latin 子集与固定 Linux 消费者。没有修复所有缺失字体、原生 Arial Black 外观、复杂脚本 / 样式、一般外部 DOCX fontTable、动态主题或完整 Word / WPS 版式。浏览器 / Windows WebView2 / 系统与原生打印未执行；根类别不会被 CSS 自动使用，打印预览限制明确提示。原件、历史失败与此前真正空段 / 间距等独立限制保留，不能把本轮相等的受控子集扩写成完整 Office 兼容。
+
+
 ## 本轮：旧 DOC 独立分页段与段落标记（2026-10-14）
 
 基于已发布 `8aea87b0763efbe022045ff821d878ebfbb7f4ba`，只在既有完整 Latin / 编码 Normal 正文证明上保留明确 DOP `fSplitPgBreakAndParaMark` 与独立分页段的完整字体 / 字号 / 间距。源 `0C 0D`、两个字符各自的 CHPX、PAPX、实际 CP 和 PlcfSed 节界分别核对；所有分页段共同证明后，在同一候选模型中添加根 flag 和对应原子 metrics，完整验证成功才提交模型与诊断。保留源块身份（真实 SampleDoc 为七块），不添空段、伪文字或坐标补偿，不改 vendor、字体替代、其他格式或全局 compatibilityMode。范围见 [LEGACY_DOC_BREAK_PARAGRAPHS.md](LEGACY_DOC_BREAK_PARAGRAPHS.md)。
