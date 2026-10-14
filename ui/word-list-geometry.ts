@@ -1,12 +1,13 @@
 import {Extension, Node as TiptapNode} from '@tiptap/core';
 import type {Node} from '@tiptap/pm/model';
-import {EditorState, Plugin, TextSelection, type Transaction} from '@tiptap/pm/state';
-import {isHistoryTransaction} from '@tiptap/pm/history';
+import {AllSelection, EditorState, NodeSelection, Plugin, Selection, TextSelection, type Transaction} from '@tiptap/pm/state';
+import {closeHistory, isHistoryTransaction} from '@tiptap/pm/history';
 import {canSplit} from '@tiptap/pm/transform';
 import {isListGeometry, isListMarkerFont, listGeometryError, listGeometryStyle, listMarkerFontStyle,
   LIST_GEOMETRY_METADATA, LIST_MARKER_FONT_METADATA, listGeometryStateSnapshot, parseListMetadata, validateListGeometryDocument} from './word-list-geometry-model';
 export * from './word-list-geometry-model';
 const safeSplits = new WeakMap<Transaction, Node>();
+const safeDeletions = new WeakMap<Transaction, {before: Node; after: Node}>();
 const encoder = new TextEncoder();
 export function validateListGeometryState(document: Node): void {
   let count = 0, bytes = 0; const stack = [{node: document, depth: 0}];
@@ -29,7 +30,9 @@ function preservedLists(document: Node): {node: Node; pos: number}[] {
 // Mapping must retain each old list and item shell in place. This rejects even
 // structurally valid joins/reorders that otherwise silently change numbering.
 function validateContinuity(transaction: Transaction): void {
-  if (isHistoryTransaction(transaction) || safeSplits.get(transaction) === transaction.doc) return;
+  const deletion = safeDeletions.get(transaction);
+  if (isHistoryTransaction(transaction) || safeSplits.get(transaction) === transaction.doc
+    || deletion?.before === transaction.before && deletion.after === transaction.doc) return;
   const next = preservedLists(transaction.doc), used = new Set<number>();
   for (const {node, pos} of preservedLists(transaction.before)) {
     const mapped = transaction.mapping.mapResult(pos, 1), after = next.find(item => item.pos === mapped.pos);
@@ -39,11 +42,60 @@ function validateContinuity(transaction: Transaction): void {
     let expected = after.pos + 1;
     node.forEach((item, offset, index) => {
       const location = transaction.mapping.mapResult(pos + 1 + offset, 1);
-      if (location.deleted || location.pos !== expected || JSON.stringify(item.firstChild?.attrs.listGeometry)
+      const end = transaction.mapping.mapResult(pos + offset + item.nodeSize, 1);
+      if (location.deleted || location.pos !== expected || end.deleted || end.pos !== expected + after.node.child(index).nodeSize - 1
+        || JSON.stringify(item.firstChild?.attrs.listGeometry)
         !== JSON.stringify(after.node.child(index).firstChild?.attrs.listGeometry)) throw new Error(listGeometryError);
       expected += after.node.child(index).nodeSize;
     });
   }
+}
+// A text selection ending at the next paragraph's start includes a complete
+// paragraph boundary. Delete the selected item shells rather than letting PM's
+// fitting merge differently formatted paragraphs. Selecting only an item's
+// text still means clearing its text, not silently removing its number.
+export function createPreservedListDeleteTransaction(state: EditorState): Transaction | null {
+  const {selection, doc} = state, {$from, $to} = selection;
+  if (selection.empty) return null;
+  const lists = preservedLists(doc);
+  if (!lists.length) return null;
+  let from: number, to: number;
+  if (selection instanceof AllSelection) {
+    from = 0; to = doc.content.size;
+  } else if (selection instanceof NodeSelection) {
+    if (selection.node.type.name === 'orderedList' && $from.depth === 0 && isListMarkerFont(selection.node.attrs.markerFont)) {
+      from = selection.from; to = selection.to;
+    } else if (selection.node.type.name === 'listItem' && $from.depth === 1 && $from.parent.type.name === 'orderedList'
+      && isListMarkerFont($from.parent.attrs.markerFont)) {
+      from = selection.from; to = selection.to;
+      if ($from.parent.childCount === 1) {from = $from.before(1); to = $from.after(1);}
+    } else return null;
+  } else if (selection instanceof TextSelection && $from.depth === 3 && $from.node(1).type.name === 'orderedList'
+    && isListMarkerFont($from.node(1).attrs.markerFont)) {
+    if ($from.sameParent($to)) return null;
+    if ($from.parentOffset !== 0) throw new Error(listGeometryError);
+    from = $from.before(2);
+    if ($to.depth === 3 && $to.before(1) === $from.before(1) && $to.parentOffset === 0) {
+      to = $to.before(2);
+    } else if ($to.depth === 1 && $to.parent.type.name === 'paragraph' && $to.parentOffset === 0
+      && $to.before(1) === $from.after(1)) {
+      to = $from.end(1);
+      if ($from.index(1) === 0) {from = $from.before(1); to = $from.after(1);}
+    } else throw new Error(listGeometryError);
+  } else return null;
+  validateListGeometryState(doc);
+  // Never mutate a Tiptap chain's shared transaction during candidate creation.
+  const transaction = EditorState.create({doc, selection, storedMarks: state.storedMarks}).tr;
+  if (from === 0 && to === doc.content.size) {
+    const paragraph = state.schema.nodes.paragraph?.createAndFill();
+    if (!paragraph) throw new Error(listGeometryError);
+    transaction.replaceWith(from, to, paragraph);
+  } else transaction.delete(from, to);
+  transaction.setSelection(Selection.near(transaction.doc.resolve(Math.min(from, transaction.doc.content.size)), 1));
+  transaction.setStoredMarks(null);
+  validateListGeometryState(transaction.doc);
+  safeDeletions.set(transaction, {before: doc, after: transaction.doc});
+  return closeHistory(transaction).scrollIntoView();
 }
 export function createPreservedListSplitTransaction(state: EditorState): Transaction | null {
   const {$from, $to} = state.selection;
@@ -134,7 +186,19 @@ export const PreservedListGeometry = Extension.create<{onError: (message: string
       try {return parseListMetadata(element.getAttribute(LIST_GEOMETRY_METADATA), 'geometry');} catch {return 'invalid-list-geometry';}
     }}}},
   ],
-  addKeyboardShortcuts() {return {Enter: () => {
+  addKeyboardShortcuts() {
+    const deleteSelection = () => {
+      try {
+        const transaction = createPreservedListDeleteTransaction(this.editor.state);
+        if (!transaction) return false;
+        if (this.editor.isEditable && !this.options.locked()) {
+          this.editor.view.dispatch(transaction);
+          this.editor.view.dispatch(closeHistory(this.editor.state.tr));
+        }
+        return true;
+      } catch (error) {this.options.onError(String(error)); return true;}
+    };
+    return {Backspace: deleteSelection, Delete: deleteSelection, Enter: () => {
     try {
       const transaction = createPreservedListSplitTransaction(this.editor.state);
       if (!transaction) return false;

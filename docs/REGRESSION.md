@@ -1,5 +1,48 @@
 # 当前跨格式回归记录
 
+## 本轮：保留编号列表的有界删除（2026-10-14）
+
+基于 `c1221bd6d78a18fd19830d3b6366adb5d752e642`，增加应用注册的 Delete / Backspace 精确整项、整列表、整文档选区删除。真实边界选区移除完整项壳，不合并不同格式的部分项；剩余项完整保留原内容/标记/段落几何和独立编号字体，列表 `start` 保持、剩余项连续重新编号。全删留下默认空正文，根 profile / 页面不变。准确选区规则、程序入口与保守范围见 [有界列表删除](LIST_DELETION.md)。
+
+### 最终门禁与源码身份
+
+- **575 项无浏览器前端检查通过**，原 548 + 27 个新删除模型/完整扩展链检查；最终全量 26.6 秒，日志 `tmp/list-deletion-ui-parent-final-aggregate.log`
+- prepare-pdf、TypeScript 和 Vite build 全部退出 0，保留既有 bundle 大小提示。最终门禁只用已安装本机二进制、显式无浏览器配置和 `USERPROFILE=$PWD/tmp/linux-home`；准确 argv / 返回码 / 日志哈希 `tmp/list-deletion-ui-parent-final-gates.json` SHA **`5e5280b5b55baf051f11780336f98ea90be1c0a67b263d7088a93bc8df31e53b`**
+- **6 个新浏览器规格仅发现、未执行**，覆盖首/中/末项、整列表、整文档和部分跨项拒绝；日志 `tmp/list-deletion-browser-discovery.log`。实际键盘、选区同步、系统剪贴板、磁盘草稿和原生打印没有新增验收
+- 27 新检查含首/中/末/唯一/空项、正反选区、非 1 起始值、全部文档属性、终点外部段落、完整存活节点/草稿/撤销/重做、只读/锁定、完整扩展链、立即输入前后历史隔离，以及跨位置复用同一不可变节点对象和伪造/篡改事务拒绝
+- **271 个 Rust 核心 / 后端 / vendor / 依赖配置与 Rust 测试文件逐字节等于基线**。身份清单 `tmp/list-deletion-source-identity.json` SHA **`828aac4887b6a13a742f0e198a3fcace00abaeb52335f8a9cbd3f02d8d4edae0`**。本轮不重新构建或运行 Rust / 后端；上一发布的 Rust 1.99 / 1.88 **各 601 项核心、各 35 项后端**结果明确作为历史未变源码证据复用，不能称为本轮新运行
+- 冻结 CLI 沿用 `tmp/list-geometry-final-cli`，SHA **`5c008894209311c84515a6432b6e973a120ad459b30c848ea019c2128808111a`**，没有制作额外大体积二进制副本、修改依赖/vendor 或清理文件
+
+冻结前端产品：`ui/word-list-geometry.ts` SHA **`384ba8daddcebd46037113cf3679ef738162d1081d87fdb2553f0fdb1079fd6f`**；模型诊断 `ui/word-list-geometry-model.ts` SHA **`af0b7ee356587c4fe13f5125dff593cf20755a3c8d8ffa6026e8b682904fd1e8`**。候选的私有源/最终文档身份例外不放宽通用连续性检查；另检查项尾边界，阻止原始删除将外部不同格式段落并入末项。
+
+### 实际前端快照与独立文件消费
+
+```sh
+node tests/ui/edit-list-deletion.mjs tmp/list-geometry-first-import.json tmp/list-deletion-editor-original-2
+python3 scripts/check-list-deletion-independent.py --cli tmp/list-geometry-final-cli --editor-models tmp/list-deletion-editor-original-2 --render --root tmp/list-deletion-independent
+```
+
+快照/报告目录均须使用新路径，脚本拒绝覆盖既有结果。原件是上一轮同一份未改造 LibreOffice `testParaListRightIndent.docx`，SHA **`48209f95d7a2ddfbf0fb3291658b1463e7b8121dac982f26501d8775e5450707`**，不是新增用户文档。真实两项的中间删除控制由应用 Enter 产生第三项；起始 7、相同项复用和混合字符样式单独标为作者模型。
+
+- **12 个实际候选操作、52 份前端快照、54 次完整可信模型重开、57 次已有目标保护、2 份整包字节金样**通过。独立按 before 模型和删除索引计算预期，检查全部存活节点/页面/编号；undo 精确等于 before，redo/draft 精确等于 after
+- **12 个不同模型、24 份新 LibreOffice PDF / 24 个隔离新 profile、12 对严格坐标与整页像素对照全部相等**；最大横纵差 **0.0 pt**、改变像素 **0**。其中 11 对非空、1 对空白清空结果。另 40 个相同模型状态只核对完整模型/导出字节并显式链接已有渲染，不累计为新 PDF
+- 首项删除后的真实第二项保持编号 x=170.20 pt、正文 x=283.60 pt、18 行正文，编号从 2 变为原 start 1。作者控制保持 start 7、剩余标记 7/8，正文 Times New Roman 13 pt、粗/斜体、下划线、删除线、RGB `205090` 逐项保留；所有标记仍来自真正 numbering，不转文字
+- 独立 python-docx/OOXML 参考不调用应用 writer 构造；直接读取实际编号、文字 run、样式、段落和页面。代表性原件存活项、start 7 字符样式和清空页面已实际查看，不靠空白截图通过
+- 原件无改动；原件 no-op 导出等于上一轮 `unchanged-original-export.docx`，普通无新属性列表导出等于历史整包金样；没有重跑上一轮 1,520 响应 / 302 包的完整历史目录，也不将旧 325 PDF 称为新渲染
+
+报告 `tmp/list-deletion-independent/run-rfa4t588/report.json` SHA **`5b32df1ed91168c67a2cb9aa6a059a0a2646c709bcccbbf52b2b02949f85aac9`**；最终 checker SHA **`122a0f0ce8e61b63e4043684258f531e0633f60c563b4485ee29f465669d83ea`**；快照 manifest SHA **`352687962d94a3b0c0607e3d7f467ff79d7d8be31bd0fd327bae1d6fed407153`**，生成器 SHA **`de8733337d97cdba02d000394731793b6c505867e31ac97e3378e2c5e52be69b`**。报告逐一核对源、CLI、产品、生成器、输入及历史证据前后身份。
+
+### 独立审查与限制
+
+独立 reviewer 的 **423 个有界检查**通过：256 对合法文字端点穷举（12 允许 / 118 留给普通项内或外部路径 / 126 拒绝）、16 个跨位置复用节点、36 个节点选区历史、96 个原始跨块拟合删除与其他真实源/事务/锁定控制。报告 `tmp/list-delete-review-s6vot0zh/report-third.json` SHA **`812530deca49027ec6a0d3e14af5fe26182ad0d76390f32b8c04b8e972982301`**；这不是 575 的附加单元测试计数。独立 consumer checker/报告另经相同 reviewer 的 hash、模型谱系、XML、别名和图像核对。
+
+早期 reviewer 发现“两个位置复用同一不可变列表对象”会绕过同表判断，以及紧邻输入/删除会合并历史；均修为实际位置证明和前后历史边界，并加入回归。项尾保护最初使用错误映射关联导致合法间距变更被拒绝，已按边界语义修正并复测原 24 项列表检查；测试中的跨 schema 节点比较、无 DOM 的字符串插入和已有自动补尾段历史计数问题亦修正，早期失败日志保留，最终 51 定向 / 575 全量均重新执行。
+
+早期定向命令误用默认 Playwright 配置，启动了 `npx vite preview`，使用本地已安装包；未下载、未重试被拒绝的 registry 或浏览器路线。最终所有门禁改用显式无浏览器配置与本地二进制。
+
+未增加任意跨项合并、提升/嵌套、移动/重排、切换或多列表混合删除。无列表几何数值控件；原始程序删除无私有候选证明仍拒绝。浏览器/原生受限路线没有重试，真实 WebView2、IME、系统剪贴板/对话框、原生打印及 Microsoft Word/WPS 未验收；DOC/DOCX/PDF 阶段仍未完成。
+
+
 ## 本轮：有界十进制列表几何保留（2026-10-14）
 
 基于 `2de7447a57a564203465d57ccf92c69866f53a9d`，新增受审计的直接正文单级 decimal `%1.` 列表：完整非负物理左右/悬挂三元组、独立固定 Latin 编号字体、同一编号实例的一段连续运行。完整正文块/项/文字/顺序与转换结果绑定，源样式关联须解析到同一编号实例；没有修改 vendor 通用优先级。源空项等未证明基线仍拒绝；编辑范围、受控 Enter 和历史/打印限制见 [十进制列表几何](LIST_GEOMETRY.md)。

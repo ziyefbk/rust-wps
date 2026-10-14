@@ -9,7 +9,7 @@ export interface ListGeometry {leftTwips: number; rightTwips: number; hangingTwi
 export interface ListMarkerFont {fontFamily: string; fontSize: number}
 export const LIST_GEOMETRY_METADATA = 'data-word-list-geometry';
 export const LIST_MARKER_FONT_METADATA = 'data-word-list-marker-font';
-export const listGeometryError = '保留编号布局仅支持显式有效页面中的顶层十进制列表，每项须为一个左对齐纯文字段落，并完整保留编号字体和左右/悬挂缩进；正文宽度须为正。暂不支持删除列表/列表项、移动、合并、提升、嵌套或切换这类列表；项内文字可编辑。';
+export const listGeometryError = '保留编号布局仅支持显式有效页面中的顶层十进制列表，每项须为一个左对齐纯文字段落，并完整保留编号字体和左右/悬挂缩进；正文宽度须为正。仅支持边界明确的整项/整列表选区删除；部分跨项删除、移动、合并、提升、嵌套或切换仍不支持；项内文字可编辑。';
 const own = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const onlyAttrs = (attrs: Record<string, unknown>, keys: readonly string[]) => record(attrs) && Object.keys(attrs).every(key => keys.includes(key));
