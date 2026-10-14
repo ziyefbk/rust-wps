@@ -1,3 +1,4 @@
+import {omitDefaultParagraphPagination, validateParagraphPaginationDocument} from './word-paragraph-pagination-model';
 import {omitDefaultEmptyParagraphFont, validateEmptyParagraphFontDocument} from './word-empty-paragraph-font-model';
 import type {Node} from '@tiptap/pm/model';
 import {EditorState, type Transaction} from '@tiptap/pm/state';
@@ -54,6 +55,7 @@ export function validateWordBlockTypeDocument(document: Node): void {
   document.check();
   const snapshot = omitDefaultParagraphIndent(omitDefaultParagraphSpacing(omitDefaultPageGeometry(document.toJSON())));
   validateEmptyParagraphFontDocument(omitDefaultEmptyParagraphFont(snapshot));
+  validateParagraphPaginationDocument(omitDefaultParagraphPagination(snapshot));
   validateParagraphSpacingDocument(snapshot);
   validateParagraphIndentDocument(snapshot);
   validatePageGeometryDocument(snapshot);

@@ -308,12 +308,23 @@ fn numbering_contextual_and_table_conditional_contextual_remain_refused() {
     refused(&package(&body, styles));
 }
 #[test]
-fn inactive_unknown_style_and_unused_contextual_template_route_stays_unchanged() {
+fn unused_contextual_template_is_ignored_but_unknown_active_style_cannot_prove_pagination() {
     let parts = package(
         &p(&reference("Unknown"), "A"),
         &style("Unused", "", "<w:contextualSpacing/>"),
     );
+    // A missing active style can no longer prove pagination absence. Keep
+    // the old input as a named refusal, not an invented default-false value.
     with_source(&parts, |path| {
+        assert!(
+            importing::import_docx(path)
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported or unproved paragraph pagination")
+        );
+    });
+    let complete = package(&p("", "A"), &style("Unused", "", "<w:contextualSpacing/>"));
+    with_source(&complete, |path| {
         let report = importing::import_docx(path).unwrap();
         assert!(!report.compatibility.risks.contains(WARN));
         assert_eq!(margins(&report.document), json!([[0, 0, 240]]));

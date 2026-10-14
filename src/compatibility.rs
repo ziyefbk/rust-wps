@@ -455,6 +455,7 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
 }
 
 pub(crate) struct DocxGeometryAudit {
+    pub pagination: crate::paragraph_pagination::Audit,
     pub empty_fonts: crate::empty_paragraph_fonts::Audit,
     pub cell_colors: crate::table_cell_colors::Audit,
     pub compatibility: CompatibilityReport,
@@ -1004,7 +1005,25 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         crate::table_cell_colors::Audit::default()
     };
     report.risks.extend(cell_colors.warnings.iter().cloned());
+    let pagination = if parts_have_content_types(bytes)? {
+        match crate::paragraph_pagination::analyze(bytes) {
+            Ok(audit) => audit,
+            Err(error) => {
+                report
+                    .risks
+                    .insert(crate::paragraph_pagination::RISK.into());
+                report
+                    .risks
+                    .insert(format!("Paragraph pagination proof refused: {error}"));
+                crate::paragraph_pagination::Audit::default()
+            }
+        }
+    } else {
+        crate::paragraph_pagination::Audit::default()
+    };
+    report.risks.extend(pagination.warnings.iter().cloned());
     Ok(DocxGeometryAudit {
+        pagination,
         cell_colors,
         empty_fonts,
         compatibility: report,

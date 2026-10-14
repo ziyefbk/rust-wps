@@ -1,5 +1,81 @@
 # 当前跨格式回归记录
 
+
+## 本轮：正文顶层段落分页属性（2026-10-14）
+
+基于 `9991dd79d5d1ad400ce06c9093868dcf990c2ae9`，新增 `keepNext`、`keepLines` 与 `pageBreakBefore` 的严格可选布尔模型、直接 DOCX 输出、受审计的默认 / 活动段落样式链 / 直接属性继承，以及正文 / 标题编辑控件。显式关闭和缺省分别保存；旧作者无属性模型不升级。源属性保留为固定值，打印仅是 CSS 提示，不能称为自动分页引擎。具体编辑、合段、富文本粘贴与未支持上下文见 [PARAGRAPH_PAGINATION.md](PARAGRAPH_PAGINATION.md)。
+
+### 最终代码门禁
+
+- **Rust 1.99 / 1.88 各 629 项核心测试通过**，原 601 + 28；包含严格三态模型 / 草稿 / 可信重开 / 篡改 / 不覆盖、所有 on/off 拼写、逐字段 false 覆盖、实际样式部件、20 / 21 层链界限、缺省类型与重复 / 缺失 / 循环活动身份、正文顺序绑定以及空文档 / 分栏的旧路径。日志 `tmp/paragraph-pagination-core-{stable,msrv}-final1.log`
+- **622 项无浏览器前端检查通过**，原 575 + 47；完整扩展链、锁定 / 混合状态 / 重置、格式转换、Enter 属性归属、精确历史、兼容合段与单段行内富文本粘贴覆盖。parent 在精确冻结后运行全部检查及 prepare-pdf / TypeScript / Vite bundle，均退出 0。**7 个浏览器规格只发现，未执行**
+- 前端门禁 `tmp/paragraph-pagination-ui-parent-final-gates.json` SHA `387c9f7714b6ef43e86211cdcf6e35baa2298a5382ffe08b00bc4d673e2b3789`；369 个源码 / 测试 / 配置文件在 `tmp/paragraph-pagination-frontend-freeze.json` SHA `c50f1dd39d28c2288b900f0b545b8b52551d134ff352b92036aab260729df543` 中记录，门禁后逐项不变
+- 两端 CLI build、fmt、`git diff --check` 与 scoped all-targets Clippy 通过。原始严格 Clippy 仍各只有原有单项：stable XLS `chunks_exact_to_as_chunks`、1.88 PPT `uninlined_format_args`；对应命令仅排除该既有项，无新增豁免
+- 核心门禁 `tmp/paragraph-pagination-gates-stable-final1.json` SHA `35f9e0a23bac2296e9a5c071a8c72ff8bf9a91214eece28e9cb970a0a160d89f`；MSRV 对应报告 SHA `df14d7b85c3b5310d112ee74de7b44e02cb0fcec354ee3b72f23f7cd4b8b3cf5`。报告包含精确 argv、工具链 / target、每条日志、源码身份及前后不变检查
+- 最终 stable CLI 使用现有 `target/debug/rust-wps`，SHA **`35d4b018e67a032c619938c62765fbeb1eaa6e09126240cbdc8448dcfa75bf47`**；没有另存大型中间二进制。最终 source-proof SHA `0f376678572f62967dee616e871b2ad4761a1e6117a925f328413636f14f07aa`，writer/validation `src/document.rs` SHA `98d1afe8ead414bf53d2cb3db98d25b1435b56b912aa22acf29dd8338dbc315c`
+- `CARGO_INCREMENTAL=0`，既有 `../toolchains/{cargo,rustup}`，stable `target` / MSRV `tmp/msrv-target`，单个串行构建、无 RUSTFLAGS / profile 覆盖、无依赖 / 锁文件 / vendor 改动。前端仅本机已安装工具，不重试被拒绝的 registry、浏览器或原生路线
+
+### 真实原件、独立源 / 模型安全与历史契约
+
+- 两份未改造 Apache POI 回归原件来自已固定 revision `ae62bb5116b9aee19ebd5834e3a82066132c9f7f`。[Styles.docx](https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/Styles.docx) 10,905 字节，SHA `63f3fe4c3b4fbdc211eca8fa7fd31a799ff4438afbf4ca6e771b3aef107c732e`，Git blob `27f66f48bff955494065233a3980fb65793b2e2f`；[NoHeadFoot.docx](https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/NoHeadFoot.docx) 10,380 字节，SHA `dc6a67b1c118658acadc87ba41200f0b90ead05ada95e7ce6fa72a97700430c5`，Git blob `7af2a14583d09c337a7993fb744c33e31e28d687`
+- 原件分别有 3 个 / 1 个活动标题样式含 `keepLines=true`，旧导出全部丢失；新导入 / 导出显式保留。它们原有短标题没有已证明的可见重新分页回归，不能把语义修复冒称原件页数修复。原件只用于本地验证，未改写 / 重新保存原件，不作为新增用户生产文档或已审查再分发授权
+- 最终独立源 / 安全报告 **23 支持 / 28 拒绝、36 非法模型、27 篡改包**，有效值与直接 XML 逐项独立解析；完整模型可信重开、已有目标不覆盖和全部来源身份通过。报告 `tmp/paragraph-pagination-independent/run-xou7q6ib/report.json` SHA **`42809614e92fc199b9752f94c51e6c6f0639e8108d35a6f4ee60dd7accc75846`**
+- 同一报告重放 **302 份不同历史无新属性 DOCX 整包金样**：旧冻结 CLI 与最终 CLI 各自导出均与原金样逐字节相等；每个 CLI 各 604 次完整可信重开、604 次原件 / 输出禁止覆盖。合计源检查与历史检查共 **1,231 次完整可信重开**，不能当作 1,231 份真实来源或新 PDF
+- **1,520 条历史 read 命令**完成初次双 CLI 响应对照和最终 CLI 的全部新调用。最终每条原始响应与受保护的已审查临时版本响应相同：相对旧发布为 **587 精确 / 933 有界变化**（505 审计提示、425 固定有效布尔值及提示、3 条原已拒绝来源的严格证明诊断）；该目录内 **零新增导入拒绝**。所有其他模型字段、来源和旧报告不变
+- 原始历史对照报告 `tmp/paragraph-pagination-legacy-replay/run-cojf1ls6/report.json` SHA `a1a6ffc5d78166bc846306cb6f01102224e57c9533b4f48777b77170b1892b02` 保留初次分类器的 REVIEW_REQUIRED 状态；独立 XML 复查只增加 `reviewed-acceptance.json`，SHA `794bda68e965cd2bd527efe686e0af5d0b1efe9a6f2b19a4f69e0b260edacf31`。最终新 CLI 1,520 次原始响应复核报告 `tmp/paragraph-pagination-legacy-replay/final-candidate-fb0vh7mk/report.json` SHA **`09e0c280690b477884c65d330c9dec646717858d18b119bddb3cd07da5411bbb`**，明确复用冻结旧响应，不冒称再次执行旧 CLI 或重新渲染旧 PDF
+
+### 新独立消费者与已有颜色限制
+
+全部 21 对源 / 参考控制已完成新隔离 profile 转换：完整逐页文字、换行与横纵坐标都精确相等，最大差 0.0 pt；其中 18 对整页像素严格相等。覆盖三项 true / false、keepNext 连续链、111 行超长 keepLines 段落、文档起点、手动分页相邻、直接 false 覆盖样式 true、样式 false 覆盖默认 true，以及显式样式不叠加无关默认样式。15 项预先指定的分页边界断言另行通过；超长 keepLines 仍可跨页，未将约束写成不可拆分保证。
+
+两份真实原件和未修改的原始继承控制仍有**源 / 输出光栅失败**：Styles 501 像素、NoHeadFoot 第一页 824 像素、继承控制 849 像素。源主题 `accent1=4F81BD`、`themeShade=BF` 的消费色为 `365F91`，既有导入固定色为 `376092`。源 / 当前完整文字、换行、位置和逐 span 其他字体属性相同；当前模型只去除这三项分页属性后严格等于冻结旧 CLI 的模型，旧 / 当前字符 `rPr` 相同。两真实原件另新渲染旧输出，旧 / 当前整页像素与坐标精确相等。原始继承控制的旧分页本就不同，所以没有要求或声称它旧 / 当前完整布局相同。
+
+这个例外只匹配三份精确 SHA 与固定旧 CLI，保留原始 `strictly_equal=false` 和 FAILED 分类，不提高阈值，不忽略任意颜色差异。另生成独立标注的黑色继承派生控制：仅把活动 Heading1 颜色改为固定黑色，保持原始来源不动，独立逐段分页 / 文字 / 类型 / 页面期望不变；其源 / 当前完整像素、文字与坐标严格相等。前端参考与其他控制均不使用颜色例外。
+
+最初 Styles 严格光栅失败报告 `tmp/paragraph-pagination-independent/run-kwkljhcq/report.json` 保留。随后完成 61 份新 PDF（21 对源 / 输出、3 份旧颜色见证、8 对前端参考 / 输出）后，因下一份预留会越过 650 MiB 磁盘边界而安全停止；报告 `tmp/paragraph-pagination-independent/run-1m3zyl7_/report.json` SHA `1a70b826aba1cd729d7777280891beacdeb006315292b0193ae7d8f6f1ad2055` 保留 FAILED 状态。没有降低空间边界或重新宣称其为完整通过；后续只复用已验明身份的完成项并继续缺失消费者，最终计数另列。
+
+实际前端快照来自完整扩展链的 46 份候选操作 / 历史 / 草稿文件；manifest `tmp/paragraph-pagination-editor-final-DiqPBg/manifest.json` SHA `dc1be5d15854f96d60f7d0eeef26603a22a7170feb66b98bd7fe56d4f7581090`。独立根据初始模型和 46 条操作配方计算完整预期，并检查 34 对历史 / 草稿等价关系，不能仅比较快照与自身再输出。
+
+最终主消费者报告 `tmp/paragraph-pagination-independent/resumed-u44hswfl/report.json` SHA **`e65ab364d52c77e1bd51295832d382849d25f40f2391d68f4917755c3d7ae58e`**，状态为 `passed-with-known-source-raster-failures`：**137 份新消费者 PDF / 各自独立 profile**，其中 61 份来自受保护的部分运行、76 份来自新目录恢复；恢复时仅重验前 61 份的文件身份与比较结果，没有重新渲染或重复累计。**67 对中 64 对完整像素 / 文字 / 坐标精确相等，3 对保留上述源颜色失败；全部 46 对前端参考 / 输出均严格相等**。515 份恢复保护文件和消费者可执行文件前后不变。主报告计入另外标明的黑色派生控制，支持来源数因而为 24，不冒称 24 份真实原件。
+
+主 checker `scripts/check-paragraph-pagination-independent.py` SHA **`95046da4104a7f5e605d549974c44f33b6842f513aebdcbc30207e57e26c031c`**。复现调用如下；各报告保留精确 Python 路径、完整 argv、消费者版本 / 二进制哈希和新 profile 路径：
+
+```sh
+python scripts/check-paragraph-pagination-independent.py --cli target/debug/rust-wps --expected-cli-sha256 35d4b018e67a032c619938c62765fbeb1eaa6e09126240cbdc8448dcfa75bf47 --historical-cli tmp/list-geometry-final-cli
+python scripts/check-paragraph-pagination-independent.py --cli target/debug/rust-wps --expected-cli-sha256 35d4b018e67a032c619938c62765fbeb1eaa6e09126240cbdc8448dcfa75bf47 --render-report tmp/paragraph-pagination-independent/run-xou7q6ib/report.json --editor-models tmp/paragraph-pagination-editor-final-DiqPBg --historical-render-cli tmp/list-geometry-final-cli --render
+python scripts/check-paragraph-pagination-independent.py --cli target/debug/rust-wps --expected-cli-sha256 35d4b018e67a032c619938c62765fbeb1eaa6e09126240cbdc8448dcfa75bf47 --resume-render-report tmp/paragraph-pagination-independent/run-1m3zyl7_/report.json
+```
+
+恢复前由 parent 重验并删除三份已结束、无后续用途的 MSRV Cargo 测试缓存可执行文件，保留其源码 / 命令 / 日志、全部生产 CLI / probe / rlib / fingerprint 与证据；审计 `tmp/test-cache-cleanup-20261014T011800Z-{before,after}.json`。没有删除失败证据或恢复中间产物。实际查看真实原件、五行 keepLines 的第二页、段前分页后的第二页和前端合段 / 行内粘贴图像，均有真实内容，不是空白图像假通过。
+
+独立 reviewer 另指出普通段落边界控制不足以证明标题缺省的覆盖，因此追加**两个真正 Heading1 的 true / false 边界控制、4 份新 PDF、2 对严格像素 / 全文 / 坐标相等**。两件分别独立构造，统一为明确黑色 / 字体；实际导入节点必须是 `heading level=1`，并保留显式 `keepNext=false`。开启时 HEADING ANCHOR 与 HEADING FOLLOWER 同在第二页；关闭时标题留在第一页（y=748.590764 pt），后段在第二页，证明关闭覆盖应用标题的与下段同页缺省。另有 2 次完整可信重开、4 次源 / 输出不覆盖；全部身份不变。
+
+补充报告 `tmp/heading-pagination-boundary-independent/run-uwhhf99_/report.json` SHA **`a669869e1cff0b64e9103ffae922400c9e7e261f43a9135e200c13e24167d906`**；脚本 `scripts/check-heading-pagination-boundary-independent.py` SHA **`bda362a76bde4b2c9ea73662eed57ed61a0c32095440a12a0469d653bd2d6168`**，严格绑定冻结主 checker，没有改写前一报告。调用：
+
+```sh
+python scripts/check-heading-pagination-boundary-independent.py --cli target/debug/rust-wps --expected-cli-sha256 35d4b018e67a032c619938c62765fbeb1eaa6e09126240cbdc8448dcfa75bf47
+```
+
+主消费者与补充验收合计 **141 份新 PDF、69 对完整比较，其中 66 对严格像素相等，3 对保留源主题颜色失败**；全部比较的文字 / 换行 / 坐标精确相等。该合计不重复累计恢复文件，也不把原始失败探针 PDF 或旧历史 PDF 算作新的成功验收。
+
+### 生产后端运输与独立审查
+
+- **35 项 Tauri-free 生产后端测试在两工具链各通过**；原 `scripts/pdf-rotation-probe.rs` 未改，分别链接本轮核心。精确 rustc argv、源码 / 依赖 rlib 身份及日志在 `tmp/paragraph-pagination-backend-{stable,msrv}-test-provenance.json`。因磁盘配额，parent 仅在执行结束、哈希复验和无待执行用途确认后删除这两份可重建的测试专用可执行文件；源码、日志、来源、旧冻结生产 CLI 和新生产 probe 保留
+- 最终生产 probe `tmp/paragraph-pagination-worker-probe` SHA `0e3e4b7de105245fa9d3bc3e213191873635dace9ed0cfaa2f4e5d0890ca7a92`。通过真实 `worker::run` 子进程核对 **4 份完整导入报告、4 份完整可信重开模型、2 份源声明拒绝**，包括两个原件、keepNext 显式关闭与段前分页控制。报告 `tmp/paragraph-pagination-worker-evidence-7c14a99i/report.json` SHA `93c1b3110a0b20dd1ff7aa150bcca632cbf6ae6357a5cd0be590d8edfce5ff32`；来源 / 输出 / CLI / probe / 独立报告身份均不变。这不是原生 IPC / 系统对话框验收
+- 独立 reviewer 最终 CLI 检查 **49 个来源**，其中 16 保留 / 33 拒绝；32 个作者布尔向量模型的重导出、完整重开和不覆盖，以及 32 个段落 / 标题 × 对齐 / 缩进 / true-false 的 XML 顺序控制通过。报告 `tmp/pagination-independent-review/final-y_aoogr2/report.json` SHA `c4251e31e50dfd58848bc05fc313842a4224a69d633aa98d414f801cacfc4468`
+- 独立前端 reviewer 完成 **2,916 个有序三态合并组合**（396 允许且精确合并 / 撤销 / 重做，2,516 拒绝，4 走原无属性路径），以及 **1,248 个单段行内粘贴组合**，还核对后续标题 Backspace 的输入规则撤回。报告 `tmp/pagination-independent-review/ui-5R1u0E/report.json`；这些定向矩阵不加进 622 测试计数
+
+### 有界语义和早期失败记录
+
+初次全量核心发现旧外部导入期望缺少三个有效布尔值，已逐项补全期望，没有删除新证据。缺失活动样式 / basedOn 的旧规范化夹具保留为明确的新分页证明拒绝；其独立颜色与上下文正对照另用完整样式证明继续验证。原件和失败日志保留。首次 Clippy 的新增嵌套 if 已修正并完整重跑，没有增加 lint 豁免；新分页属性对应的段落 XML 采用 keep 标志 → spacing / ind → jc 顺序，无属性旧字节路线原样。
+
+最初前端 guard 拒绝全部带属性的合段和开放富文本切片；由于导入段落均有三个显式值，这会影响普通编辑，未把它作为最终行为。最终支持其他段落属性一致、有效分页值一致且后段不含段前分页的相邻同类段落边界合并，逐字段保留两端显式值；单段开放行内切片保留字符标记与目的段落属性。不同属性、部分跨段删除、复杂结构 / 上下文迁移仍拒绝。独立 reviewer 的三态穷举、真实候选事务与历史矩阵另行记录，不累计进 622 单元测试数。
+
+首次独立 checker 对重复活动样式的负向控制错误要求 `audit-docx` 返回 JSON；实际公共解析器已提前拒绝。该失败报告保留，修正的是 checker 的负向断言，不是放宽产品 guard。
+
+真实 WebView2、键鼠 / IME / 系统剪贴板 / 系统对话框 / 原生打印以及 Microsoft Word/WPS 未验收。保留列表 / 表格 / 图片的原审计与规范化边界；没有完整命名样式动态关系或一般 Office 分页 / 版式保真承诺，DOC/DOCX/PDF 阶段仍未完成。
+
+
 ## 本轮：保留编号列表的有界删除（2026-10-14）
 
 基于 `c1221bd6d78a18fd19830d3b6366adb5d752e642`，增加应用注册的 Delete / Backspace 精确整项、整列表、整文档选区删除。真实边界选区移除完整项壳，不合并不同格式的部分项；剩余项完整保留原内容/标记/段落几何和独立编号字体，列表 `start` 保持、剩余项连续重新编号。全删留下默认空正文，根 profile / 页面不变。准确选区规则、程序入口与保守范围见 [有界列表删除](LIST_DELETION.md)。

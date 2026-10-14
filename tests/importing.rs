@@ -233,7 +233,8 @@ fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
     exported_expected["attrs"]["pageGeometry"] = serde_json::json!({"widthTwips":11906,"heightTwips":16838,"marginTopTwips":1440,"marginRightTwips":1440,"marginBottomTwips":1440,"marginLeftTwips":1440});
     for index in [0, 1, 3] {
         exported_expected["content"][index]["attrs"] = serde_json::json!({
-            "spaceBefore":0,"spaceAfter":120,"lineSpacing":360
+            "spaceBefore":0,"spaceAfter":120,"lineSpacing":360,
+            "keepNext":false,"keepLines":false,"pageBreakBefore":false
         });
     }
     // The independently exported DOCX declares the empty paragraph's Arial

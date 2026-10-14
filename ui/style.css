@@ -83,6 +83,13 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
   #print-document { display:block!important; font-family:"Noto Serif SC","SimSun",serif; font-size:12pt; line-height:1.7; overflow-wrap:anywhere; }
   #print-document .tiptap { min-height:0; }
   #print-document h1,#print-document h2,#print-document h3 { break-after:avoid; color:#111; }
+  /* Explicit false overrides the historical heading default. These are print hints. */
+  #print-document [data-word-keep-next="true"] { break-after:avoid; }
+  #print-document [data-word-keep-next="false"] { break-after:auto; }
+  #print-document [data-word-keep-lines="true"] { break-inside:avoid; }
+  #print-document [data-word-keep-lines="false"] { break-inside:auto; }
+  #print-document [data-word-page-break-before="true"] { break-before:page; }
+  #print-document [data-word-page-break-before="false"] { break-before:auto; }
   #print-document p { orphans:2; widows:2; }
   #print-document table { break-inside:auto; }
   #print-document tr { break-inside:avoid; }
@@ -208,3 +215,6 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
   font-family:var(--word-list-marker-family); font-size:var(--word-list-marker-size);
   font-weight:400; font-style:normal; text-decoration:none; color:#000; line-height:1;
 }
+
+#paragraph-pagination-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#paragraph-pagination-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }

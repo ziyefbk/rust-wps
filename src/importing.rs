@@ -149,6 +149,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
                     | crate::compatibility::HIDDEN_TEXT_RISK
                     | crate::compatibility::PARAGRAPH_SPACING_RISK
                     | crate::paragraph_indentation::PARAGRAPH_INDENT_RISK
+                    | crate::paragraph_pagination::RISK
                     | crate::page_geometry::PAGE_GEOMETRY_RISK
                     | crate::table_widths::TABLE_GEOMETRY_RISK
                     | crate::image_dimensions::IMAGE_GEOMETRY_RISK
@@ -184,6 +185,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     }
     let ir = parsed.to_ir();
     crate::table_vertical::verify_ir(&audit.vertical_tables, &ir)?;
+    crate::paragraph_pagination::verify_ir(&audit.pagination, &ir)?;
     let color_identity_matches =
         crate::table_cell_colors::verify_ir(&audit.cell_colors, &ir).is_ok();
     let mut report = convert_ir(ir, compatibility, true)?;
@@ -327,6 +329,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         report.compatibility.risks.insert("Image-only paragraph indentation normalized; text paragraph indentation preservation does not include images".into());
     }
     crate::paragraph_indentation::verify_converted(&audit.paragraph_indents, &report.document)?;
+    crate::paragraph_pagination::apply(&audit.pagination, &mut report.document)?;
     crate::list_geometry::attach(
         &audit.list_geometry,
         &mut report.document,

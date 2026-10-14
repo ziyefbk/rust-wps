@@ -43,6 +43,12 @@
       </span>
       <select id="edit-style" aria-label="段落样式"><option value="0">正文</option><option value="1">标题 1</option><option value="2">标题 2</option><option value="3">标题 3</option></select>
       <select id="edit-align" aria-label="段落对齐"><option value="left">左对齐</option><option value="center">居中</option><option value="right">右对齐</option><option value="justify">两端对齐</option></select>
+      <span id="paragraph-pagination-controls" role="group" aria-label="段落分页">
+        <label>与下段同页<select id="edit-keep-next" aria-label="与下段同页"><option value="mixed" disabled>混合</option><option value="default">默认</option><option value="true">是</option><option value="false">否</option></select></label>
+        <label>段内不分页<select id="edit-keep-lines" aria-label="段内不分页"><option value="mixed" disabled>混合</option><option value="default">默认</option><option value="true">是</option><option value="false">否</option></select></label>
+        <label>段前分页<select id="edit-page-break-before" aria-label="段前分页"><option value="mixed" disabled>混合</option><option value="default">默认</option><option value="true">是</option><option value="false">否</option></select></label>
+        <button id="edit-pagination-reset">重置段落分页</button><span id="edit-pagination-state" class="muted"></span>
+      </span>
       <span id="paragraph-indent-controls" role="group" aria-label="段落缩进">
         <label>左缩进 <input id="edit-paragraph-indent-left" type="text" inputmode="text" aria-label="段落左缩进（pt）" placeholder="默认" title="−1584–1584 pt，0.05 pt 递增；负数仅限显式有效页面的顶层正文或标题，不能越过纸张边界；单元格不支持负数" autocomplete="off"> pt</label>
         <button id="edit-paragraph-indent-left-reset" title="仅移除段落左缩进">默认左缩进</button>

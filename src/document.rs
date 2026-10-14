@@ -965,6 +965,9 @@ pub fn validate(doc: &Node) -> Result<()> {
             "doc" if depth == 0 => &["styleProfile", "pageGeometry"],
             "heading" => &[
                 "level",
+                "keepNext",
+                "keepLines",
+                "pageBreakBefore",
                 "emptyParagraphFont",
                 "textAlign",
                 "spaceBefore",
@@ -976,6 +979,9 @@ pub fn validate(doc: &Node) -> Result<()> {
             ],
             "paragraph" => &[
                 "listGeometry",
+                "keepNext",
+                "keepLines",
+                "pageBreakBefore",
                 "emptyParagraphFont",
                 "textAlign",
                 "spaceBefore",
@@ -1023,6 +1029,16 @@ pub fn validate(doc: &Node) -> Result<()> {
             );
         }
         empty_paragraph_font(node)?;
+        for key in crate::paragraph_pagination::FIELDS {
+            if let Some(value) = node.attrs.get(key) {
+                ensure!(
+                    depth == 1
+                        && matches!(node.kind.as_str(), "paragraph" | "heading")
+                        && value.is_boolean(),
+                    "{key} requires a top-level paragraph or heading and a boolean; omit it for the default"
+                );
+            }
+        }
         if let Some(alignment) = node.attrs.get("textAlign").filter(|v| !v.is_null()) {
             ensure!(
                 matches!(
@@ -1392,6 +1408,14 @@ impl Writer {
                 integer(node, "level", 1)?
             ));
         }
+        for key in crate::paragraph_pagination::FIELDS {
+            if let Some(value) = node.attrs.get(key).and_then(Value::as_bool) {
+                props.push_str(&format!(
+                    "<w:{key} w:val=\"{}\"/>",
+                    if value { "1" } else { "0" }
+                ));
+            }
+        }
         if let Some((num, level)) = number {
             props.push_str(&format!(
                 "<w:numPr><w:ilvl w:val=\"{level}\"/><w:numId w:val=\"{num}\"/></w:numPr>"
@@ -1409,7 +1433,11 @@ impl Writer {
                 alignment
             };
             let encoded = format!("<w:jc w:val=\"{alignment}\"/>");
-            if explicit_indent {
+            if explicit_indent
+                || crate::paragraph_pagination::FIELDS
+                    .iter()
+                    .any(|key| node.attrs.contains_key(*key))
+            {
                 deferred_alignment = encoded;
             } else {
                 props.push_str(&encoded);
@@ -1452,8 +1480,8 @@ impl Writer {
             self.has_spacing = true;
             props.push_str(&format!("<w:spacing{spacing}/>"));
         }
-        // New paragraphs follow pPr sequence spacing -> ind -> jc. Keep the
-        // historical no-indent order byte-identical for old authored packages.
+        // Explicit indentation/pagination follows pPr sequence spacing -> ind
+        // -> jc. Keep the historical absent-attribute order byte-identical.
         if !indentation.is_empty() {
             props.push_str(&format!("<w:ind{indentation}/>"));
         }

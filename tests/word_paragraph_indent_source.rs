@@ -831,7 +831,7 @@ fn active_numbering_zero_fallback_identities_are_audited_before_parser_defaults(
 }
 
 #[test]
-fn unresolved_styles_refuse_new_indentation_but_keep_legacy_unindented_route() {
+fn unresolved_styles_refuse_indentation_and_unproved_pagination() {
     let unknown = r#"<w:pStyle w:val="Unknown"/>"#;
     for props in [
         r#"<w:ind w:left="120"/>"#,
@@ -866,9 +866,17 @@ fn unresolved_styles_refuse_new_indentation_but_keep_legacy_unindented_route() {
         ),
     );
     refused(&fallback_chain);
-    assert!(
-        attrs(&imported(&package(&para(unknown, "LegacyUnknown"))))["indentLeftTwips"].is_null()
-    );
+    let pagination_refused = |parts: &Parts| {
+        with_source(parts, |path| {
+            assert!(
+                importing::import_docx(path)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Unsupported or unproved paragraph pagination")
+            );
+        })
+    };
+    pagination_refused(&package(&para(unknown, "LegacyUnknown")));
     let mut legacy = package(&para(r#"<w:pStyle w:val="Child"/>"#, "LegacyMissingBase"));
     styles(
         &mut legacy,
@@ -878,7 +886,7 @@ fn unresolved_styles_refuse_new_indentation_but_keep_legacy_unindented_route() {
             style("Unused", r#"<w:ind w:left="120"/>"#, Some("AlsoMissing"))
         ),
     );
-    assert!(attrs(&imported(&legacy))["indentLeftTwips"].is_null());
+    pagination_refused(&legacy);
     // An unrelated unused missing reference does not prevent a proven direct
     // indent whose own style chain is complete.
     let mut unrelated = package(&para(r#"<w:ind w:left="120"/>"#, "Proven"));

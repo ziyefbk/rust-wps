@@ -420,12 +420,29 @@ fn default_and_heading_colors_keep_inheritance_character_and_direct_precedence()
         <w:p><w:r><w:t>default after</w:t></w:r></w:p>
         <w:p><w:pPr><w:pStyle w:val="Unknown"/><w:outlineLvl w:val="1"/></w:pPr><w:r><w:t>document defaults</w:t></w:r></w:p>
     "#;
+    // The original missing-style case is still exercised, now as a strict
+    // pagination refusal. An explicit empty style preserves the independent
+    // document-default color positive without masking an unresolved chain.
+    let unknown = dir.path().join("unresolved-style.docx");
+    external_docx_with_formatting(&unknown, body, Some(styles), Some(TEST_THEME), None);
+    let untouched = fs::read(&unknown).unwrap();
+    assert!(
+        importing::import_docx(&unknown)
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported or unproved paragraph pagination")
+    );
+    assert_eq!(fs::read(&unknown).unwrap(), untouched);
+    let complete_styles = styles.replace(
+        "</w:styles>",
+        "<w:style w:type=\"paragraph\" w:styleId=\"Unknown\"/></w:styles>",
+    );
     for with_theme in [true, false] {
         let source = dir.path().join(format!("styled-{with_theme}.docx"));
         external_docx_with_formatting(
             &source,
             body,
-            Some(styles),
+            Some(&complete_styles),
             with_theme.then_some(TEST_THEME),
             None,
         );

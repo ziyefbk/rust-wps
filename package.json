@@ -10,7 +10,8 @@
     "build": "tsc --noEmit && vite build",
     "desktop": "tauri dev",
     "desktop:build": "tauri build --no-bundle",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "test:pagination": "playwright test --config tests/ui/word-paragraph-pagination.config.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",

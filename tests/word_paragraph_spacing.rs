@@ -180,7 +180,7 @@ fn supported_disabled_flags_and_default_grid_remain_importable() {
         let imported = importing::import_docx(&source).unwrap();
         assert_eq!(
             imported.document.content[0].attrs,
-            json!({"spaceBefore":0,"spaceAfter":120,"lineSpacing":276})
+            json!({"spaceBefore":0,"spaceAfter":120,"lineSpacing":276,"keepNext":false,"keepLines":false,"pageBreakBefore":false})
                 .as_object()
                 .unwrap()
                 .clone()
@@ -216,7 +216,7 @@ fn used_style_chain_cascade_and_explicit_zero_are_preserved() {
     let imported = importing::import_docx(&source).unwrap();
     assert_eq!(
         imported.document.content[0].attrs,
-        json!({"spaceBefore":0,"spaceAfter":0,"lineSpacing":480})
+        json!({"spaceBefore":0,"spaceAfter":0,"lineSpacing":480,"keepNext":false,"keepLines":false,"pageBreakBefore":false})
             .as_object()
             .unwrap()
             .clone()
@@ -291,17 +291,17 @@ fn external_missing_spacing_materializes_ooxml_defaults_not_editor_defaults() {
         (
             0,
             "",
-            json!({"spaceBefore":0,"spaceAfter":0,"lineSpacing":240}),
+            json!({"spaceBefore":0,"spaceAfter":0,"lineSpacing":240,"keepNext":false,"keepLines":false,"pageBreakBefore":false}),
         ),
         (
             1,
             r#"<w:spacing w:before="160"/>"#,
-            json!({"spaceBefore":160,"spaceAfter":0,"lineSpacing":240}),
+            json!({"spaceBefore":160,"spaceAfter":0,"lineSpacing":240,"keepNext":false,"keepLines":false,"pageBreakBefore":false}),
         ),
         (
             2,
             r#"<w:spacing w:after="80"/>"#,
-            json!({"spaceBefore":0,"spaceAfter":80,"lineSpacing":240}),
+            json!({"spaceBefore":0,"spaceAfter":80,"lineSpacing":240,"keepNext":false,"keepLines":false,"pageBreakBefore":false}),
         ),
     ] {
         let source = dir.path().join(format!("defaults-{index}.docx"));
