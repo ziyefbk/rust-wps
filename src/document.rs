@@ -942,9 +942,57 @@ pub(crate) fn empty_paragraph_font(
     Ok(Some(font))
 }
 
+/// Formatting of the existing one-paragraph page-break atom. This is distinct
+/// from true-empty paragraph formatting and from document-wide split behavior.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BreakParagraph {
+    pub font: BreakParagraphFont,
+    pub space_before: u16,
+    pub space_after: u16,
+    pub line_spacing: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BreakParagraphFont {
+    pub family: String,
+    pub half_points: u16,
+}
+
+fn break_paragraph(node: &Node) -> Result<Option<BreakParagraph>> {
+    let Some(value) = node.attrs.get("breakParagraph") else {
+        return Ok(None);
+    };
+    ensure!(
+        node.kind == "pageBreak",
+        "Break paragraph metrics require a page-break atom"
+    );
+    let metrics: BreakParagraph =
+        serde_json::from_value(value.clone()).context("Invalid break paragraph metrics")?;
+    ensure!(
+        supported_font_family(&metrics.font.family)
+            && (2..=3276).contains(&metrics.font.half_points)
+            && metrics.space_before <= 31680
+            && metrics.space_after <= 31680
+            && (120..=2400).contains(&metrics.line_spacing),
+        "Break paragraph metrics exceed supported bounds"
+    );
+    Ok(Some(metrics))
+}
+
+fn split_page_break_and_paragraph_mark(doc: &Node) -> Result<bool> {
+    match doc.attrs.get("splitPageBreakAndParagraphMark") {
+        None => Ok(false),
+        Some(Value::Bool(true)) => Ok(true),
+        _ => bail!("splitPageBreakAndParagraphMark must be true; omit it for the default"),
+    }
+}
+
 pub fn validate(doc: &Node) -> Result<()> {
     ensure!(doc.kind == "doc", "Root must be doc");
     style_profile(doc)?;
+    split_page_break_and_paragraph_mark(doc)?;
     let page = page_geometry(doc)?;
     let mut nodes = 0usize;
     let mut text_bytes = 0usize;
@@ -962,7 +1010,12 @@ pub fn validate(doc: &Node) -> Result<()> {
             "Document structure exceeds limits"
         );
         let allowed: &[&str] = match node.kind.as_str() {
-            "doc" if depth == 0 => &["styleProfile", "pageGeometry"],
+            "doc" if depth == 0 => &[
+                "styleProfile",
+                "pageGeometry",
+                "splitPageBreakAndParagraphMark",
+            ],
+            "pageBreak" => &["breakParagraph"],
             "heading" => &[
                 "level",
                 "keepNext",
@@ -1018,7 +1071,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "displayHeightEmu",
                 "imageParagraph",
             ],
-            "doc" | "text" | "hardBreak" | "pageBreak" | "bulletList" | "listItem" => &[],
+            "doc" | "text" | "hardBreak" | "bulletList" | "listItem" => &[],
             other => bail!("Unsupported document node: {other}"),
         };
         for key in node.attrs.keys() {
@@ -1029,6 +1082,7 @@ pub fn validate(doc: &Node) -> Result<()> {
             );
         }
         empty_paragraph_font(node)?;
+        break_paragraph(node)?;
         for key in crate::paragraph_pagination::FIELDS {
             if let Some(value) = node.attrs.get(key) {
                 ensure!(
@@ -1579,7 +1633,24 @@ impl Writer {
 
     fn block(&mut self, node: &Node, level: usize) -> Result<String> {
         match node.kind.as_str() {
-            "pageBreak" => Ok("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>".into()),
+            "pageBreak" => {
+                let Some(metrics) = break_paragraph(node)? else {
+                    // Omission preserves historical atom bytes, even when the
+                    // author explicitly chose document-wide split behavior.
+                    return Ok("<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>".into());
+                };
+                self.has_spacing = true;
+                let family = escaped(&metrics.font.family);
+                let hps = metrics.font.half_points;
+                // The audited source subset proves ordinary Latin slots only.
+                let font = format!(
+                    "<w:rPr><w:rFonts w:ascii=\"{family}\" w:hAnsi=\"{family}\"/><w:sz w:val=\"{hps}\"/></w:rPr>"
+                );
+                Ok(format!(
+                    "<w:p><w:pPr><w:spacing w:before=\"{}\" w:after=\"{}\" w:line=\"{}\" w:lineRule=\"auto\"/>{font}</w:pPr><w:r>{font}<w:br w:type=\"page\"/></w:r></w:p>",
+                    metrics.space_before, metrics.space_after, metrics.line_spacing
+                ))
+            }
             "paragraph" | "heading" => self.paragraph(node, None),
             "bulletList" | "orderedList" => {
                 ensure!(level < 9, "Lists support at most nine nesting levels");
@@ -1903,7 +1974,9 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
     // LibreOffice treats adjacent paragraph gaps differently when the settings
     // part is absent. Activate only for the new optional spacing model, keeping
     // historical V1/V2 package bytes unchanged when no spacing is authored.
-    let types = if writer.has_spacing {
+    let split_break = split_page_break_and_paragraph_mark(doc)?;
+    let has_settings = writer.has_spacing || split_break;
+    let types = if has_settings {
         rels = rels.replace("</Relationships>", r#"<Relationship Id="settings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>"#);
         types.replace("</Types>", r#"<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>"#)
     } else {
@@ -1931,8 +2004,12 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
                 format!("{:x}", Sha256::digest(data.as_bytes())),
             );
         }
-        if writer.has_spacing {
-            let data = r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#;
+        if has_settings {
+            let data = if split_break {
+                r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:compat><w:splitPgBreakAndParaMark/></w:compat></w:settings>"#
+            } else {
+                r#"<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>"#
+            };
             zip.start_file("word/settings.xml", SimpleFileOptions::default())?;
             zip.write_all(data.as_bytes())?;
             hashes.insert(

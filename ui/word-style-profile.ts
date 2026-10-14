@@ -1,5 +1,6 @@
 import {omitDefaultEmptyParagraphFont, validateEmptyParagraphFontDocument} from './word-empty-paragraph-font-model';
 import {documentPageGeometry, omitDefaultPageGeometry} from './word-page-geometry';
+import {omitDefaultPageBreak, validatePageBreakDocument} from './word-page-break-model';
 import type {Editor, JSONContent} from '@tiptap/core';
 
 export const STANDARD_WORD_STYLE_PROFILE = 'standard-v2' as const;
@@ -9,8 +10,9 @@ export type WordStyleProfile = typeof STANDARD_WORD_STYLE_PROFILE | null;
 export function documentStyleProfile(document: JSONContent): WordStyleProfile {
   if (document.type !== 'doc') throw new Error('文档根节点必须为 doc。');
   const attrs = document.attrs;
+  validatePageBreakDocument(document);
   if (attrs === undefined) return null;
-  if (!attrs || typeof attrs !== 'object' || Array.isArray(attrs) || Object.keys(attrs).some(key => key !== 'styleProfile' && key !== 'pageGeometry')) {
+  if (!attrs || typeof attrs !== 'object' || Array.isArray(attrs) || Object.keys(attrs).some(key => key !== 'styleProfile' && key !== 'pageGeometry' && key !== 'splitPageBreakAndParagraphMark')) {
     throw new Error('文档根属性不受支持。');
   }
   documentPageGeometry(document);
@@ -32,7 +34,7 @@ export function editorStyleProfile(owner: Pick<Editor, 'state'>): WordStyleProfi
 }
 
 export function snapshotDocument(owner: Pick<Editor, 'getJSON'>): JSONContent {
-  const document = {...omitDefaultEmptyParagraphFont(omitDefaultPageGeometry(owner.getJSON()))};
+  const document = {...omitDefaultPageBreak(omitDefaultEmptyParagraphFont(omitDefaultPageGeometry(owner.getJSON())))};
   validateEmptyParagraphFontDocument(document);
   if (document.attrs) {
     document.attrs = {...document.attrs};

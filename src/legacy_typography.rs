@@ -3,7 +3,7 @@
 //!
 //! This does not trust permissive legacy formatting recovery, implement a general
 //! Word style engine, or promise appearance. All reads use the import snapshot.
-use crate::document::{Mark, Node};
+use crate::document::{BreakParagraph, BreakParagraphFont, Mark, Node};
 use anyhow::{Context, Result, ensure};
 use office_oxide::cfb::{CfbReader, EntryType};
 use std::{
@@ -35,7 +35,14 @@ pub(crate) enum Block {
         runs: Vec<Run>,
         spacing: ParagraphSpacing,
     },
-    PageBreak,
+    /// Exact standalone U+000C/CR source pair. Metrics alone do not authorize
+    /// the document flag: the DOP and section proof must promote every pair.
+    SourcePageBreak {
+        cp_end: u32,
+        metrics: std::result::Result<BreakParagraph, String>,
+        split: bool,
+        fallback: Option<String>,
+    },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EncodedLineSpacing {
@@ -190,16 +197,16 @@ fn audit_inner(source: &[u8]) -> Result<(Audit, Option<crate::legacy_page_geomet
         },
         source.len(),
     )?;
-    let typography = audit_streams(&word, &table)?;
+    let mut typography = audit_streams(&word, &table)?;
     // Do not broaden or alter the historical Unsupported typography route.
     // Its source identity is not strong enough to authorize page attachment.
-    let page = if let Audit::Proven(blocks) = &typography {
+    let page = if let Audit::Proven(blocks) = &mut typography {
         // The proof decodes one Windows-1252 source byte to one Unicode scalar.
         // Reuse that exact body identity to locate possible section-end marks;
         // no second piece-table parser or inferred paragraph boundary is needed.
         let mut cp = 0u32;
         let mut break_ends = BTreeSet::new();
-        for block in blocks {
+        for block in blocks.iter() {
             match block {
                 Block::NormalParagraph { runs, .. } => {
                     for run in runs {
@@ -207,8 +214,9 @@ fn audit_inner(source: &[u8]) -> Result<(Audit, Option<crate::legacy_page_geomet
                     }
                     cp += 1; // Encoded CR, including true empty paragraphs.
                 }
-                Block::PageBreak => {
+                Block::SourcePageBreak { cp_end, .. } => {
                     cp += 1; // Encoded U+000C before the paragraph CR.
+                    ensure!(*cp_end == cp, "DOC break paragraph CP identity mismatch");
                     break_ends.insert(cp);
                     cp += 1;
                 }
@@ -218,15 +226,40 @@ fn audit_inner(source: &[u8]) -> Result<(Audit, Option<crate::legacy_page_geomet
             cp as usize == u32_at(&word, 0x4c)?,
             "DOC page body CP identity mismatch"
         );
-        Some(crate::legacy_page_geometry::audit_streams(
-            &word,
-            &table,
-            &break_ends,
-        )?)
+        let page = crate::legacy_page_geometry::audit_streams(&word, &table, &break_ends)?;
+        promote_break_paragraphs(blocks, &page, &break_ends);
+        Some(page)
     } else {
         None
     };
     Ok((typography, page))
+}
+
+fn promote_break_paragraphs(
+    blocks: &mut [Block],
+    page: &crate::legacy_page_geometry::Audit,
+    break_ends: &BTreeSet<u32>,
+) {
+    if break_ends.is_empty() || !page.requests_split_break_semantics() {
+        return;
+    }
+    let proof = page.split_break_semantics(break_ends).and_then(|()| {
+        for block in blocks.iter() {
+            if let Block::SourcePageBreak { metrics, .. } = block {
+                metrics.as_ref().map_err(Clone::clone)?;
+            }
+        }
+        Ok(())
+    });
+    for block in blocks {
+        if let Block::SourcePageBreak {
+            split, fallback, ..
+        } = block
+        {
+            *split = proof.is_ok();
+            *fallback = proof.as_ref().err().cloned();
+        }
+    }
 }
 
 fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
@@ -471,7 +504,32 @@ fn audit_streams(word: &[u8], table: &[u8]) -> Result<Audit> {
     for (paragraph, spacing) in paragraphs.into_iter().zip(paragraph_spacing) {
         let content = paragraph.start..paragraph.end - 1;
         if &word[content.clone()] == b"\x0c" {
-            blocks.push(Block::PageBreak);
+            let metric = |position: usize| -> Result<BreakParagraphFont> {
+                let index = character_runs.partition_point(|run| run.range.end <= position);
+                let properties = &effective[index];
+                Ok(BreakParagraphFont {
+                    family: fonts[properties.ascii as usize].name.clone(),
+                    half_points: properties.hps,
+                })
+            };
+            let font = metric(content.start)?;
+            let mark_font = metric(content.end)?;
+            let metrics = if font != mark_font {
+                Err("page-break character and trailing paragraph mark have different Latin font metrics".into())
+            } else {
+                spacing.supported_line().map(|line_spacing| BreakParagraph {
+                    font,
+                    space_before: spacing.before,
+                    space_after: spacing.after,
+                    line_spacing,
+                })
+            };
+            blocks.push(Block::SourcePageBreak {
+                cp_end: (content.end - range.start) as u32,
+                metrics,
+                split: false,
+                fallback: None,
+            });
             continue;
         }
         if word[content.clone()].contains(&0x0c) {
@@ -1353,18 +1411,47 @@ pub(crate) fn attach(
         "DOC typography source-to-editor block identity mismatch; source remains read-only"
     );
     let mut candidate = document.clone();
+    ensure!(
+        !candidate
+            .attrs
+            .contains_key("splitPageBreakAndParagraphMark"),
+        "DOC parser introduced unproved split-page-break compatibility"
+    );
     let mut generated = 1 + candidate.content.len();
     let mut preserved_spacing = 0;
     let mut unsupported_spacing = BTreeMap::<String, usize>::new();
     let mut break_paragraphs = 0;
+    let mut preserved_breaks = 0;
+    let mut break_fallbacks = BTreeSet::new();
     let mut empty_paragraphs = 0;
     for (block, node) in blocks.into_iter().zip(&mut candidate.content) {
         match block {
-            Block::PageBreak => {
+            Block::SourcePageBreak { .. } => {
                 ensure!(
-                    node.kind == "pageBreak",
+                    node.kind == "pageBreak"
+                        && node.attrs.is_empty()
+                        && node.content.is_empty()
+                        && node.text.is_none()
+                        && node.marks.is_empty(),
                     "DOC typography manual-break identity mismatch"
                 );
+                if let Block::SourcePageBreak {
+                    metrics,
+                    split,
+                    fallback,
+                    ..
+                } = block
+                {
+                    if split {
+                        let metrics = metrics.map_err(anyhow::Error::msg)?;
+                        node.attrs
+                            .insert("breakParagraph".into(), serde_json::to_value(metrics)?);
+                        preserved_breaks += 1;
+                    }
+                    if let Some(reason) = fallback {
+                        break_fallbacks.insert(reason);
+                    }
+                }
                 break_paragraphs += 1;
             }
             Block::NormalParagraph { runs, spacing } => {
@@ -1482,6 +1569,15 @@ pub(crate) fn attach(
             }
         }
     }
+    ensure!(
+        preserved_breaks == 0 || preserved_breaks == break_paragraphs,
+        "DOC split-page-break proof is incomplete across source paragraphs"
+    );
+    if preserved_breaks > 0 {
+        candidate
+            .attrs
+            .insert("splitPageBreakAndParagraphMark".into(), true.into());
+    }
     crate::document::validate(&candidate)?;
     *document = candidate;
     risks.insert(PRESERVED.into());
@@ -1489,8 +1585,9 @@ pub(crate) fn attach(
     risks.insert("Font names are preserved; unavailable fonts may be substituted locally".into());
     let normalized_spacing: usize = unsupported_spacing.values().sum();
     if preserved_spacing + normalized_spacing > 0 {
+        let other = if preserved_breaks > 0 { "other " } else { "" };
         risks.insert(format!(
-            "Legacy DOC encoded paragraph spacing values preserved for {preserved_spacing} audited Normal paragraph(s); {normalized_spacing} paragraph(s) retain normalized spacing; source layout, grids and compatibility settings are not proven"
+            "Legacy DOC encoded paragraph spacing values preserved for {preserved_spacing} audited Normal paragraph(s); {normalized_spacing} paragraph(s) retain normalized spacing; source layout, grids and {other}compatibility settings are not proven"
         ));
     }
     for (reason, count) in unsupported_spacing {
@@ -1498,10 +1595,17 @@ pub(crate) fn attach(
             "Legacy DOC encoded paragraph spacing not preserved for {count} audited Normal paragraph(s): {reason}"
         ));
     }
-    if break_paragraphs > 0 {
+    if preserved_breaks > 0 {
+        risks.insert(format!(
+            "Legacy DOC split-page-break compatibility and complete Latin paragraph-mark metrics are preserved for {preserved_breaks} standalone manual break paragraph(s); browser printing does not reproduce the retained next-page mark line"
+        ));
+    } else if break_paragraphs > 0 {
         risks.insert(format!(
             "Legacy DOC break-only paragraph spacing and baseline fonts are not preserved ({break_paragraphs} paragraph(s)); standalone page-break nodes are retained"
         ));
+    }
+    for reason in break_fallbacks {
+        risks.insert(format!("Legacy DOC split-page-break paragraph semantics are not preserved for any source break: {reason}"));
     }
     if empty_paragraphs > 0 {
         risks.insert(format!(
@@ -1564,6 +1668,14 @@ mod tests {
             font: "Arial".into(),
             hps,
             direct_hps: None,
+        }
+    }
+    fn bare_break() -> Block {
+        Block::SourcePageBreak {
+            cp_end: 0,
+            metrics: Err("unproved test break".into()),
+            split: false,
+            fallback: None,
         }
     }
     fn normal(runs: Vec<Run>) -> Block {
@@ -1660,6 +1772,316 @@ mod tests {
             page[20 + 13 * i] = (end / 2) as u8;
         }
         (word, table)
+    }
+    fn split_page_proof(
+        flag: Option<bool>,
+        section_end: Option<u32>,
+    ) -> crate::legacy_page_geometry::Audit {
+        let mut word = vec![0u8; 2048];
+        let mut table = vec![0u8; 800];
+        word[2..4].copy_from_slice(&0xc1u16.to_le_bytes());
+        word[0x98..0x9a].copy_from_slice(&183u16.to_le_bytes());
+        let new_at = 0x9a + 183 * 8;
+        word[new_at..new_at + 2].copy_from_slice(&5u16.to_le_bytes());
+        word[new_at + 2..new_at + 4].copy_from_slice(&0x112u16.to_le_bytes());
+        word[0x4c..0x50].copy_from_slice(&17u32.to_le_bytes());
+        if let Some(flag) = flag {
+            word[0x192..0x196].copy_from_slice(&64u32.to_le_bytes());
+            word[0x196..0x19a].copy_from_slice(&674u32.to_le_bytes());
+            table[64 + 512..64 + 516]
+                .copy_from_slice(&(if flag { 0x0800_0000u32 } else { 0 }).to_le_bytes());
+        }
+        let ends = if let Some(end) = section_end {
+            vec![end, 17]
+        } else {
+            vec![17]
+        };
+        word[0xce..0xd2].copy_from_slice(&((4 + 16 * ends.len()) as u32).to_le_bytes());
+        for (i, end) in ends.iter().enumerate() {
+            table[(i + 1) * 4..(i + 2) * 4].copy_from_slice(&end.to_le_bytes());
+            let sed = 4 * (ends.len() + 1) + 12 * i + 2;
+            table[sed..sed + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        }
+        crate::legacy_page_geometry::audit_streams(&word, &table, &BTreeSet::from([9])).unwrap()
+    }
+    fn source_break(split: bool) -> Block {
+        Block::SourcePageBreak {
+            cp_end: 9,
+            metrics: Ok(BreakParagraph {
+                font: BreakParagraphFont {
+                    family: "Calibri".into(),
+                    half_points: 22,
+                },
+                space_before: 0,
+                space_after: 200,
+                line_spacing: 276,
+            }),
+            split,
+            fallback: None,
+        }
+    }
+    fn break_node() -> Node {
+        serde_json::from_value(serde_json::json!({"type":"pageBreak"})).unwrap()
+    }
+    fn split_character_fixture(mark_hps: u16) -> (Vec<u8>, Vec<u8>) {
+        let (mut word, table) = fixture_spacing(
+            &[gap(0xa414, 200), lspd(276, 1)].concat(),
+            [&[], &[], &[], &[]],
+        );
+        let page = &mut word[1536..2048];
+        page.fill(0);
+        page[511] = 4;
+        for (i, fc) in [1024u32, 1032, 1033, 1034, 1041].into_iter().enumerate() {
+            page[i * 4..i * 4 + 4].copy_from_slice(&fc.to_le_bytes());
+        }
+        for (i, hps) in [(1, 22u16), (2, mark_hps)] {
+            let pos = 480 + i * 8;
+            page[20 + i] = (pos / 2) as u8;
+            page[pos] = 4;
+            page[pos + 1..pos + 3].copy_from_slice(&0x4a43u16.to_le_bytes());
+            page[pos + 3..pos + 5].copy_from_slice(&hps.to_le_bytes());
+        }
+        (word, table)
+    }
+    #[test]
+    fn break_source_captures_exact_cp_spacing_and_both_separate_chpx_runs() {
+        let (word, table) = split_character_fixture(22);
+        let Audit::Proven(blocks) = audit_streams(&word, &table).unwrap() else {
+            panic!("body proof");
+        };
+        let Block::SourcePageBreak {
+            cp_end,
+            metrics,
+            split,
+            fallback,
+        } = &blocks[2]
+        else {
+            panic!("break identity");
+        };
+        assert_eq!(*cp_end, 9);
+        assert!(!split);
+        assert!(fallback.is_none());
+        assert_eq!(
+            metrics.as_ref().unwrap(),
+            &BreakParagraph {
+                font: BreakParagraphFont {
+                    family: "Times New Roman".into(),
+                    half_points: 22
+                },
+                space_before: 0,
+                space_after: 200,
+                line_spacing: 276
+            }
+        );
+    }
+    #[test]
+    fn differing_cr_font_size_is_not_borrowed_from_break_or_following_text() {
+        let (word, table) = split_character_fixture(24);
+        let Audit::Proven(mut blocks) = audit_streams(&word, &table).unwrap() else {
+            panic!("body proof");
+        };
+        let Block::SourcePageBreak { metrics, .. } = &blocks[2] else {
+            panic!("break identity");
+        };
+        assert!(
+            metrics
+                .as_ref()
+                .unwrap_err()
+                .contains("different Latin font metrics")
+        );
+        promote_break_paragraphs(
+            &mut blocks,
+            &split_page_proof(Some(true), None),
+            &BTreeSet::from([9]),
+        );
+        let Block::SourcePageBreak {
+            split, fallback, ..
+        } = &blocks[2]
+        else {
+            panic!("break identity");
+        };
+        assert!(!split);
+        assert!(
+            fallback
+                .as_ref()
+                .unwrap()
+                .contains("different Latin font metrics")
+        );
+    }
+    #[test]
+    fn unsupported_break_spacing_preserves_the_independent_body_proof() {
+        let line = lspd(300, 0);
+        let (word, table) = fixture_spacing(&[], [&[], &[], &line, &[]]);
+        let Audit::Proven(mut blocks) = audit_streams(&word, &table).unwrap() else {
+            panic!("body proof");
+        };
+        promote_break_paragraphs(
+            &mut blocks,
+            &split_page_proof(Some(true), None),
+            &BTreeSet::from([9]),
+        );
+        let Block::SourcePageBreak {
+            metrics,
+            split,
+            fallback,
+            ..
+        } = &blocks[2]
+        else {
+            panic!("break identity");
+        };
+        assert!(!split);
+        assert!(
+            metrics
+                .as_ref()
+                .unwrap_err()
+                .contains("minimum line spacing")
+        );
+        assert!(fallback.as_ref().unwrap().contains("minimum line spacing"));
+    }
+    #[test]
+    fn explicit_split_proves_all_breaks_independently_of_unsupported_page_geometry() {
+        let mut blocks = vec![source_break(false), normal(vec![]), source_break(false)];
+        promote_break_paragraphs(
+            &mut blocks,
+            &split_page_proof(Some(true), None),
+            &BTreeSet::from([9]),
+        );
+        let mut doc = document("");
+        doc.content = vec![
+            break_node(),
+            serde_json::from_value(serde_json::json!({"type":"paragraph"})).unwrap(),
+            break_node(),
+        ];
+        let mut risks = BTreeSet::new();
+        attach(Audit::Proven(blocks), &mut doc, &mut risks).unwrap();
+        assert_eq!(doc.attrs["splitPageBreakAndParagraphMark"], true);
+        assert_eq!(doc.content.len(), 3);
+        assert_eq!(
+            doc.content[0].attrs["breakParagraph"],
+            doc.content[2].attrs["breakParagraph"]
+        );
+        assert!(doc.content[1].content.is_empty());
+        assert!(!doc.content[1].attrs.contains_key("emptyParagraphFont"));
+        assert!(
+            risks
+                .iter()
+                .any(|r| r.contains("preserved for 2 standalone manual break"))
+        );
+        assert!(
+            risks
+                .iter()
+                .any(|r| r.contains("other compatibility settings"))
+        );
+    }
+    #[test]
+    fn one_unproved_break_prevents_global_promotion_without_discarding_normal_fonts() {
+        let mut blocks = vec![
+            source_break(false),
+            normal(vec![run("same", 20)]),
+            bare_break(),
+        ];
+        promote_break_paragraphs(
+            &mut blocks,
+            &split_page_proof(Some(true), None),
+            &BTreeSet::from([9]),
+        );
+        let mut doc = document("same");
+        doc.content.insert(0, break_node());
+        doc.content.push(break_node());
+        let mut risks = BTreeSet::new();
+        attach(Audit::Proven(blocks), &mut doc, &mut risks).unwrap();
+        assert!(!doc.attrs.contains_key("splitPageBreakAndParagraphMark"));
+        assert!(doc.content[0].attrs.is_empty() && doc.content[2].attrs.is_empty());
+        assert_eq!(doc.content[1].content[0].marks[1].attrs["name"], "Arial");
+        assert!(
+            risks
+                .iter()
+                .any(|r| r.contains("not preserved for any source break: unproved test break"))
+        );
+    }
+    #[test]
+    fn source_off_absent_and_zero_breaks_never_invent_split_state() {
+        for flag in [None, Some(false)] {
+            let mut blocks = vec![source_break(false)];
+            promote_break_paragraphs(
+                &mut blocks,
+                &split_page_proof(flag, None),
+                &BTreeSet::from([9]),
+            );
+            let mut doc = document("");
+            doc.content = vec![break_node()];
+            let mut risks = BTreeSet::new();
+            attach(Audit::Proven(blocks), &mut doc, &mut risks).unwrap();
+            assert!(doc.attrs.is_empty() && doc.content[0].attrs.is_empty());
+            assert!(!risks.iter().any(|r| r.contains("split-page-break")));
+        }
+        let mut blocks = vec![normal(vec![run("same", 20)])];
+        promote_break_paragraphs(
+            &mut blocks,
+            &split_page_proof(Some(true), None),
+            &BTreeSet::new(),
+        );
+        let mut doc = document("same");
+        attach(Audit::Proven(blocks), &mut doc, &mut BTreeSet::new()).unwrap();
+        assert!(doc.attrs.is_empty());
+    }
+    #[test]
+    fn section_end_prevents_global_manual_break_semantics() {
+        let mut blocks = vec![source_break(false)];
+        promote_break_paragraphs(
+            &mut blocks,
+            &split_page_proof(Some(true), Some(9)),
+            &BTreeSet::from([9]),
+        );
+        let Block::SourcePageBreak {
+            split, fallback, ..
+        } = &blocks[0]
+        else {
+            panic!("break identity");
+        };
+        assert!(!split);
+        assert!(
+            fallback
+                .as_ref()
+                .unwrap()
+                .contains("section-ending character")
+        );
+    }
+    #[test]
+    fn late_text_or_validation_failure_keeps_promoted_breaks_and_all_risks_atomic() {
+        let mut doc = document("actual");
+        doc.content.insert(0, break_node());
+        assert_unchanged_after_refusal(
+            Audit::Proven(vec![source_break(true), normal(vec![run("other", 20)])]),
+            doc,
+        );
+        let mut doc = document("same");
+        doc.content.insert(0, break_node());
+        doc.attrs.insert("unknown".into(), true.into());
+        assert_unchanged_after_refusal(
+            Audit::Proven(vec![source_break(true), normal(vec![run("same", 20)])]),
+            doc,
+        );
+    }
+    #[test]
+    fn source_attachment_rejects_partial_promotion_or_preexisting_authored_metadata() {
+        let mut doc = document("");
+        doc.content = vec![break_node(), break_node()];
+        assert_unchanged_after_refusal(
+            Audit::Proven(vec![source_break(true), source_break(false)]),
+            doc,
+        );
+        let mut doc = document("");
+        doc.content = vec![break_node()];
+        doc.attrs
+            .insert("splitPageBreakAndParagraphMark".into(), true.into());
+        assert_unchanged_after_refusal(Audit::Proven(vec![source_break(true)]), doc);
+        let mut doc = document("");
+        doc.content = vec![break_node()];
+        doc.content[0]
+            .attrs
+            .insert("breakParagraph".into(), serde_json::json!({}));
+        assert_unchanged_after_refusal(Audit::Proven(vec![source_break(true)]), doc);
     }
     #[test]
     fn paragraph_spacing_defaults_are_source_zero_zero_single() {
@@ -1846,7 +2268,7 @@ mod tests {
                 expected
             );
         }
-        assert!(matches!(blocks[2], Block::PageBreak));
+        assert!(matches!(blocks[2], Block::SourcePageBreak { .. }));
     }
     #[test]
     fn spacing_source_proof_rejects_malformed_style_or_papx_despite_fallback() {
@@ -2042,7 +2464,7 @@ mod tests {
             let mut n = document("Title");
             n.content.push(serde_json::from_value(change).unwrap());
             assert_unchanged_after_refusal(
-                Audit::Proven(vec![normal(vec![run("Title", 20)]), Block::PageBreak]),
+                Audit::Proven(vec![normal(vec![run("Title", 20)]), bare_break()]),
                 n,
             );
         }
@@ -2154,7 +2576,7 @@ mod tests {
                 normal(vec![]),
                 normal(vec![run("Title", 20)]),
                 normal(vec![]),
-                Block::PageBreak,
+                bare_break(),
                 normal(vec![]),
                 normal(vec![run("LATER", 20)]),
                 normal(vec![]),
@@ -2246,7 +2668,7 @@ mod tests {
         n.content[0] = heading("Title", 1);
         n.content.push(document("Actual").content.remove(0));
         assert_unchanged_after_refusal(
-            Audit::Proven(vec![normal(vec![run("Title", 20)]), Block::PageBreak]),
+            Audit::Proven(vec![normal(vec![run("Title", 20)]), bare_break()]),
             n,
         );
     }

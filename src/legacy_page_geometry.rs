@@ -15,6 +15,43 @@ const BREAK_RISK: &str =
 pub(crate) struct Audit {
     geometry: Option<PageGeometry>,
     reasons: BTreeSet<String>,
+    split_breaks: Option<bool>,
+    section_ends: Option<BTreeSet<u32>>,
+}
+
+impl Audit {
+    pub(crate) fn requests_split_break_semantics(&self) -> bool {
+        self.split_breaks == Some(true)
+    }
+    /// Compatibility and section identity are independent of supported page
+    /// dimensions, grids, margins or printer settings. Only exact source CPs
+    /// and an explicitly encoded Word2007+ true value authorize promotion.
+    pub(crate) fn split_break_semantics(
+        &self,
+        break_ends: &BTreeSet<u32>,
+    ) -> std::result::Result<(), String> {
+        match self.split_breaks {
+            Some(true) => {}
+            Some(false) => {
+                return Err("source split-page-break compatibility flag is explicitly off".into());
+            }
+            None => {
+                return Err(
+                    "source Word2007+ split-page-break compatibility flag is absent".into(),
+                );
+            }
+        }
+        let section_ends = self
+            .section_ends
+            .as_ref()
+            .ok_or_else(|| "exact source section boundaries are not proven".to_string())?;
+        if !section_ends.is_disjoint(break_ends) {
+            return Err(
+                "a source break is a section-ending character, not a manual page break".into(),
+            );
+        }
+        Ok(())
+    }
 }
 
 fn bytes(data: &[u8], offset: usize, length: usize) -> Result<&[u8]> {
@@ -120,12 +157,14 @@ fn audit_inner(word: &[u8], table: &[u8], break_ends: &BTreeSet<u32>) -> Result<
             reason(&mut reasons, why);
         }
     }
-    audit_dop(dop, version, &mut reasons)?;
+    let split_breaks = audit_dop(dop, version, &mut reasons)?;
     if sed.is_empty() {
         reason(&mut reasons, "section table is absent");
         return Ok(Audit {
             geometry: None,
             reasons,
+            split_breaks,
+            section_ends: None,
         });
     }
     ensure!(
@@ -136,6 +175,7 @@ fn audit_inner(word: &[u8], table: &[u8], break_ends: &BTreeSet<u32>) -> Result<
     ensure!(sections <= MAX_SECTIONS, "DOC page section limit exceeded");
     let cp = u32_at(word, 0x4c)?;
     let mut previous = u32_at(sed, 0)?;
+    let mut section_ends = BTreeSet::new();
     ensure!(previous == 0, "DOC PlcfSed does not start at body CP zero");
     for i in 1..=sections {
         let next = u32_at(sed, i * 4)?;
@@ -149,6 +189,7 @@ fn audit_inner(word: &[u8], table: &[u8], break_ends: &BTreeSet<u32>) -> Result<
                 break_ends.contains(&next),
                 "DOC section boundary has no source end-of-section marker"
             );
+            section_ends.insert(next);
         }
         previous = next;
     }
@@ -191,13 +232,18 @@ fn audit_inner(word: &[u8], table: &[u8], break_ends: &BTreeSet<u32>) -> Result<
     if !reasons.is_empty() {
         geometry = None;
     }
-    Ok(Audit { geometry, reasons })
+    Ok(Audit {
+        geometry,
+        reasons,
+        split_breaks,
+        section_ends: (previous == cp).then_some(section_ends),
+    })
 }
 
-fn audit_dop(dop: &[u8], version: u16, reasons: &mut BTreeSet<String>) -> Result<()> {
+fn audit_dop(dop: &[u8], version: u16, reasons: &mut BTreeSet<String>) -> Result<Option<bool>> {
     if dop.is_empty() {
         reason(reasons, "document page settings are absent");
-        return Ok(());
+        return Ok(None);
     }
     ensure!(
         (version == 0xc1 && dop.len() == 500)
@@ -255,7 +301,9 @@ fn audit_dop(dop: &[u8], version: u16, reasons: &mut BTreeSet<String>) -> Result
             );
         }
     }
-    Ok(())
+    // Dop97 does not contain this field. Its absence must not be interpreted
+    // as either a source-encoded false value or a consumer default.
+    Ok((version == 0x112).then(|| u32_at(dop, 512).expect("validated DOP") & 0x0800_0000 != 0))
 }
 
 fn parse_section(
@@ -578,6 +626,72 @@ mod tests {
         let a = audit_streams(word, table).unwrap();
         assert!(a.geometry.is_none());
         assert!(a.reasons.iter().any(|s| s.contains(why)), "{:?}", a.reasons);
+    }
+    #[test]
+    fn split_flag_is_explicit_only_in_the_three_audited_word2007_dop_layouts() {
+        for length in [674, 690, 694] {
+            for active in [false, true] {
+                let (mut w, mut t) = fixture(&page(12240, 15840), true);
+                set32(&mut w, 0x9e + 31 * 8, length);
+                set32(&mut t, 200 + 512, if active { 0x0800_0000 } else { 0 });
+                let a = audit_streams(&w, &t).unwrap();
+                assert_eq!(a.requests_split_break_semantics(), active);
+                assert_eq!(
+                    a.split_break_semantics(&BTreeSet::from([20])).is_ok(),
+                    active
+                );
+            }
+        }
+        let (w, mut t) = fixture(&page(12240, 15840), false);
+        // Unreferenced bytes beyond a real Dop97 cannot turn an absent field on.
+        set32(&mut t, 200 + 512, 0x0800_0000);
+        let a = audit_streams(&w, &t).unwrap();
+        assert!(!a.requests_split_break_semantics());
+        assert!(
+            a.split_break_semantics(&BTreeSet::from([20]))
+                .unwrap_err()
+                .contains("absent")
+        );
+    }
+    #[test]
+    fn split_proof_is_independent_of_page_geometry_but_requires_exact_sections() {
+        let (mut w, mut t) = fixture(&[], true);
+        set32(&mut t, 200 + 512, 0x0800_0000);
+        let a = audit_streams(&w, &t).unwrap();
+        assert!(a.geometry.is_none());
+        assert!(a.split_break_semantics(&BTreeSet::from([20])).is_ok());
+        set32(&mut t, 104, 49);
+        let a = audit_streams(&w, &t).unwrap();
+        assert!(
+            a.split_break_semantics(&BTreeSet::from([20]))
+                .unwrap_err()
+                .contains("exact source section")
+        );
+        set32(&mut w, 0x9e + 6 * 8, 0);
+        let a = audit_streams(&w, &t).unwrap();
+        assert!(
+            a.split_break_semantics(&BTreeSet::from([20]))
+                .unwrap_err()
+                .contains("exact source section")
+        );
+    }
+    #[test]
+    fn section_ending_cp_never_qualifies_as_a_split_manual_break() {
+        let (mut w, mut t) = fixture(&[], true);
+        set32(&mut t, 200 + 512, 0x0800_0000);
+        set32(&mut w, 0x9e + 6 * 8, 36);
+        t[100..136].fill(0);
+        set32(&mut t, 104, 20);
+        set32(&mut t, 108, 48);
+        set32(&mut t, 114, u32::MAX);
+        set32(&mut t, 126, u32::MAX);
+        let a = audit_streams(&w, &t).unwrap();
+        assert!(a.geometry.is_none());
+        assert!(
+            a.split_break_semantics(&BTreeSet::from([20]))
+                .unwrap_err()
+                .contains("section-ending")
+        );
     }
     #[test]
     fn exact_original_sizes_and_preset_tolerance_never_round() {
@@ -975,6 +1089,8 @@ mod tests {
             Audit {
                 geometry: None,
                 reasons: BTreeSet::from(["document page settings are absent".into()]),
+                split_breaks: None,
+                section_ends: None,
             },
             &mut doc,
             &mut risks,

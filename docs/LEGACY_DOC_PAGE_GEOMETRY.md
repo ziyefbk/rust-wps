@@ -1,5 +1,7 @@
 # 旧二进制 DOC 的单节页面几何
 
+后续 [独立分页段增量](LEGACY_DOC_BREAK_PARAGRAPHS.md) 在明确 DOP / break / CR / 节界的完整证明下保留 split 语义与分页段 metrics。本文的分页段纵向差属于历史记录；字体替代、空段基线及完整版式限制仍保留。
+
 本增量只在现有完整 [Latin 字体 / 编码 Normal](LEGACY_DOC_NORMAL_PARAGRAPHS.md) 正文证明内，保留一节文档的纸张宽高和四边正文边距。使用现有 `pageGeometry` 六整数模型和 writer，不修改 vendor、普通 IR 转换、分页原子、页面 schema、UI 或兼容模式。它恢复编码值，不是正文物理行框或完整 Word / WPS 版式证明。
 
 ## 支持子集

@@ -1,5 +1,85 @@
 # 当前跨格式回归记录
 
+## 本轮：旧 DOC 独立分页段与段落标记（2026-10-14）
+
+基于已发布 `8aea87b0763efbe022045ff821d878ebfbb7f4ba`，只在既有完整 Latin / 编码 Normal 正文证明上保留明确 DOP `fSplitPgBreakAndParaMark` 与独立分页段的完整字体 / 字号 / 间距。源 `0C 0D`、两个字符各自的 CHPX、PAPX、实际 CP 和 PlcfSed 节界分别核对；所有分页段共同证明后，在同一候选模型中添加根 flag 和对应原子 metrics，完整验证成功才提交模型与诊断。保留源块身份（真实 SampleDoc 为七块），不添空段、伪文字或坐标补偿，不改 vendor、字体替代、其他格式或全局 compatibilityMode。范围见 [LEGACY_DOC_BREAK_PARAGRAPHS.md](LEGACY_DOC_BREAK_PARAGRAPHS.md)。
+
+作者模型允许独立组合的可选根 `splitPageBreakAndParagraphMark:true` 和完整 `pageBreak.attrs.breakParagraph`；仅 flag、仅 metrics、混合原子及无分页的根 true 均为合法显式作者状态。新裸分页遵循当前文档兼容语义和原 profile 默认度量；剪贴板保留原子 metrics，但不改变目标根状态。自动源导入仍严格整组证明：任何未证明的分页阻止全部新属性，保留已证明正文及独立页面结果；显式 off / 缺字段 / 无分页与整份 typography Unsupported 路线保持旧响应。其他既有拒绝不被回退撤销。
+
+### 两工具链与前端最终门禁
+
+- Rust **1.99 / 1.88 各 742 项核心测试通过**，原 724 + 12 单元 / 6 集成。覆盖精确 break / CR / CP / 间距身份、跨 CHPX 相同 / 不同字形度量、三个 DOP 长度、Dop97 尾外字节不误读、section marker、合法不支持间距、全局原子回退、无分页、前后真实空段、迟到文字 / 完整模型失败的诊断回滚、独立作者组合、边界 / XML 转义、草稿原子性、不覆盖与完整 typed / reencode 篡改拒绝。此前定向 75 + 29 + 6 项属于这 742 项的子集，不另行累加
+- 两工具链原始严格 all-target Clippy 仍各仅有既有一项：stable `spreadsheet_xls.rs:129` 的 `chunks_exact_to_as_chunks`；MSRV `presentation_import.rs:97` 的 `uninlined_format_args`。只排除对应单项后的 all-target Clippy 与 build 通过；没有新增源码 lint 豁免
+- stable 报告 `tmp/legacy-doc-break-paragraphs-gates-stable-final1.json` SHA **9c8e546557cd24aabe90815eedc6a18f30ba95b45c94aa109fed95fbd23dbfe5**；核心日志 SHA `44a496f45efc7381b5360b574e41f9756533a78194a097806d7055457b94f161`，最低观察空闲 1,495,912,448 bytes，源前后身份相同
+- MSRV 报告 `tmp/legacy-doc-break-paragraphs-gates-msrv-final1.json` SHA **73424e56a61ceca345f93374ed5c2ba8d140b2db14bffd1c30cdcfc4a6358373**；核心日志 SHA `fd80ea8594d70cd6ac5bcada85ce60f974cf4caf4841c8b598d62b62821d1fcb`，最低观察空闲 1,166,340,096 bytes，源前后身份相同
+- 最终前端 prepare-PDF、TypeScript、Vite build 和 **637 项无浏览器检查**通过（原 622 + 15），包含根 / 原子独立组合、完整插件链输入 / 插入 / 删除 / 撤销、跨文档剪贴板、严格非法状态、草稿、不可变打印 DOM、旧模型省略字节与实际 CLI 往返。报告 `tmp/doc-break-paragraph-frontend-final-gates.json` SHA **0360cf964f79cc46de607689b413041275118ec5bb40911d003cd993bd29d578**；637 项日志 SHA `cf7adc088e8e179d6c58ffdaf0b625bebf040f662139afe765711e963d837b1d`。构建大 chunk 提示仍在，不据此声称加载性能验收
+
+两套完整 Rust 门禁均使用既有 target、`CARGO_INCREMENTAL=0` 和 `-j1`，未改变 profile、RUSTFLAGS、依赖或锁文件。报告记录完整 argv 与环境：
+
+```sh
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo test --locked --quiet -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo clippy --locked --all-targets -j1 -- -D warnings
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo clippy --locked --all-targets -j1 -- -D warnings -A clippy::chunks_exact_to_as_chunks
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target cargo build --locked -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 test --locked --quiet -j1
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 clippy --locked --all-targets -j1 -- -D warnings
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 clippy --locked --all-targets -j1 -- -D warnings -A clippy::uninlined_format_args
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=tmp/msrv-target cargo +1.88.0 build --locked -j1
+```
+
+每 0.5 秒检查空闲空间，低于 600 MiB 时停止本门禁进程组；两轮均未触发。编译前仅按完成测试清单、精确文件身份 / fingerprint / inode / 保护路径检查回收可重建测试可执行缓存，未删原件、报告、冻结 CLI 或 rlib。清理记录：`tmp/test-cache-cleanup-20261014T045400Z.json` SHA `0587dfd52fabcc94c8c9c66cbc4ac07b0fd3427d3ac251a762b9b8f8d954f51f`（20 个 MSRV 测试可执行）；`tmp/test-cache-cleanup-20261014T050900Z.json` SHA `62106a3a3a4055b6f6d27551c5339b062b3f9e4c56ecd1ac5b97b7532ce368e2`（18 个 stable 测试可执行）。这些是观察式停止保护，不是硬文件系统配额。
+
+### 冻结身份与完整包信任
+
+- stable `target/debug/rust-wps` 与独立 inode 冻结 `tmp/legacy-doc-break-paragraphs-final-cli` SHA **a3cb41b089460be59712c7fa70858a8a4ed5afd8e32f796cc44ddd06324ffe83**；stable `librust_wps.rlib` SHA `5cec3f9a4cd49fc8e6def65b46049f753af21d7a584c940a87f9c433489c275b`
+- MSRV `tmp/msrv-target/debug/rust-wps` SHA **73ee553ecd2484a88e562339048b2f5af6d0b11881de3a743ed7793f00c6d18e**；MSRV `librust_wps.rlib` SHA `00e4e9d246de9a4303ca7da2ac51bb556dd391e7e028ca58597b5bcf0f104298`
+- 历史冻结 CLI `tmp/legacy-doc-page-geometry-final-cli` SHA `af649bffb9a1adc82a42ae3ba7c006d159633a9cd126eb9b29777ca3ab9c2652` 保持；新 stable 冻结记录 `tmp/legacy-doc-break-paragraphs-frozen-stable-final1.json` SHA `e3a63a2069689d7fffd25911421870ef599552674f8cda0ea96dcd02b038bd4d`
+- `src/document.rs` SHA `9e07e0cd4a5942bf87ac9570bb5f65f73b6918b2c6a449c44539621c34449fdb`；`src/legacy_typography.rs` SHA `39d701526fb0a0042b6b3a862765c7ae4dac703ceebb0204ec9e267ccbe07c46`；`src/legacy_page_geometry.rs` SHA `e8d89b07cf9ce8501f4800f9be7a41f30733f4697c4558a195f816492bd20ebb`；新集成 `tests/word_break_paragraphs.rs` SHA `d7baa8bc14d3d06e049e64eb5ab22537621e3e1adbd64fbee0d7b290790f1d77`
+
+一个带 metrics 的分页原子仍为一个 `w:p`，只显式写 `spacing`、段落标记和 break run 的 Latin `ascii/hAnsi/sz`；没有 metrics 时保留旧 XML。根 true 只向确定性的条件 settings 部件添加 `w:compat/w:splitPgBreakAndParaMark`；仅 metrics 沿用原有间距的空 settings，旧全缺省包字节不变。完整 typed model、部件集合 / 哈希和全部非模型部件重编码都验证，不能靠同步篡改模型 / settings 哈希绕过。
+
+### 独立源 / 作者状态 / 消费者
+
+`scripts/check-legacy-doc-break-paragraphs.py`直接使用独立 CFB / FIB / DOP / CHPX / PAPX / PlcfSed oracle，源预期不是从新产品生成；OOXML 参考从冻结旧包按精确源属性构造。最终 checker SHA **e78dc945916d7dbd32b5ed79adc07514214ee7a6c5736920746b58d745e217b8**，输入 manifest `tmp/doc-break-semantics-verify/break-fixtures-i0bxbvl_/manifest.json` SHA `ebe6b5511cd705e86e62eaaf9ec52184637503e2a3642f471e13569772807345`。
+
+最终 `tmp/doc-break-semantics-verify/break-run-bdz2jxlj/report.json` SHA **65e62f6b9fee9361282d58b536108f5009e5cdc4a09a7565209ed273364a9165**：
+
+- 365 个源输入：306 历史 + 59 新控制。共 19 保留、14 全部分页共同回退、171 原样成功路线、161 原样拒绝。历史 306 内为 163 原样成功、142 原样拒绝，仅真实 SampleDoc 出现精确有意的根 / atom / 诊断增量；新控制为 18 保留、14 回退、8 原样和 19 拒绝
+- 全部 365 次只读 inspect 等价，429 次完整可信重开、408 次原件 / 目标不覆盖、40 组独立 OOXML oracle、21 个合法作者组合、63 个非法模型和 28 个篡改拒绝通过。185 份源派生回退 / 缺省包及独立 bare 作者控制与旧 CLI 整包字节相同；没有把 fallback 根 flag 或部分 metrics 静默留下
+- 14 份逐文件隔离的新 LibreOffice PDF：5 组产品 / 独立参考的全部文字、字体、spans、逐字符位置和整页光栅精确相同；另有 4 份已安装字体的独立二进制 DOC 源新渲染，与上述产品输出精确相同，覆盖普通、文首、文末和连续分页。真实 SampleDoc 的源 PDF 是核对身份后明确复用的 1 份历史渲染，不计为新 PDF；前轮 31-PDF / 306-case 证据未重写或计为新执行
+- 33 张页面 PNG 归入 10 个 SHA-256 完全相同的组，每组一张全页实际查看，文字可读、无裁切 / 重叠，预期空白页匹配源。视觉记录 `tmp/doc-break-semantics-verify/break-run-bdz2jxlj/visual-review.json` SHA `1c5bd889d49e3ac49e39c490d9b2eed5f5e2401f12128b8bc9cb5e87118a88fa`
+
+固定消费者为 LibreOfficeDev `26.8.0.0.alpha0`，revision `2c87e51eeaa2b413ff4ae097b2705eea1995d8e5`；真实执行二进制 SHA `d905a74dc92eaccb22481ba2de1345666a074a5f0d48322aaad1b6dc8a9e1e40`。独立审阅再次核对 406 个受保护文件、484 个已保存产物、40 对非模型 ZIP 部件与 5 对完整参考 PDF，无阻断发现。验证摘要 `tmp/doc-break-semantics-final-summary-20261014.md` SHA `8f0928ddf3b7e80fa9abcbb9aa11f580d7391b9b5bd3a251d30b3a013db82b8e`。
+
+### 提取后端、实际 worker 运输与历史契约
+
+汇总 `tmp/doc-break-paragraph-regression/summary.json` SHA **ac7a90466c3ef61a56b72fcb8f9ddb44f22f69fde7403fe8ba938dff7d6572ae** 全通过，最终核对 **12,446 个受保护身份不变**。该检查没有新渲染 PDF：325 份历史 PDF 仅校验保留哈希，另核对上方独立 checker 的 14 份新 PDF 不变，两者不重复计数。
+
+- 通过未改写的 `scripts/pdf-rotation-probe.rs` 链接各自最终 rlib 与依赖，stable / MSRV **各 35 个提取生产后端测试通过**，均无忽略 / 过滤。stable 报告 `backend-stable-test-5p3ezahm/report.json` SHA `9785f5d08d54ef3260312b173646b65dac28b851b240ff246ea4b49961b720a6`；MSRV `backend-msrv-test-6h25kzlt/report.json` SHA `35b7a81d2c644ec0914080dc325538c2d08ced79ece7ba36a8a800d22fc99001`（本节报告相对 `tmp/doc-break-paragraph-regression/`）。这不是完整 Tauri、Windows IPC、对话框或原生打印运行
+- 历史 DOCX 读取 **1,520 个候选调用新执行且原始响应全相同**：505 `audit-docx`、771 `import-docx`、244 `read-docx-model`，零响应变化 / 新拒绝。比较端明确复用固定上轮 CLI 成功记录的原始响应，并复查基线二进制和报告身份，没有称为旧 CLI 全部再次读取。302 个历史无新属性作者 golden 由旧 / 新 CLI 重新导出，各自 302 次整包字节比较、604 次完整可信重开及 604 次不覆盖都新执行通过。报告 `historical-mo47l0rw/report.json` SHA `b346855bb9d300439c60c86583be13f6cfdb9b4d0bffd091e6d3557d48bf23fa`
+- 实际生产 worker 子进程运输覆盖上方 **365 源**：365 个完整导入响应与独立预期一致、365 次只读 Open / inspect 核对、204 个完整成功导入 / 导出可信 Open / 不覆盖；其中 19 份源的 22 个已证明分页原子整组保留、14 份明确回退、185 个未升级完整模型与旧模型相同。161 个编辑导入拒绝及完整原因与基线一致，仍可只读 Open；拒绝包含损坏、超限和不支持来源，不把它们一律称为损坏文件。错误比较只规范 anyhow CLI 多行与 Rust 字符串冒号连接形式，保留全因果链及原 stdout / stderr。报告 `worker-d5cjreqw/report.json` SHA `41bd95bf2f03c38c6fbbb061b64c00c7eba17240dd2fa024f5d6c96ffc030cfc`
+- 生产 worker probe 构建报告 `backend-stable-worker-5jp4s0m4/report.json` SHA `b3b5fe0ab9d4871578aea6c95d3d9634c6e26bbcb2527e0947799ddc46689273`；probe SHA `141ff2d8640e3e28c219fb7c046c5039f2658dc8d153bf379cf744e78d3cdadd`。测试与 probe 可执行、原件和证据均保留，该检查未删除文件
+
+另保留一次 worker 身份收集预检的人工中断：旧脚本为每条记录重复哈希同一 CLI，尚未创建 RUNNING 报告 / worker 目录，也未启动任何运输子进程；改为先对路径去重后仍逐一检查所有独立身份，再新执行完整运输检查。`worker-preflight-interruption.json` SHA `dfa7aff3772da1f05ba0b7cd77a3de01d484e73db1c519cd991ffb457d934541` 保存 exit 130、0 完整 cases / 0 transport commands / 0 删除文件；此尝试不计入验收。
+
+定向 rustfmt edition 2024、`git diff --check` 与新 checker AST 解析通过，报告 `tmp/doc-break-paragraph-hygiene-final.json` SHA `5e2ea7620eaf6e6240967bd0f8ed0b94528f6a07618eaba0566b239e1aa0cdd4`。全部 **133 份 vendor 源码 / 夹具身份与上一发布相同**，两份已有补丁反向检查通过；报告 `tmp/doc-break-paragraph-vendor-check.json` SHA `19a43306d0349d9e6f53fba2b7a86ed77be131e67d33871374fa3529be9bb748`。这些是身份 / patch 检查，本轮没有把历史 vendor 测试数计作重新执行。
+
+### 真实 SampleDoc 结果与仍未完成的部分
+
+未改造 Apache POI SampleDoc SHA `717585c0a88f20862c86220163dd03da87cd743970354c6b29add32725f2e833`：独立定位 CP72..74 的 `0c0d`、DOP bit27、Calibri 22 half-points 和间距 0 / 200 / 276。模型保留七块，第一页字符 / 坐标 / 光栅与源相同；第二页全部 61 个字符 y 坐标现与源精确相同，首基线从旧输出 `89.10076904296875` pt 恢复为 `114.55078125` pt，恢复的前导位移为 `25.45001220703125` pt。
+
+实现前独立四格实验分别为：无 flag / 无 metrics 与仅 metrics 均 `89.10076904296875`；仅 flag `114.05078125`；二者都有 `114.55078125`。实验报告 `tmp/doc-break-semantics-experiment-20261014/report.json` SHA `91a714cc684511dc823553bcc705394aa47483c557930edb12859d5a9f24191d` 保持，说明需要共同保留真实语义与标记度量，不能只凭一个 y 值添加空行或补偿。
+
+第二页源仍为 NotoSans-Regular，而输出为 NotoSerif-Regular（源字面 Arial Black 未安装）；纵向位置恢复不等于字体、横向 advance 或整页光栅相同。历史缺 DOP 的非零相邻段距控制中 12 pt 相加 / 取最大值差异也仍存在。本轮没有修复缺失字体替代、完整 Word / WPS 版式或浏览器分页行框。
+
+编辑器显示可见分页标记；打印 CSS 的原子仍为零高度。加载 / 草稿恢复 / 打印前 / PDF 导出前明确提示不复现分页段行框及下一页段落标记行，元数据仍随不可变快照保存。3 个真实浏览器规格已编写但未执行；无浏览器插件 / DOM 测试与 LibreOffice PDF 不冒充界面或原生打印验收。已连接的 Windows 桌面任务启动即因使用额度限制失败，未读取文件或运行测试；随后用户要求不使用本地机器，剩余工作保持云端。Microsoft Word、WPS、Windows WebView2 与系统 / 原生打印没有本轮成功声明。
+
+### 纠正过的独立控制预期
+
+首次 364 输入检查只在一个新控制的错误预期上失败，尚未执行作者模型 / 篡改或渲染阶段：分页后的 lowercase 段落带首尾空格，冻结旧 CLI 与候选均完整保留文字，所以应为正向空白保持，而不是拒绝。该失败报告 `tmp/doc-break-semantics-verify/break-run-au270d0f/report.json` SHA `a7273da691623612c67c46d8139236060fe4777bafb7a9a206dee37c8a951972` 原样保留。
+
+独立核对原始 bytes、全部旧 / 新模型及精确诊断后更正该控制；另外只用冻结旧 CLI 校准并添加一个 uppercase 首尾空格的实际源身份拒绝，先经只读审阅确认，再全量新跑得到上面的 365-case 最终报告。校准报告 SHA `2ff66232a9d56964a5ca5a12122407d77744c0e75ab870b7d169ad053f230243`；完整重分类审计 SHA `c52cbb929c0a1244a00c3e3042a2cedb1ffddcccee9c64e6e03a91d656ae58de`，均在 `tmp/doc-break-semantics-baseline-calibration-20261014/`。这个二进制控制证明端到端身份拒绝；真正的内部迟到模型冲突 / 原子回滚仍由上述 Rust 注入测试证明，不计入独立 checker 的执行数。未修改产品或放宽比较来让控制通过。
+
 ## 本轮：旧二进制 DOC 的单节页面几何（2026-10-14）
 
 基于 `493be77e9ae173ba41a5c8c8440d078cf0dfe42f`，只在既有完整 Latin 字体 / 编码 Normal 正文证明内，新增有界 DOP / PlcfSed / SEPX 页面证明。纸张宽高和四边正文边距以原始六整数进入现有 `pageGeometry`；不吸附预设或经消费者舍入，未改变模型、writer、UI、vendor 或通用 IR 转换。合法复杂 / 缺失页面证据只回退几何，原字体 / Normal / 间距及分页原子仍保持；损坏声明拒绝，全文绑定与候选模型验证成功后才提交。支持子集与完整物理版式边界见 [LEGACY_DOC_PAGE_GEOMETRY.md](LEGACY_DOC_PAGE_GEOMETRY.md)。

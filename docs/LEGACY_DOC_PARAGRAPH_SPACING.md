@@ -1,5 +1,7 @@
 # 旧二进制 DOC 的编码段落间距
 
+后续 [独立分页段增量](LEGACY_DOC_BREAK_PARAGRAPHS.md) 在明确 DOP / break / CR / 节界的完整证明下保留 split 语义与分页段 metrics。本文的分页段纵向差属于历史记录；字体替代、空段基线及完整版式限制仍保留。
+
 后续 [单节页面几何增量](LEGACY_DOC_PAGE_GEOMETRY.md) 在相同完整正文证明内保留受支持的六个页面整数。本文页面差异属于该轮历史记录；字体替代、分页段 / 空段字体、文字兼容及完整物理版式限制仍保留。
 
 本增量在已有完整 [Latin 字体 / 字号](LEGACY_DOC_FONTS.md) 与 [编码 Normal 身份](LEGACY_DOC_NORMAL_PARAGRAPHS.md) 源证明成功后，逐段保留源文件编码的段前 / 段后 twip 和受支持倍数行距。只复用现有段落属性与 DOCX writer，不改变 vendor、编辑模型、UI 或普通 `convert_ir(..., false)` 路线。

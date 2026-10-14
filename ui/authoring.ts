@@ -1,4 +1,5 @@
 import {ParagraphPagination, omitDefaultParagraphPagination, preflightParagraphPaginationHTML, validateParagraphPaginationDocument} from './word-paragraph-pagination';
+import {PageBreak, PageBreakParagraph, pageBreakDocumentDOM, pageBreakPreviewWarning, preflightPageBreakHTML} from './word-page-break';
 import {WordParagraphPaginationControls} from './word-paragraph-pagination-controls';
 import {PreservedListGeometry, omitDefaultListGeometry, preflightListGeometryHTML, validateListGeometryDocument, withPreservedListRendering} from './word-list-geometry';
 import {EmptyParagraphFont, preflightEmptyParagraphFontHTML, validateEmptyParagraphFontDocument} from './word-empty-paragraph-font';
@@ -68,11 +69,6 @@ const WordStarterKit = StarterKit.extend({
     });
   },
 });
-const PageBreak = TiptapNode.create({
-  name: 'pageBreak', group: 'block', atom: true, selectable: true,
-  parseHTML: () => [{ tag: 'div[data-page-break]' }],
-  renderHTML: () => ['div', { 'data-page-break': '', class: 'page-break', 'aria-label': '手动分页符' }],
-});
 const ParagraphAlignment = Extension.create({
   name: 'paragraphAlignment',
   addGlobalAttributes() {
@@ -127,7 +123,7 @@ export async function openAuthored(content: JSONContent, name: string, path: str
   await create(content, false); dirty = false;
   el('title').textContent = name; el('file-name').textContent = name; el('subtitle').textContent = path;
   el('draft-state').textContent = '文档已打开';
-  showNotice('已打开可编辑文档。修改后另存 DOCX，原文件会保留。');
+  showNotice(`已打开可编辑文档。修改后另存 DOCX，原文件会保留。${pageBreakPreviewWarning(content)}`);
 }
 export async function openImported(content: JSONContent, name: string) {
   await create(withStandardWordStyle(content), false);
@@ -135,7 +131,7 @@ export async function openImported(content: JSONContent, name: string) {
   el('subtitle').textContent = '原文件保留；请核对内容并另存 DOCX';
   el('draft-state').textContent = '已导入，尚未导出 DOCX';
   if (editor) queueDraft(snapshotDocument(editor));
-  showNotice('已导入编辑副本。部分版式已规范化，请核对后另存 DOCX。');
+  showNotice(`已导入编辑副本。部分版式已规范化，请核对后另存 DOCX。${pageBreakPreviewWarning(content)}`);
 }
 export async function canLeaveAuthoring(): Promise<boolean> {
   if (!(await canLeaveOther())) return false;
@@ -534,10 +530,10 @@ async function create(content?: JSONContent, ask = true) {
     editable: !paused,
     element: el('editor-content'),
     extensions: [ParagraphPagination.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),PreservedListGeometry.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),EmptyParagraphFont.configure({onError: message => showNotice(message, true)}),FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
-      WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, ParagraphIndent.configure({onIndentError: message => showNotice(message, true)}), PageBreak, TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
+      WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, ParagraphIndent.configure({onIndentError: message => showNotice(message, true)}), PageBreak, PageBreakParagraph.configure({onError: message => showNotice(message, true)}), TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
     content: initial,
     editorProps: {
-      attributes: state => ({ 'aria-label': '文档编辑区', spellcheck: 'false', 'data-style-profile': state.doc.attrs.styleProfile ?? 'legacy-v1', ...(state.doc.attrs.pageGeometry ? {'data-page-geometry': JSON.stringify(state.doc.attrs.pageGeometry)} : {}) }),
+      attributes: state => ({ 'aria-label': '文档编辑区', spellcheck: 'false', 'data-style-profile': state.doc.attrs.styleProfile ?? 'legacy-v1', ...pageBreakDocumentDOM(state.doc.attrs), ...(state.doc.attrs.pageGeometry ? {'data-page-geometry': JSON.stringify(state.doc.attrs.pageGeometry)} : {}) }),
       handleKeyDown: (_view,event) => {
         // WebView may deliver the next editing key before selectionchange.
         if (!event.isComposing && event.keyCode !== 229 && ['Enter','Backspace','Delete'].includes(event.key)) syncDomTextSelection();
@@ -546,7 +542,7 @@ async function create(content?: JSONContent, ask = true) {
       // Do not load remote images pasted from web/Office HTML. Preserve text.
       transformPastedHTML: html => {
         // Audit raw empty-font metadata before remote-image removal can erase it.
-        const parsed = new DOMParser().parseFromString(preflightParagraphPaginationHTML(preflightEmptyParagraphFontHTML(preflightListGeometryHTML(html))), 'text/html');
+        const parsed = new DOMParser().parseFromString(preflightPageBreakHTML(preflightParagraphPaginationHTML(preflightEmptyParagraphFontHTML(preflightListGeometryHTML(html)))), 'text/html');
         parsed.querySelectorAll('img').forEach(image => {
           if (!/^data:image\/(png|jpeg);base64,/.test(image.getAttribute('src') ?? '')) image.remove();
         });
@@ -588,7 +584,11 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
   el('restore-draft').addEventListener('click', async () => {
     if (!(await canLeaveAuthoring())) return;
     pauseAuthoring(true);
-    try { await draftQueue; const doc = await invoke<JSONContent | null>('load_draft'); if (doc) await create(doc, false); else showNotice('没有可恢复的本地草稿。'); }
+    try {
+      await draftQueue; const doc = await invoke<JSONContent | null>('load_draft');
+      if (doc) {await create(doc, false); const warning = pageBreakPreviewWarning(doc); if (warning) showNotice(warning);}
+      else showNotice('没有可恢复的本地草稿。');
+    }
     catch (error) { showNotice(`草稿恢复失败：${String(error)}`, true); }
     finally { pauseAuthoring(false); }
   });
@@ -830,7 +830,7 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
     printing = true; editor.setEditable(false, false); updateToolbar();
     try {
       await preparePrintSnapshot(el('editor-content').querySelector<HTMLElement>('.tiptap')!, documentPageGeometry(snapshotDocument(editor!)));
-      showNotice(`${editor!.state.doc.attrs.pageGeometry ? '已准备所选页面的打印副本' : '已准备 A4 打印副本'}。请在系统打印窗口选择打印机或 PDF 目标，并核对预览、纸张、缩放和页眉页脚设置。`);
+      showNotice(`${editor!.state.doc.attrs.pageGeometry ? '已准备所选页面的打印副本' : '已准备 A4 打印副本'}。请在系统打印窗口选择打印机或 PDF 目标，并核对预览、纸张、缩放和页眉页脚设置。${pageBreakPreviewWarning(snapshotDocument(editor!))}`);
       window.print();
     } catch (error) { showNotice(`打印准备失败：${String(error)}`, true); }
     finally { printing = false; editor?.setEditable(!paused && !leaving, false); updateToolbar(); }
@@ -840,13 +840,15 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
     if (!editor || paused || leaving || saving || printing || !isTauri()) return;
     const wordStyleProfile = editorStyleProfile(editor);
     const wordPageGeometry = documentPageGeometry(snapshotDocument(editor));
+    const pageBreakWarning = pageBreakPreviewWarning(snapshotDocument(editor));
     printing = true; editor.setEditable(false, false); updateToolbar();
     try {
       await preparePrintSnapshot(el('editor-content').querySelector<HTMLElement>('.tiptap')!, documentPageGeometry(snapshotDocument(editor!)));
+      if (pageBreakWarning) showNotice(pageBreakWarning);
       const saved = wordStyleProfile || wordPageGeometry
         ? await invoke<{ path: string; bytes: number } | null>('export_current_pdf', {...(wordStyleProfile ? {wordStyleProfile} : {}), ...(wordPageGeometry ? {wordPageGeometry} : {})})
         : await invoke<{ path: string; bytes: number } | null>('export_current_pdf');
-      showNotice(saved ? `已另存 PDF：${saved.path}。DOCX 中的修改仍需另存。` : '已取消 PDF 导出，文档保留。');
+      showNotice(saved ? `已另存 PDF：${saved.path}。DOCX 中的修改仍需另存。${pageBreakWarning}` : '已取消 PDF 导出，文档保留。');
     } catch (error) { showNotice(`PDF 导出失败：${String(error)}`, true); }
     finally { el('print-document').replaceChildren(); printing = false; editor?.setEditable(!paused && !leaving, false); updateToolbar(); }
   });
