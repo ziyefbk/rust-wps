@@ -214,14 +214,14 @@ fn legacy_import_rejects_disguised_corrupt_and_oversized_inputs() {
 fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("blank.doc");
-    let bytes = include_bytes!("fixtures/doc-pagination/blank.doc");
+    let bytes = include_bytes!("fixtures/doc-typography/blank.doc");
     std::fs::write(&source, bytes).unwrap();
     let report = importing::import_doc(&source).unwrap();
     let expected = serde_json::json!({"type":"doc","attrs":{"styleProfile":"standard-v2"},"content":[
-        {"type":"paragraph","content":[{"type":"text","text":"hello."}]},
+        {"type":"paragraph","content":[{"type":"text","text":"hello.","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]},
         {"type":"paragraph"},
         {"type":"pageBreak"},
-        {"type":"paragraph","content":[{"type":"text","text":"world."}]}
+        {"type":"paragraph","content":[{"type":"text","text":"world.","marks":[{"type":"fontSize","attrs":{"halfPoints":20}},{"type":"fontFamily","attrs":{"name":"Times New Roman"}}]}]}
     ]});
     assert_eq!(serde_json::to_value(&report.document).unwrap(), expected);
     assert!(!report.compatibility.fidelity_verified);
@@ -243,9 +243,9 @@ fn legacy_manual_page_break_preserves_neighboring_real_blank_paragraph() {
         serde_json::json!({"family":"Arial","halfPoints":22,"bold":false,"italic":false});
     for index in [0, 3] {
         exported_expected["content"][index]["content"][0]["marks"] = serde_json::json!([
-            {"type":"fontSize","attrs":{"halfPoints":22}},
+            {"type":"fontSize","attrs":{"halfPoints":20}},
             {"type":"textColor","attrs":{"rgb":"000000"}},
-            {"type":"fontFamily","attrs":{"name":"Arial"}}
+            {"type":"fontFamily","attrs":{"name":"Times New Roman"}}
         ]);
     }
     assert_eq!(
@@ -261,13 +261,24 @@ fn legacy_partial_structured_view_is_refused_despite_complete_flat_text() {
     let source = dir.path().join("partial.doc");
     let bytes = include_bytes!("fixtures/doc-pagination/partial.doc");
     std::fs::write(&source, bytes).unwrap();
-    let error = importing::import_doc(&source).unwrap_err();
+    // Keep the original parser guard independently exercised. This historical
+    // minimal fixture also omits mandatory typography tables, so the new source
+    // audit refuses earlier instead of accepting it as a valid Word document.
+    let parsed = office_oxide::Document::from_reader(
+        std::io::Cursor::new(bytes.as_slice()),
+        office_oxide::DocumentFormat::Doc,
+    )
+    .unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("DOC_STRUCTURED_TEXT_INCOMPLETE:"),
-        "{error}"
+        parsed
+            .to_ir()
+            .metadata
+            .warnings
+            .iter()
+            .any(|w| w.contains("DOC_STRUCTURED_TEXT_INCOMPLETE:"))
     );
+    let error = importing::import_doc(&source).unwrap_err();
+    assert!(format!("{error:#}").contains("DOC typography structure is truncated"));
     assert_eq!(std::fs::read(&source).unwrap(), bytes);
 }
 
@@ -404,4 +415,14 @@ fn external_run_scripts_and_explicit_baseline_keep_distinct_marks() {
     assert!(content[2].marks.iter().any(|mark| mark.kind == "subscript"));
     assert!(content[2].marks.iter().any(|mark| mark.kind == "bold"));
     assert_eq!(std::fs::read(&source).unwrap(), before);
+}
+
+#[test]
+fn legacy_minimal_pagination_fixture_without_mandatory_styles_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("historical-minimal.doc");
+    let bytes = include_bytes!("fixtures/doc-pagination/blank.doc");
+    std::fs::write(&source, bytes).unwrap();
+    assert!(importing::import_doc(&source).is_err());
+    assert_eq!(std::fs::read(&source).unwrap(), bytes);
 }
