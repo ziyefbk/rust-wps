@@ -98,6 +98,11 @@
         <button id="edit-cell-vertical-align-reset" title="仅移除选中单元格的显式垂直对齐">默认垂直对齐</button>
         <span id="edit-table-vertical-state" aria-live="polite"></span>
       </span>
+      <span id="table-row-pagination-controls" role="group" aria-label="表格行分页">
+        <label>行内不分页<select id="edit-row-cant-split" title="默认沿用现有输出行为；不同查看器的分页可能不同"><option value="default">默认</option><option value="true">开启</option><option value="false">关闭</option><option value="mixed" disabled>混合</option></select></label>
+        <span id="edit-row-pagination-state" aria-live="polite"></span>
+        <span class="muted">编辑区不分页；浏览器/原生打印可能不遵循，超出一页的行仍可能分页</span>
+      </span>
       <span id="table-cell-color-controls" role="group" aria-label="单元格底色与自动文字色">
         <label>单元格底色 <input id="edit-cell-fill" type="text" aria-label="单元格底色（RGB）" placeholder="默认" title="六位 RGB，例如 #C03030；Enter 或应用按钮提交，清空后应用恢复默认" autocomplete="off" spellcheck="false"><input id="edit-cell-fill-picker" type="color" value="#ffffff" aria-label="选择单元格底色"></label>
         <button id="edit-cell-fill-apply" title="仅修改选中单元格底色；可一次撤销">应用底色</button>

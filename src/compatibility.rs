@@ -454,8 +454,32 @@ pub(crate) fn audit_docx_bytes(bytes: &[u8]) -> Result<CompatibilityReport> {
     Ok(audit_docx_bytes_with_geometry(bytes)?.compatibility)
 }
 
+pub(crate) fn blocks_editing(risk: &str) -> bool {
+    matches!(
+        risk,
+        "Tracked changes"
+            | crate::compatibility::HIDDEN_TEXT_RISK
+            | crate::compatibility::PARAGRAPH_SPACING_RISK
+            | crate::paragraph_indentation::PARAGRAPH_INDENT_RISK
+            | crate::paragraph_pagination::RISK
+            | crate::page_geometry::PAGE_GEOMETRY_RISK
+            | crate::table_widths::TABLE_GEOMETRY_RISK
+            | crate::image_dimensions::IMAGE_GEOMETRY_RISK
+            | "Custom theme color mapping is unsupported"
+            | "Unsupported theme color scheme content"
+            | "Unsupported or unresolved hyperlink target"
+            | "Fields and generated text"
+            | "Merged table cells"
+            | "Mathematical equations"
+            | "Content controls or embedded content"
+            | "Floating objects, legacy drawings or text boxes"
+    ) || risk.starts_with("Additional document content:")
+        || risk.starts_with("Embedded object or executable content:")
+}
+
 pub(crate) struct DocxGeometryAudit {
     pub pagination: crate::paragraph_pagination::Audit,
+    pub row_pagination: crate::table_row_pagination::Audit,
     pub empty_fonts: crate::empty_paragraph_fonts::Audit,
     pub cell_colors: crate::table_cell_colors::Audit,
     pub compatibility: CompatibilityReport,
@@ -1022,8 +1046,20 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         crate::paragraph_pagination::Audit::default()
     };
     report.risks.extend(pagination.warnings.iter().cloned());
+    // Existing blocking risks retain their exact response and precedence.
+    let row_pagination = if parts_have_content_types(bytes)?
+        && !report.risks.iter().any(|risk| blocks_editing(risk))
+    {
+        crate::table_row_pagination::analyze(bytes)
+    } else {
+        crate::table_row_pagination::Audit::default()
+    };
+    if let Some(warning) = row_pagination.warning {
+        report.risks.insert(warning.into());
+    }
     Ok(DocxGeometryAudit {
         pagination,
+        row_pagination,
         cell_colors,
         empty_fonts,
         compatibility: report,

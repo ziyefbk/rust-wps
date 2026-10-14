@@ -693,6 +693,20 @@ pub fn row_min_height(node: &Node) -> Result<Option<u64>> {
         })
         .transpose()
 }
+/// An authored row flag is independent from source-proof and minimum height.
+pub fn row_cant_split(node: &Node) -> Result<Option<bool>> {
+    node.attrs
+        .get("rowCantSplit")
+        .map(|value| {
+            value
+                .as_bool()
+                .context("rowCantSplit must be a boolean; omit it for the default")
+        })
+        .transpose()
+}
+fn has_row_pagination(node: &Node) -> bool {
+    node.attrs.contains_key("rowCantSplit") || node.content.iter().any(has_row_pagination)
+}
 pub fn cell_vertical_align(node: &Node) -> Result<Option<&str>> {
     node.attrs
         .get("cellVerticalAlign")
@@ -1137,7 +1151,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "cellFillRgb",
                 "cellTextColorMode",
             ],
-            "tableRow" => &["rowMinHeightTwips"],
+            "tableRow" => &["rowMinHeightTwips", "rowCantSplit"],
             "image" => &[
                 "src",
                 "alt",
@@ -1404,6 +1418,7 @@ pub fn validate(doc: &Node) -> Result<()> {
         }
         if node.kind == "tableRow" {
             row_min_height(node)?;
+            row_cant_split(node)?;
         }
         if matches!(node.kind.as_str(), "tableCell" | "tableHeader") {
             cell_vertical_align(node)?;
@@ -1436,6 +1451,11 @@ pub fn validate(doc: &Node) -> Result<()> {
             !vertical || depth == 1,
             "Vertical table geometry requires a top-level table"
         );
+        let row_pagination = node.kind == "table" && has_row_pagination(node);
+        ensure!(
+            !row_pagination || depth == 1,
+            "Row pagination requires a top-level table"
+        );
         let colors = node.kind == "table" && has_table_colors(node);
         ensure!(
             !colors || depth == 1,
@@ -1446,6 +1466,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 || positioned
                 || explicit_margins
                 || vertical
+                || row_pagination
                 || colors);
         if node.kind == "table" {
             ensure!(
@@ -1807,8 +1828,16 @@ impl Writer {
                     table.push_str("<w:tr>");
                     let header = row.content.iter().all(|c| c.kind == "tableHeader");
                     let minimum = row_min_height(row)?;
-                    if header || minimum.is_some() {
+                    let cant_split = row_cant_split(row)?;
+                    if header || minimum.is_some() || cant_split.is_some() {
                         table.push_str("<w:trPr>");
+                        if let Some(flag) = cant_split {
+                            table.push_str(if flag {
+                                "<w:cantSplit w:val=\"1\"/>"
+                            } else {
+                                "<w:cantSplit w:val=\"0\"/>"
+                            });
+                        }
                         if let Some(height) = minimum {
                             table.push_str(&format!(
                                 "<w:trHeight w:val=\"{height}\" w:hRule=\"atLeast\"/>"

@@ -1,5 +1,81 @@
 # 当前跨格式回归记录
 
+## 本轮：DOCX 表格行内不分页三态（2026-10-14，发布 36）
+
+基于发布 35 `6bb54c003b128c32ca6f8ededac8ade75fb83f38`，仅扩展简单正文顶层矩形表格的直接 `cantSplit` 源证明、严格 `rowCantSplit` 缺省 / false / true 模型、编辑 / 草稿 / DOCX / 可信重开闭环。任一候选表格证明失败时整文档不附加新行属性，只保留旧模型并追加分类风险；旧硬拒绝与优先级保持。主文档仍限定 `/word/document.xml`，只有实际 styles 关系可重定位；不展开活动样式继承。源高度 / 垂直几何与 cantSplit 组合仍拒绝，作者合法组合独立允许。完整合同见 [DOCX_ROW_PAGINATION.md](DOCX_ROW_PAGINATION.md)。下方发布 35 及更早正文逐字节保留，不将旧记录改写成新结果。
+
+### 核心、独立源与回归结果
+
+- Rust 1.99.0 / MSRV 1.88.0 各 819 通过（288 library + 531 integration，47 个成功汇总，零失败 / ignored），两次 build 通过；这是 819 个不同测试在两工具链执行，不是 1,638 个不同测试。7 个修改 Rust 文件 rustfmt 与 diff 空白检查通过。当前源码的 Clippy 预检身份与最终源码核对后复用，未假称最终重跑；原始严格稳定版保留 XLS `chunks_exact_to_as_chunks`，MSRV 保留 PPT `uninlined_format_args`，仅限定既有单项 allowance 后通过，没有新 allowance 或 vendor 修改
+- 独立 187 来源（172 常规 + 11 资源 + 4 扩展）：35 保留、30 完整旧成功、76 整文档回退、46 精确旧导入拒绝。成功三阶段 1,037 CLI 调用（候选 1,024 + 旧 CLI 作者比较 13），另有之前 515 基线调用。141 成功源模型 + 11 合法作者状态，152 完整可信重开与严格 XML / 部件检查、293 原件 / 输出不覆盖、34 无效作者拒绝、17 篡改拒绝通过；真原件和所有冻结身份不变
+- 实际源接受 500 行、50 格、2 MiB 文字、活动链 20、累计证明工作恰好 2,000,000；各自超限保留旧错误或明确分类回退。内部 64 / 65 链和新工作预算单测不等于 CLI 链 64 支持：旧缩进链 20 先拒绝 21 / 64 / 65，紧凑工作 2,000,001 被旧表格几何先拒绝。未提高旧上限
+- 历史 1,520 组路径 / 命令 / 源散列响应逐来源匹配冻结预期，302 无新属性作者整包 golden 字节保持；原有 658 项无浏览器前端测试与独立新增 51 项行分页测试通过，TypeScript / build 通过。通过精确源码 / CLI 身份桥复用已完成结果，不宣称历史 / 658 在最终构建后重新执行
+- 两工具链提取的生产后端各 35 项通过；实际生产 worker 187 流程（164 + 8 + 11 + 4）完整导入与只读响应匹配独立预期。5 组跨工具链输出 / 可信重开 / 不覆盖对照通过
+- 编辑器 g2 的 16 个状态完成快照→草稿序列化 / 恢复→实际 CLI DOCX→完整可信重开和逐行 XML（49 CLI 调用），其中 8 个源自同一真正导入、8 个来自构造三态表，不能称 16 个真实原件。独立复核接受 g2 与 42 个比较器负 / 正控制；完整模型、行属性与诊断不删减。51 项专门测试与这些 16 状态是不同计数，不代表系统剪贴板 / 浏览器 / 原生按键验收
+
+### 真原件、因果控制与剩余版式损失
+
+Apache POI Bug60337 的未改造公共回归原件：revision `ae62bb5116b9aee19ebd5834e3a82066132c9f7f`，Git blob `06d0339fc5f854d90fe6721d991c512c815da4c5`，13,463 bytes，SHA-256 `87f983bdd93b3b5b8469104a5b09ccff41e0f5c144060e13fd4db07bfd2e39da`。其 3×5 表格第三行 Task II / 20 / 5 / 5 / 15 有直接 cantSplit；第一行已有表头，TableGrid → TableNormal 无继承标志。完整 15 格身份与有界 bookmark / proofErr 零文字配对核对，未新增书签导航或校对状态保存。该短原件与旧 / 新 / 参考输出都只有一页，新旧消费像素相同；不宣称原件有可见分页改善。
+
+最终实际产品消费者完成 7 组实际导入 / 导出 / 可信重开 / 不覆盖、5 个独立参考完整性拒绝、22 份新隔离 PDF / 49 页 / 98 PNG，无重试或放宽容差。18 组唯一 144 dpi 完整页面及 18 张对应 72 dpi 页面均实际目视。5 组产品 / 独立参考的完整文字、原始字体资源与字体流、坐标、页面几何和两种分辨率光栅严格相同，无 xref 豁免。参考 ZIP 只改旧包 flag，保留陈旧内嵌完整性，可信重开均拒绝，不能冒充产品输出。
+
+六个源作者控制另行明确标记：36 前导段落 + 每格 12 段时，true 的原行文字和 01–12 全在第二页；false / 缺省 / 旧输出原行文字与 01–05 在第一页，06–12 在第二页。每格 60 段时，true 原文字 / 01–42 在第二页，43–60 在第三页；false / 缺省 / 旧输出为第一页原文字 / 01–05、第二页 06–48、第三页 49–60。3,888 个标记及 110 个原第三行首行均按预定页和唯一出现核对。总页数分别仍为 2 / 3，仅看页数会漏掉实际修复，true 也不能保证超高行不跨页。
+
+源 / 产品全部 16 对页面光栅在 72 / 144 dpi 均不相等：源每列 1870 twip 自动列宽仍规范化为 1800 twip，横向偏移按列累计至 14 pt；产品另加源没有的 `E8EEF7` 表头底色。完整文字、字体资源、字号、样式标志、黑色文字 RGB、全部 y 坐标、字形宽度及 Letter 612×792 pt 页面几何精确相同；rawdict / texttrace 的横坐标与 trace 序列号严格差异保留。底色差异不是文字 RGB 失败，产品 / 参考严格相等不能替代源 / 产品整页相等。
+
+固定消费者为 Linux LibreOfficeDev 26.8.0.0.alpha0 revision `2c87e51eeaa2b413ff4ae097b2705eea1995d8e5`，二进制 SHA `d905a74dc92eaccb22481ba2de1345666a074a5f0d48322aaad1b6dc8a9e1e40`，PyMuPDF 1.26.6 与 Poppler 独立读取。每次渲染独立进程 / profile / HOME / XDG / TMPDIR；字体 / 配置散列未变，Calibri 消费为 Carlito 是本地替代，不作字体平台保真承诺。124 条原始命令含 33 CLI、22 字体清单、22 渲染、44 Poppler 和 3 版本读取；12 个非零 CLI 退出恰为 7 不覆盖及 5 陈旧参考拒绝。
+
+### 已保留失败、oracle 修正与平台边界
+
+核心原测试 Node equality 编译失败和新 collapsible-if lint 失败保留在 `20261014T101737Z` / `20261014T102145Z`，窄修复后的最终门禁通过。源准备 001 / 002 在产品调用前因 harness 错误停止，原目录保留。首候选 `candidate-run-il91szj9` 在 117 例 / 584 调用后停止：hard-page-break 导入错误与旧值精确相等，但成功非阻断 audit 新增原计划已声明 SOURCE 回退。独立复核 31 个主旧拒绝，只有此一项 audit 预期混淆命令合同；新 binding 仅修正该成功 audit，37 个常规旧导入拒绝及其他 audit 不变，旧 binding / 失败结果保留，没有从候选输出生成 oracle。
+
+编辑器首轮 `frontend-editor-f15dp6o5` 失败保留。g2 仅对原始源与 schema 首次解析比较分类已存在默认值 `align:null / colspan:1 / colwidth:null / rowspan:1`；完整保存 / 草稿 / 导出 / 可信模型仍逐值精确，绝不删除 rowCantSplit 或诊断。`editor-generation2-transition.json` 保留依赖 / 基线依据；42 个控制独立确认。前端 symlink / 预算预检、worker / cross-toolchain 等所有失败 attempt 与报告保留，没有覆盖失败重写成功。此前 23 PDF / 53 页诊断和 42 前导段落无效果控制仍为历史机制证据，不算本轮新产品验收。
+
+编辑区不分页，打印 true 为 avoid、false 为 auto、缺省仍是历史 avoid；无继承的 OOXML 缺省允许拆行与浏览器缺省不同。开放片段仅允许同格文字选区中的 open4 单个行内段落 / 标题文字上下文例外，保留目标行标志，结构化 CellSelection / 开放行粘贴仍拒绝。Linux 原生依赖 glib-2.0 / gtk+-3.0 / webkit2gtk-4.1 / javascriptcoregtk-4.1 的 pkg-config 检查均失败；未运行 Tauri 原生构建 / UI。没有新增 Windows / WebView、真实浏览器 / 输入法 / 系统剪贴板、原生打印、Word 或 WPS 验收，完整 Office 兼容仍未完成。
+
+### 冻结身份、命令与证据入口
+
+所有下列路径相对于仓库，SHA-256 为完整散列。稳定最终构建与 g1 同字节，文件名中的 provisional 不代表最终构建未认证；各阶段身份桥核对完整输入，不能只凭文件名复用。
+
+- `tmp/docx-row-pagination-core-run/final-core-gates.json`：`6851e2bb37033c47c75218104ca451f5f2dc78e994930affe5a53c2e74a7c4ea`
+- `tmp/docx-row-pagination-core-run/final-product-source-manifest.json`：`928727a93f0ad67956ea947202253c556d221014c399602b48cd7c26498d2fef`
+- `tmp/docx-row-pagination-provisional-g1-stable-cli`：`c98735f17133e1ab89ab86f4156b99bc675794a3fd0a79755e90a2f01035eb8f`
+- `target/debug/librust_wps.rlib`：`4eb7a53c849c0b0980900255d5e576a6ff2aa0abf56373f8ab0c79e1eaf71905`
+- `tmp/docx-row-pagination-final-msrv-cli`：`c58c9c43131b9da7c7b283c8bb5d24bcbe0b5ecb6b0873be75beaee990e2b927`
+- `tmp/docx-row-pagination-final-msrv.rlib`：`135efa683b4fb64af5409ef43cbb9c00b96f080dfa550032aa75b4b9bd20ca16`
+- `tmp/docx-row-pagination-verify/completion.json`：`54c74a6a2da8e4191d9834a6cad57ad8685f3fa258d7e612603641ce52cf1f2d`
+- `tmp/docx-row-pagination-verify/REPORT.md`：`dd76b7e30b872b587a29628a8705985c895bcc26c6d11377f19b16532189e226`
+- `tmp/docx-row-pagination-verify/old-binding-qcn80jg2/binding.json`：`d60538d27affb90f90c723f968ec248a67e33c8563c56b225d781c8f4842d447`
+- `tmp/docx-row-pagination-verify/audit-binding-bz6uf6zf/binding.json`：`490e4b68baf73e97306c00833e1e11fda50c5333e8d8ae948337bd115db156cd`
+- `tmp/docx-row-pagination-verify/candidate-run-il91szj9/report.json`：`542b698ed53d527b9016c773f8f90960cfe178f856a10c61201da847d5271e64`
+- `tmp/docx-row-pagination-editor/completion-51.json`：`545f6c7937e06c56deb3d5de192ac0bfb685c6b4b76eba7ba674ec47c9108799`
+- `tmp/docx-row-pagination-regression/stable-final-existing-gates-bridge.json`：`d95814caaf07e83bede31a8c02840201d936f8e264144bcfa43aede729850817`
+- `tmp/docx-row-pagination-regression/frontend-focused-identity-bridge.json`：`fd6566b14d9c79ff36275521858a8cb4f8d15df103e992e2d75afba7354ca925`
+- `tmp/docx-row-pagination-regression/historical-yw_mqr1k/report.json`：`828ffcdd8468e25b0beda478f46cfbd0fb6a18716865d1ef056b5351d61a05ad`
+- `tmp/docx-row-pagination-regression/frontend-full-5n86nidn/report.json`：`4ec1ae720a182f7e43b141f1122ec83d8cda7136d31b08cad9177398acff411f`
+- `tmp/docx-row-pagination-regression/frontend-editor-u312u5p7/report.json`：`ef461443954cb1ad7842264385ddbbafe7360edb4e41c3c386a5b3738cf59e71`
+- `tmp/docx-row-pagination-regression/comparator-controls-ct4ka2fj/result/report.json`：`ec703957b882b76d0cae2478377cf79e7d873394bfe5dbe473bb372734800345`
+- `tmp/docx-row-pagination-regression/editor-generation2-transition.json`：`0522392f41831fb2cdd411dec8158522feeee6b7e960146e10c4f26ad14eb0e8`
+- `tmp/docx-row-pagination-consumer/final-candidate-kwy0387j/REPORT.md`：`ac7f994d177244703f88832eaeaebff4e370e23b65d962816249fb500a042d87`
+- `tmp/docx-row-pagination-consumer/final-candidate-kwy0387j/completion.json`：`cd4e70b5e4e8095c46c6f6c87522f9d366d61bb22e6508592158ebd516cdfbff`
+- `tmp/docx-row-pagination-consumer/final-candidate-kwy0387j/artifact-manifest.json`：`a04a9c0ae53b629f3be8e1926e3f9317edf96b70ca69bc23f4dfe94b40969763`
+- `tmp/docx-row-pagination-native-prerequisites.json`：`17a6e9b6c4d03f34903cc2febbe6698751f0bb5315aae2f50eaf4844997a2ade`
+
+- `tmp/docx-row-pagination-regression/summary-final-j4hvw_7t/summary.json`：`f564407e7e0a19c4cdc80e78a24762aa97a99eb475d4f69b77ec23b0d75959fb`
+- `tmp/docx-row-pagination-regression/summary-final-j4hvw_7t/REPORT.md`：`f3806a7a7e21f7d5a29f1c9b60c70a8d791279580725233b8db2e4271fa83144`
+- `tmp/docx-row-pagination-regression/summary-final-j4hvw_7t/command-manifest.json`：`addc8675323abb9fc16e1d422be060a8b4de8dbe02c2ccba28b50ac131974712`
+- `tmp/docx-row-pagination-audit/FINAL-AUDIT.md`：`9d4ed921114eebc3f0c49703d4c1f278fdc94c7d4983abab3e74f365e046fb5d`
+- `tmp/docx-row-pagination-audit/FINAL-AUDIT-SEAL.json`：`9d67c4050202b49f271689085bcada0d1c625be477277bba03432501e8e1f8df`
+
+最终聚合的 `command-manifest.json` 是各阶段实际命令索引（含精确 argv 与所引用原始报告散列），`summary.json` 绑定核心、源、历史、前端、后端、worker、编辑器、消费者和独立复核。历史 302 模型另有两 CLI 共 604 包比较、1,208 可信重开和 1,208 不覆盖检查；这些是两 CLI 总计，不加倍宣称不同案例。独立最终复核另核对 1,952 消费者封存条目、252 产品输入，并实际目视全部 18 组高分辨率页面，无剩余复核阻断。
+
+实际核心命令（仓库根目录）为 `python3 tmp/docx-row-pagination-core-run/run-final-gate-v1.py test --locked -j1`、同 driver 的 `build --locked -j1`；MSRV 两条各加 `ROW_TOOLCHAIN=1.88.0`。driver SHA `954c0caec74ff4a41961e66ef08fdca600377c15ce93414d3521fce32c03a6b8`，显式 CARGO_HOME / RUSTUP_HOME、CARGO_INCREMENTAL=0，稳定 target 与独立 MSRV target；完整 argv / stdout / stderr / 工具链 / 源码身份见 `FINAL-CORE-GATES.md` 与各 result。前端实际包括 `node scripts/prepare-pdf.mjs`、`node node_modules/typescript/bin/tsc --noEmit`、`node node_modules/vite/bin/vite.js build` 及报告中完整 Playwright config / 文件 / grep 参数，不将被筛除的测试算通过。
+
+消费者实际完整命令固定在 `tmp/docx-row-pagination-consumer/FINAL_COMMAND.txt`（SHA `6c93bc2f53b4b6a27cf1a4ffe92a1c1ab9ba507126372cf222324da0dcd0f644`），调用 `PYTHONDONTWRITEBYTECODE=1 python3 -u tmp/docx-row-pagination-consumer/run.py --serial-slot-granted`，随后明确绑定 candidate、source-pins、final-core-gates、binding 的路径和散列。runner SHA `17064dc472663286472f49c2e4b61cf266f2d792215ac66a129268e5f2e70497`；执行后最终报告与 completion 才确认通过，不能把命令文件历史 “Prepared only” 注释当作运行结果。所有 124 条实际 argv / 返回码 / 原始流与文件散列记录在 execution / artifact-manifest。
+
+测试入口要求至少 2 GiB，build / freeze / 源验证 / 消费者入口至少 950 MiB，观察停止底线 600 MiB，未降低阈值。核心稳定测试 / build 最低约 1.325 GB，MSRV 约 1.982 GB；消费者 subprocess 最低 1,150,644,224 bytes，随后 shell 最低 1,146,671,104 bytes，封存 96,370,634 逻辑 bytes。各阶段按串行授权执行，保留失败与 profiles；这些是实际观察保护，不是硬文件系统配额。历史独立 cache 清理另有审计，不将其说成新证据被删。最终提交 / 推送状态不由这些验证报告证明。
+
+
 ## 本轮：外部 DOCX 的源 Roman / Swiss 字体类别（2026-10-14，发布 35）
 
 发布 35 取代下方发布 34 当时“通用外部导入不读取 fontTable 类别”的边界；此前全部回归正文及数字保持历史原文。基于已发布 `eac6ee27b18f89b2cbe91f0d0d785fd06ad65534`，只为完整证明的外部 DOCX Latin 正文 / 标题及已实际保留的真正空段基线附加 Roman / Swiss 根元数据。实际 OPC fontTable 关系、原始关系 / 内容类型 / 唯一物理条目、逐范围有效字体与最终模型绑定共同核对；不用名字、PANOSE、粗体或消费者替代结果猜测类别。一个保留名字缺证、合法其他类别或完整 ASCII 折叠类出现重复 / 别名时全部新类别共同回退。已有拒绝优先；成功模型只新增根字段及固定诊断，不改旧字体名、字号、颜色、间距、页面、空段或分页原子。范围和资源预算见 [DOCX_FONT_FAMILIES.md](DOCX_FONT_FAMILIES.md)。

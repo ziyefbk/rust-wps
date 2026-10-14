@@ -1,3 +1,4 @@
+import {approveTableRowPaginationTransaction, replayTableRowPaginationTransaction, rowCantSplitAttribute, tableRowPaginationAttributes, tableRowPaginationError, validateTableRowPaginationDocument} from './word-table-row-pagination';
 import {cellFillAttribute, cellTextColorModeAttribute, isCellFillRgb, isCellTextColorMode, tableCellColorFields, tableCellColorsAttributes, tableCellColorsError, validateTableCellColorsDocument, validTableCellColorsHTML, type TableCellColorsPatch} from './word-table-cell-colors';
 import {cellVerticalAlignAttribute, isCellVerticalAlignment, isRowMinHeight, rowMinHeightAttribute, simpleVerticalTable, tableVerticalAttributes, tableVerticalError, validateTableVerticalDocument, validTableVerticalHTML, type TableVerticalPatch} from './word-table-vertical-layout';
 import {isTableCellMargins, parseTableCellMarginsMetadata, simpleCellMarginsTable, tableCellMarginsAttribute, tableCellMarginsDataAttribute, tableCellMarginsDOM, tableCellMarginsError, validateTableCellMarginsDocument, validTableCellMarginsHTML, type TableCellMargins} from './word-table-cell-margins';
@@ -70,6 +71,7 @@ export function validateTableWidthsDocument(document: JSONContent): void {
   validateTableCellMarginsDocument(document);
   validateTableVerticalDocument(document);
   validateTableCellColorsDocument(document);
+  validateTableRowPaginationDocument(document);
 }
 
 // Default null is an editor-only attribute. Fixed cells carry no second width
@@ -80,6 +82,7 @@ export function omitDefaultTableWidths(document: JSONContent, inFixedTable = fal
   if (result.attrs) {
     result.attrs = {...result.attrs};
     if (cellTypes.has(result.type ?? '')) for (const field of tableCellColorFields) if (result.attrs[field] === null) delete result.attrs[field];
+    if (result.type === 'tableRow' && result.attrs[rowCantSplitAttribute] === null) delete result.attrs[rowCantSplitAttribute];
     if (result.type === 'tableRow' && result.attrs[rowMinHeightAttribute] === null) delete result.attrs[rowMinHeightAttribute];
     if (cellTypes.has(result.type ?? '') && result.attrs[cellVerticalAlignAttribute] === null) delete result.attrs[cellVerticalAlignAttribute];
     if (result.type === 'table' && result.attrs[widthAttribute] === null) delete result.attrs[widthAttribute];
@@ -340,6 +343,33 @@ export function createTableVerticalTransaction(state: EditorState, patch: TableV
   return transaction;
 }
 
+// Pagination shares the complete caret/range/cell/row/table selection logic,
+// but remains independent from minimum height and header-cell representation.
+export function selectedTableRowPagination(state: EditorState) {
+  const selected = selectedTableVerticalLayout(state);
+  if (!selected) return null;
+  const values = selected.rows.map(({node}) => node.attrs[rowCantSplitAttribute] ?? null);
+  const mixed = values.some(value => value !== values[0]);
+  return {...selected, count: selected.rows.length, value: mixed ? null : values[0] ?? null,
+    mixed, hasExplicit: values.some(value => value !== null)};
+}
+export function createTableRowPaginationTransaction(state: EditorState, value: boolean | null, token?: TableCellMarginsToken): Transaction | null {
+  if (value !== null && typeof value !== 'boolean') throw new Error(tableRowPaginationError);
+  if (token && !matchesTableCellMargins(state, token)) return null;
+  const selected = selectedTableRowPagination(state);
+  if (!selected) return null;
+  if (!selected.supported) throw new Error(tableRowPaginationError);
+  const transaction = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks}).tr;
+  for (const {node, pos} of selected.rows) if ((node.attrs[rowCantSplitAttribute] ?? null) !== value) {
+    transaction.setNodeMarkup(pos, undefined, {...node.attrs, [rowCantSplitAttribute]: value}, node.marks);
+  }
+  if (!transaction.docChanged) return null;
+  validateProspectiveDocument(transaction.doc);
+  transaction.setSelection(Selection.fromJSON(transaction.doc, state.selection.toJSON())).setStoredMarks(state.storedMarks);
+  approveTableRowPaginationTransaction(transaction);
+  return transaction;
+}
+
 // Reuse the exact established cell/range selection semantics of vertical
 // layout. Fill and automatic text color remain independent field states.
 export function selectedTableCellColors(state: EditorState) {
@@ -413,6 +443,7 @@ export function createTableStructureTransaction(state: EditorState, action: Tabl
       }
     }
     validateProspectiveDocument(tr.doc);
+    approveTableRowPaginationTransaction(tr);
     transaction = tr;
   });
   return transaction;
@@ -437,9 +468,9 @@ export function tableWidthGuard(onRejected: (message: string) => void = () => {}
   }});
 }
 
-export const WordTable = Table.extend<TableOptions & {onWidthError: (message: string) => void}>({
-  addOptions() { return {...this.parent!(), onWidthError: () => {}}; },
-  addGlobalAttributes() {return [...(this.parent?.() ?? []), ...tableVerticalAttributes(), ...tableCellColorsAttributes()];},
+export const WordTable = Table.extend<TableOptions & {onWidthError: (message: string) => void; locked: () => boolean}>({
+  addOptions() { return {...this.parent!(), onWidthError: () => {}, locked: () => false}; },
+  addGlobalAttributes() {return [...(this.parent?.() ?? []), ...tableVerticalAttributes(), ...tableCellColorsAttributes(), ...tableRowPaginationAttributes()];},
   addAttributes() {
     return {...this.parent?.(), [widthAttribute]: {
       default: null, rendered: false,
@@ -457,12 +488,26 @@ export const WordTable = Table.extend<TableOptions & {onWidthError: (message: st
       : this.parent!({node, HTMLAttributes: attributes});
   },
   addCommands() {
+    const rowPaginationCommand = (value: boolean | null) => ({state, dispatch, tr}: CommandProps) => {
+      try {
+        if (this.options.locked?.() || this.editor && (!this.editor.isEditable || this.editor.view.composing)) return false;
+        const transaction = createTableRowPaginationTransaction(state, value);
+        if (!transaction) return false;
+        if (dispatch) {
+          replayTableRowPaginationTransaction(tr, transaction);
+          tr.setSelection(Selection.fromJSON(tr.doc, transaction.selection.toJSON()));
+          if (transaction.storedMarksSet) tr.setStoredMarks(transaction.storedMarks);
+        }
+        return true;
+      } catch (error) {if (dispatch) this.options.onWidthError(String(error)); return false;}
+    };
     const cellColorsCommand = (patch: TableCellColorsPatch) => ({state, dispatch, tr}: CommandProps) => {
       try {
+        if (this.options.locked?.() || this.editor && (!this.editor.isEditable || this.editor.view.composing)) return false;
         const transaction = createTableCellColorsTransaction(state, patch);
         if (!transaction) return false;
         if (dispatch) {
-          for (const step of transaction.steps) tr.step(step);
+          replayTableRowPaginationTransaction(tr, transaction);
           tr.setSelection(Selection.fromJSON(tr.doc, transaction.selection.toJSON()));
           if (transaction.storedMarksSet) tr.setStoredMarks(transaction.storedMarks);
         }
@@ -471,10 +516,11 @@ export const WordTable = Table.extend<TableOptions & {onWidthError: (message: st
     };
     const verticalCommand = (patch: TableVerticalPatch) => ({state, dispatch, tr}: CommandProps) => {
       try {
+        if (this.options.locked?.() || this.editor && (!this.editor.isEditable || this.editor.view.composing)) return false;
         const transaction = createTableVerticalTransaction(state, patch);
         if (!transaction) return false;
         if (dispatch) {
-          for (const step of transaction.steps) tr.step(step);
+          replayTableRowPaginationTransaction(tr, transaction);
           tr.setSelection(Selection.fromJSON(tr.doc, transaction.selection.toJSON()));
           if (transaction.storedMarksSet) tr.setStoredMarks(transaction.storedMarks);
         }
@@ -483,10 +529,11 @@ export const WordTable = Table.extend<TableOptions & {onWidthError: (message: st
     };
     const cellMarginsCommand = (margins: TableCellMargins | null) => ({state, dispatch, tr}: CommandProps) => {
       try {
+        if (this.options.locked?.() || this.editor && (!this.editor.isEditable || this.editor.view.composing)) return false;
         const transaction = createTableCellMarginsTransaction(state, margins);
         if (!transaction) return false;
         if (dispatch) {
-          for (const step of transaction.steps) tr.step(step);
+          replayTableRowPaginationTransaction(tr, transaction);
           tr.setSelection(Selection.fromJSON(tr.doc, transaction.selection.toJSON()));
           if (transaction.storedMarksSet) tr.setStoredMarks(transaction.storedMarks);
         }
@@ -495,24 +542,26 @@ export const WordTable = Table.extend<TableOptions & {onWidthError: (message: st
     };
     const positionCommand = (patch: TablePositionPatch) => ({state, dispatch, tr}: CommandProps) => {
       try {
+        if (this.options.locked?.() || this.editor && (!this.editor.isEditable || this.editor.view.composing)) return false;
         const transaction = createTablePositionTransaction(state, patch);
         if (!transaction) return false;
         if (dispatch) {
-          for (const step of transaction.steps) tr.step(step);
+          replayTableRowPaginationTransaction(tr, transaction);
           tr.setSelection(Selection.fromJSON(tr.doc, transaction.selection.toJSON()));
           if (transaction.storedMarksSet) tr.setStoredMarks(transaction.storedMarks);
         }
         return true;
       } catch (error) {if (dispatch) this.options.onWidthError(String(error)); return false;}
     };
-    return {...this.parent?.(), setTableCellColors: cellColorsCommand, resetTableCellColors: () => cellColorsCommand({cellFillRgb: null, cellTextColorMode: null}), setTableVerticalLayout: verticalCommand, resetTableVerticalLayout: () => verticalCommand({rowMinHeightTwips: null, cellVerticalAlign: null}), setTableCellMargins: cellMarginsCommand, resetTableCellMargins: () => cellMarginsCommand(null), setTablePosition: positionCommand, resetTablePosition: () => positionCommand({tableAlign: null, tableIndentTwips: null}),
+    return {...this.parent?.(), setTableRowCantSplit: rowPaginationCommand, setTableCellColors: cellColorsCommand, resetTableCellColors: () => cellColorsCommand({cellFillRgb: null, cellTextColorMode: null}), setTableVerticalLayout: verticalCommand, resetTableVerticalLayout: () => verticalCommand({rowMinHeightTwips: null, cellVerticalAlign: null}), setTableCellMargins: cellMarginsCommand, resetTableCellMargins: () => cellMarginsCommand(null), setTablePosition: positionCommand, resetTablePosition: () => positionCommand({tableAlign: null, tableIndentTwips: null}),
       ...Object.fromEntries(Object.keys(structuralCommands).map(action => [action, () =>
       ({state, dispatch, tr}: CommandProps) => {
         try {
+          if (this.options.locked?.() || this.editor && (!this.editor.isEditable || this.editor.view.composing)) return false;
           const transaction = createTableStructureTransaction(state, action as TableStructureAction);
           if (!transaction) return false;
           if (dispatch) {
-            for (const step of transaction.steps) tr.step(step);
+            replayTableRowPaginationTransaction(tr, transaction);
             tr.setSelection(Selection.fromJSON(tr.doc, transaction.selection.toJSON()));
             if (transaction.storedMarksSet) tr.setStoredMarks(transaction.storedMarks);
           }

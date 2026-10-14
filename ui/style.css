@@ -93,6 +93,10 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
   #print-document p { orphans:2; widows:2; }
   #print-document table { break-inside:auto; }
   #print-document tr { break-inside:avoid; }
+  /* Preserve historical absence. Owned booleans are print hints, not a
+     guarantee that a naturally tall row fits or stays on one page. */
+  #print-document tr[data-row-cant-split="true"] { break-inside:avoid; }
+  #print-document tr[data-row-cant-split="false"] { break-inside:auto; }
   #print-document thead { display:table-header-group; }
   #print-document td,#print-document th { border-color:#888; }
   #print-document img { max-width:100%; max-height:240mm; object-fit:contain; break-inside:avoid; }
@@ -218,3 +222,7 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
 
 #paragraph-pagination-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
 #paragraph-pagination-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+
+#table-row-pagination-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
+#table-row-pagination-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+#edit-row-pagination-state { color:#61738a; font-size:11px; }

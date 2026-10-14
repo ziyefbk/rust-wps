@@ -1,3 +1,5 @@
+import {TableRowPagination, preflightTableRowPaginationHTML} from './word-table-row-pagination';
+import {WordTableRowPaginationControls} from './word-table-row-pagination-controls';
 import {ParagraphPagination, omitDefaultParagraphPagination, preflightParagraphPaginationHTML, validateParagraphPaginationDocument} from './word-paragraph-pagination';
 import {PageBreak, PageBreakParagraph, pageBreakDocumentDOM, pageBreakPreviewWarning, preflightPageBreakHTML} from './word-page-break';
 import {WordParagraphPaginationControls} from './word-paragraph-pagination-controls';
@@ -99,6 +101,7 @@ let paragraphSpacingInputEditing = false;
 let tableWidthInputEditing = false;
 let pageControls: WordPageControls | null = null;
 let tableCellColorControls: WordTableCellColorControls | null = null;
+let tableRowPaginationControls: WordTableRowPaginationControls | null = null;
 let tableVerticalControls: WordTableVerticalControls | null = null;
 let tableCellMarginsControls: WordTableCellMarginsControls | null = null;
 let paragraphPaginationControls: WordParagraphPaginationControls | null = null;
@@ -355,6 +358,7 @@ function updateToolbar() {
   tableCellMarginsControls?.update();
   tableCellColorControls?.update();
   tableVerticalControls?.update();
+  tableRowPaginationControls?.update();
   imageControls?.update();
   imageParagraphControls?.update();
   for (const mark of ['bold', 'italic', 'underline', 'strike', 'superscript', 'subscript', 'bulletList', 'orderedList']) {
@@ -491,6 +495,7 @@ export function closeAuthoring() {
   tableCellMarginsControls?.reset();
   tableCellColorControls?.reset();
   tableVerticalControls?.reset();
+  tableRowPaginationControls?.reset();
   imageControls?.reset();
   imageParagraphControls?.reset();
   tableWidthInputEditing = false;
@@ -530,8 +535,8 @@ async function create(content?: JSONContent, ask = true) {
   editor = new Editor({
     editable: !paused,
     element: el('editor-content'),
-    extensions: [ParagraphPagination.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),PreservedListGeometry.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),EmptyParagraphFont.configure({onError: message => showNotice(message, true)}),FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
-      WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), WordFontFamilyMetadata.configure({onError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, ParagraphIndent.configure({onIndentError: message => showNotice(message, true)}), PageBreak, PageBreakParagraph.configure({onError: message => showNotice(message, true)}), TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true)}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
+    extensions: [TableRowPagination.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}), ParagraphPagination.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),PreservedListGeometry.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),EmptyParagraphFont.configure({onError: message => showNotice(message, true)}),FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
+      WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), WordFontFamilyMetadata.configure({onError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, ParagraphIndent.configure({onIndentError: message => showNotice(message, true)}), PageBreak, PageBreakParagraph.configure({onError: message => showNotice(message, true)}), TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
     content: initial,
     editorProps: {
       attributes: state => ({ 'aria-label': '文档编辑区', spellcheck: 'false', 'data-style-profile': state.doc.attrs.styleProfile ?? 'legacy-v1', ...pageBreakDocumentDOM(state.doc.attrs), ...fontFamilyMetadataDocumentDOM(state.doc.attrs), ...(state.doc.attrs.pageGeometry ? {'data-page-geometry': JSON.stringify(state.doc.attrs.pageGeometry)} : {}) }),
@@ -543,7 +548,7 @@ async function create(content?: JSONContent, ask = true) {
       // Do not load remote images pasted from web/Office HTML. Preserve text.
       transformPastedHTML: html => {
         // Audit raw empty-font metadata before remote-image removal can erase it.
-        const parsed = new DOMParser().parseFromString(preflightPageBreakHTML(preflightParagraphPaginationHTML(preflightEmptyParagraphFontHTML(preflightListGeometryHTML(html)))), 'text/html');
+        const parsed = new DOMParser().parseFromString(preflightPageBreakHTML(preflightParagraphPaginationHTML(preflightEmptyParagraphFontHTML(preflightListGeometryHTML(preflightTableRowPaginationHTML(html))))), 'text/html');
         parsed.querySelectorAll('img').forEach(image => {
           if (!/^data:image\/(png|jpeg);base64,/.test(image.getAttribute('src') ?? '')) image.remove();
         });
@@ -572,6 +577,7 @@ async function create(content?: JSONContent, ask = true) {
 export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof showNotice, beforeLeave: () => Promise<boolean> = async () => true, blockWindowClose: () => boolean = () => false) {
   emptyParagraphFontControls = new WordEmptyParagraphFontControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   tableCellColorControls = new WordTableCellColorControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
+  tableRowPaginationControls = new WordTableRowPaginationControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   tableVerticalControls = new WordTableVerticalControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   tableCellMarginsControls = new WordTableCellMarginsControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   paragraphPaginationControls = new WordParagraphPaginationControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});

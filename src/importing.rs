@@ -155,28 +155,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     let blocking: Vec<_> = compatibility
         .risks
         .iter()
-        .filter(|risk| {
-            matches!(
-                risk.as_str(),
-                "Tracked changes"
-                    | crate::compatibility::HIDDEN_TEXT_RISK
-                    | crate::compatibility::PARAGRAPH_SPACING_RISK
-                    | crate::paragraph_indentation::PARAGRAPH_INDENT_RISK
-                    | crate::paragraph_pagination::RISK
-                    | crate::page_geometry::PAGE_GEOMETRY_RISK
-                    | crate::table_widths::TABLE_GEOMETRY_RISK
-                    | crate::image_dimensions::IMAGE_GEOMETRY_RISK
-                    | "Custom theme color mapping is unsupported"
-                    | "Unsupported theme color scheme content"
-                    | "Unsupported or unresolved hyperlink target"
-                    | "Fields and generated text"
-                    | "Merged table cells"
-                    | "Mathematical equations"
-                    | "Content controls or embedded content"
-                    | "Floating objects, legacy drawings or text boxes"
-            ) || risk.starts_with("Additional document content:")
-                || risk.starts_with("Embedded object or executable content:")
-        })
+        .filter(|risk| crate::compatibility::blocks_editing(risk))
         .map(String::as_str)
         .collect();
     ensure!(
@@ -199,6 +178,8 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     }
     let ir = parsed.to_ir();
     crate::table_vertical::verify_ir(&audit.vertical_tables, &ir)?;
+    let row_pagination_matches =
+        crate::table_row_pagination::verify_ir(&audit.row_pagination, &ir).is_ok();
     crate::paragraph_pagination::verify_ir(&audit.pagination, &ir)?;
     let color_identity_matches =
         crate::table_cell_colors::verify_ir(&audit.cell_colors, &ir).is_ok();
@@ -408,6 +389,13 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
             .risks
             .insert(format!("Empty paragraph font proof unavailable: {error}"));
     }
+    crate::document::validate(&report.document)?;
+    crate::table_row_pagination::attach(
+        &audit.row_pagination,
+        row_pagination_matches,
+        &mut report.document,
+        &mut report.compatibility.risks,
+    );
     crate::document::validate(&report.document)?;
     crate::docx_font_families::attach(
         font_families,

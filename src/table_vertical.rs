@@ -26,7 +26,7 @@ pub(crate) struct VerticalCell {
 fn properties(node: &Xml) -> bool {
     !node.all("trHeight").is_empty() || !node.all("vAlign").is_empty()
 }
-struct Styles<'a> {
+pub(crate) struct Styles<'a> {
     direct: BTreeSet<usize>,
     index: BTreeMap<String, Vec<&'a Xml>>,
     default_candidates: Vec<&'a Xml>,
@@ -35,7 +35,7 @@ struct Styles<'a> {
     work: usize,
 }
 impl<'a> Styles<'a> {
-    fn new(root: &'a Xml) -> Result<Self> {
+    pub(crate) fn new(root: &'a Xml) -> Result<Self> {
         let mut index: BTreeMap<String, Vec<&Xml>> = BTreeMap::new();
         let mut defaults = Vec::new();
         for style in root.all("style") {
@@ -75,7 +75,7 @@ impl<'a> Styles<'a> {
             work: 0,
         })
     }
-    fn chain(&mut self, table: &Xml) -> Result<Vec<&'a Xml>> {
+    pub(crate) fn chain(&mut self, table: &Xml) -> Result<Vec<&'a Xml>> {
         let explicit = table
             .one("tblPr")?
             .map(|p| p.one("tblStyle"))
