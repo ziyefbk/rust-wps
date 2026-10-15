@@ -1,0 +1,603 @@
+{
+  "document": {
+    "type": "doc",
+    "attrs": {
+      "pageGeometry": {
+        "heightTwips": 15840,
+        "marginBottomTwips": 1440,
+        "marginLeftTwips": 1440,
+        "marginRightTwips": 1440,
+        "marginTopTwips": 1440,
+        "widthTwips": 12240
+      },
+      "styleProfile": "standard-v2"
+    },
+    "content": [
+      {
+        "type": "table",
+        "attrs": {
+          "tableIndentTwips": 0,
+          "autoPreferredColumnWidthsTwips": [
+            1870,
+            1870,
+            1870,
+            1870,
+            1870
+          ]
+        },
+        "content": [
+          {
+            "type": "tableRow",
+            "content": [
+              {
+                "type": "tableHeader",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "tableHeader",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Branden",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableHeader",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Nicolaas",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableHeader",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Sam",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableHeader",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Simon",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "tableRow",
+            "content": [
+              {
+                "type": "tableCell",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Task I",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableCell",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "10",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableCell",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "10",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableCell",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "10",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableCell",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "10",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "tableRow",
+            "attrs": {
+              "rowCantSplit": true
+            },
+            "content": [
+              {
+                "type": "tableCell",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Task II",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableCell",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "20",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableCell",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "5",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableCell",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "5",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "tableCell",
+                "attrs": {
+                  "cellFillMode": "none"
+                },
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "attrs": {
+                      "lineSpacing": 240,
+                      "spaceAfter": 0,
+                      "spaceBefore": 0
+                    },
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "15",
+                        "marks": [
+                          {
+                            "type": "fontSize",
+                            "attrs": {
+                              "halfPoints": 24
+                            }
+                          },
+                          {
+                            "type": "fontFamily",
+                            "attrs": {
+                              "name": "Calibri"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "attrs": {
+          "keepLines": false,
+          "keepNext": false,
+          "lineSpacing": 240,
+          "pageBreakBefore": false,
+          "spaceAfter": 0,
+          "spaceBefore": 0
+        }
+      }
+    ]
+  },
+  "compatibility": {
+    "paragraphs": 16,
+    "tables": 1,
+    "drawings": 0,
+    "risks": [
+      "Automatic table width preferences preserved; intrinsic layout and pagination remain consumer-dependent",
+      "DOCX font-family metadata not preserved: body content is outside the supported Latin subset; existing imported fonts and layout are unchanged",
+      "Default document style normalized in editable copy",
+      "Direct table row cantSplit preserved; automatic pagination remains consumer-dependent",
+      "Empty paragraph font proof unavailable: Unsupported body table wrapper",
+      "Font names are preserved; unavailable fonts may be substituted locally",
+      "Page layout, fonts and pagination require visual verification",
+      "Pagination in lists, tables, images and hard-break-split paragraphs is outside the supported subset and may be normalized",
+      "Paper code and header/footer distance metadata normalized; only page size and body margins preserved",
+      "Some empty paragraph baseline fonts are unproved; editor defaults may change blank line heights",
+      "Table borders and cell formatting normalized",
+      "Top-level paragraph pagination preserved as fixed values; named style inheritance and automatic page layout are not retained",
+      "Typography, spacing or alignment outside the basic editor model"
+    ],
+    "fidelity_verified": false
+  }
+}

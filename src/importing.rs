@@ -163,6 +163,7 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         "Import cannot preserve {}; source remains read-only",
         blocking.join("; ")
     );
+    let auto_preferred = crate::table_auto_preferred::analyze(&bytes);
     let font_families = crate::docx_font_families::analyze(&bytes);
     let parsed = office_oxide::Document::from_reader(
         std::io::Cursor::new(bytes),
@@ -177,6 +178,8 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         )?;
     }
     let ir = parsed.to_ir();
+    let auto_preferred_matches =
+        crate::table_auto_preferred::verify_ir(&auto_preferred, &ir).is_ok();
     crate::table_vertical::verify_ir(&audit.vertical_tables, &ir)?;
     let row_pagination_matches =
         crate::table_row_pagination::verify_ir(&audit.row_pagination, &ir).is_ok();
@@ -409,6 +412,15 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     crate::table_cell_no_fill::attach(
         &audit.cell_no_fill,
         no_fill_identity_matches,
+        &mut report.document,
+        &mut report.compatibility.risks,
+    );
+    // Preferred automatic widths are optional hints. All existing hard gates
+    // and independent metadata attachments run first; commit only a validated
+    // complete candidate, never a partially updated model.
+    crate::table_auto_preferred::attach(
+        &auto_preferred,
+        auto_preferred_matches,
         &mut report.document,
         &mut report.compatibility.risks,
     );

@@ -428,6 +428,7 @@ el('import-document').addEventListener('click', () => operation('正在准备编
     'Contextual same-style spacing resolved to fixed paragraph values; named-style and reorder dynamics are not retained': '同样式上下文间距已按源段落顺序转换为固定段前/段后值；命名样式及重排后的动态间距不保留。之后请用段前/段后控件调整，恢复默认也不会恢复源动态样式',
     'List marker appearance normalized to editor defaults': '列表编号外观改为编辑器默认样式',
     'Unpositioned automatic table widths normalized to the explicit page content area; source widths are not preserved': '无定位的自动表格按当前正文宽度重排；不保留原始表格列宽，固定宽度/定位表格及图片不会自动缩放',
+    'Automatic table width preferences preserved; intrinsic layout and pagination remain consumer-dependent': '已保留自动表格首选列宽；这些数值不是固定宽度，实际宽度、换行和分页仍由打开文档的软件决定，请核对预览',
     'Autofit table widths normalized; fixed column widths were not inferred': '自动调整表格的宽度使用默认布局；不会仅凭网格推断固定列宽，请核对原文',
     'Table alignment normalized to editor defaults': '表格整体对齐改为编辑器默认位置，请核对页面中的摆放',
     'Inherited table indentation normalized; automatic table geometry not preserved': '继承的表格缩进已规范化；自动表格的原始几何布局不保留，请核对位置、宽度和换行',

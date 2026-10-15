@@ -1,3 +1,4 @@
+import {autoPreferredAttribute, autoPreferredDataAttribute, autoPreferredError, isAutoPreferredWidths, parseAutoPreferredMetadata, validateAutoPreferredDocument, validAutoPreferredHTML, isValidAutoPreferredHTML, preflightAutoPreferredHTML, validateAutoPreferredPaste} from './word-table-auto-preferred';
 import {approveTableRowPaginationTransaction, replayTableRowPaginationTransaction, rowCantSplitAttribute, tableRowPaginationAttributes, tableRowPaginationError, validateTableRowPaginationDocument} from './word-table-row-pagination';
 import {cellFillAttribute, cellFillModeAttribute, cellTextColorModeAttribute, isCellFillMode, isCellFillRgb, isCellTextColorMode, tableCellColorFields, tableCellColorsAttributes, tableCellColorsError, validateTableCellColorsDocument, validTableCellColorsHTML, isValidTableCellColorsHTML, preflightTableCellColorsHTML, type TableCellColorsPatch} from './word-table-cell-colors';
 import {cellVerticalAlignAttribute, isCellVerticalAlignment, isRowMinHeight, rowMinHeightAttribute, simpleVerticalTable, tableVerticalAttributes, tableVerticalError, validateTableVerticalDocument, validTableVerticalHTML, type TableVerticalPatch} from './word-table-vertical-layout';
@@ -43,6 +44,7 @@ export function parseTableColumnWidthsMetadata(value: string | null): number[] |
 }
 
 export function validateTableWidthsDocument(document: JSONContent): void {
+  validateAutoPreferredDocument(document);
   const visit = (node: JSONContent, tableDepth: number, geometryAncestor: string | null) => {
     if (cellTypes.has(node.type ?? '') && node.attrs?.colwidth != null) throw new Error('不支持单元格像素 colwidth；请使用整表 columnWidthsTwips 固定列宽。');
     const hasWidth = !!node.attrs && Object.prototype.hasOwnProperty.call(node.attrs, widthAttribute);
@@ -78,13 +80,14 @@ export function validateTableWidthsDocument(document: JSONContent): void {
 // source in saved drafts/models, even the builtin's default colwidth:null.
 export function omitDefaultTableWidths(document: JSONContent, inFixedTable = false): JSONContent {
   const result = {...document};
-  const fixed = result.type === 'table' ? result.attrs?.[widthAttribute] != null : inFixedTable;
+  const fixed = result.type === 'table' ? result.attrs?.[widthAttribute] != null || result.attrs?.[autoPreferredAttribute] != null : inFixedTable;
   if (result.attrs) {
     result.attrs = {...result.attrs};
     if (cellTypes.has(result.type ?? '')) for (const field of tableCellColorFields) if (result.attrs[field] === null) delete result.attrs[field];
     if (result.type === 'tableRow' && result.attrs[rowCantSplitAttribute] === null) delete result.attrs[rowCantSplitAttribute];
     if (result.type === 'tableRow' && result.attrs[rowMinHeightAttribute] === null) delete result.attrs[rowMinHeightAttribute];
     if (cellTypes.has(result.type ?? '') && result.attrs[cellVerticalAlignAttribute] === null) delete result.attrs[cellVerticalAlignAttribute];
+    if (result.type === 'table' && result.attrs[autoPreferredAttribute] === null) delete result.attrs[autoPreferredAttribute];
     if (result.type === 'table' && result.attrs[widthAttribute] === null) delete result.attrs[widthAttribute];
     if (result.type === 'table' && result.attrs[tableCellMarginsAttribute] === null) delete result.attrs[tableCellMarginsAttribute];
     if (result.type === 'table') for (const field of tablePositionFields) if (result.attrs[field] === null) delete result.attrs[field];
@@ -103,12 +106,27 @@ export function fixedTableDOM(widths: number[], attributes: Record<string, unkno
   }), ['colgroup', {}, ...widths.map(width => ['col', {style: `width: ${width / 15}px`}] as DOMOutputSpec)], ['tbody', 0]];
 }
 
+export function autoPreferredTableDOM(widths: number[], attributes: Record<string, unknown> = {}): DOMOutputSpec {
+  if (!isAutoPreferredWidths(widths)) throw new Error(autoPreferredError);
+  return ['table', mergeAttributes(attributes, {[autoPreferredDataAttribute]: widths.join(','), style: 'table-layout: auto; width: auto; min-width: 0'}),
+    ['colgroup', {}, ...widths.map(width => ['col', {style: `width: ${width / 15}px`}] as DOMOutputSpec)], ['tbody', 0]];
+}
+
 // The stock non-resizable TableView still derives its colgroup from the first
 // row's pixel colwidth attributes. Override both mount and update for canonical
 // tables, and retain the original renderer for tables without fixed geometry.
 export class FixedTableView extends TableView {
   constructor(...args: ConstructorParameters<typeof TableView>) { super(...args); this.syncFixedWidths(); this.syncPosition(); this.syncCellMargins(); }
   private syncFixedWidths() {
+    const preferred: unknown = this.node.attrs[autoPreferredAttribute];
+    this.table.removeAttribute(autoPreferredDataAttribute);
+    if (isAutoPreferredWidths(preferred)) {
+      this.table.removeAttribute(widthDataAttribute);
+      this.table.setAttribute(autoPreferredDataAttribute, preferred.join(','));
+      this.table.style.tableLayout = 'auto'; this.table.style.width = 'auto'; this.table.style.minWidth = '0';
+      this.colgroup.replaceChildren(...preferred.map(width => {const col = this.table.ownerDocument.createElement('col'); col.style.width = `${width / 15}px`; return col;}));
+      return;
+    }
     const widths: unknown = this.node.attrs[widthAttribute];
     if (!isTableColumnWidths(widths)) { this.table.removeAttribute(widthDataAttribute); return; }
     this.table.setAttribute(widthDataAttribute, widths.join(','));
@@ -126,11 +144,11 @@ export class FixedTableView extends TableView {
     for (const name of ['data-table-position', 'data-table-align', 'data-table-indent-twips']) this.table.removeAttribute(name);
     this.table.style.marginLeft = margins?.left ?? '';
     this.table.style.marginRight = margins?.right ?? '';
-    if (!margins) {if (!isTableColumnWidths(attrs[widthAttribute])) this.table.style.tableLayout = ''; return;}
+    if (!margins) {if (!isTableColumnWidths(attrs[widthAttribute]) && !isAutoPreferredWidths(attrs[autoPreferredAttribute])) this.table.style.tableLayout = ''; return;}
     this.table.setAttribute('data-table-position', '');
     if (isTableAlignment(attrs.tableAlign)) this.table.setAttribute('data-table-align', attrs.tableAlign);
     if (isTableIndent(attrs.tableIndentTwips)) this.table.setAttribute('data-table-indent-twips', String(attrs.tableIndentTwips));
-    if (!isTableColumnWidths(attrs[widthAttribute])) {
+    if (!isTableColumnWidths(attrs[widthAttribute]) && !isAutoPreferredWidths(attrs[autoPreferredAttribute])) {
       this.table.style.tableLayout = 'auto';
       this.table.style.width = `${DEFAULT_TABLE_WIDTH_TWIPS / 15}px`;
       this.table.style.minWidth = '0';
@@ -141,7 +159,7 @@ export class FixedTableView extends TableView {
     this.table.removeAttribute(tableCellMarginsDataAttribute);
     if (isTableCellMargins(margins)) {
       this.table.setAttribute(tableCellMarginsDataAttribute, `${margins.left},${margins.right}`);
-      if (!isTableColumnWidths(this.node.attrs[widthAttribute])) {
+      if (!isTableColumnWidths(this.node.attrs[widthAttribute]) && !isAutoPreferredWidths(this.node.attrs[autoPreferredAttribute])) {
         this.table.style.tableLayout = 'auto'; this.table.style.width = `${DEFAULT_TABLE_WIDTH_TWIPS / 15}px`; this.table.style.minWidth = '0';
       }
     }
@@ -152,12 +170,13 @@ export class FixedTableView extends TableView {
   }
   update(node: Node) {
     if (node.type !== this.node.type) return false;
-    if (isTableColumnWidths(this.node.attrs[widthAttribute]) && !isTableColumnWidths(node.attrs[widthAttribute])) {
+    if ((isTableColumnWidths(this.node.attrs[widthAttribute]) || isAutoPreferredWidths(this.node.attrs[autoPreferredAttribute]))
+      && (this.node.attrs[widthAttribute] !== node.attrs[widthAttribute] || this.node.attrs[autoPreferredAttribute] !== node.attrs[autoPreferredAttribute])) {
       // The stock renderer writes min-width without clearing width. Discard
       // our owned cols before restoring auto so reset/print cannot keep stale
       // widths that are absent from the model and exported DOCX.
       this.colgroup.replaceChildren();
-      this.table.style.tableLayout = '';
+      this.table.style.tableLayout = ''; this.table.style.width = ''; this.table.style.minWidth = '';
     }
     if (!super.update(node)) return false;
     this.syncFixedWidths();
@@ -167,7 +186,7 @@ export class FixedTableView extends TableView {
   }
 }
 
-export interface SelectedTableColumn {table: Node; pos: number; column: number; row: number; widths: number[] | null}
+export interface SelectedTableColumn {table: Node; pos: number; column: number; row: number; widths: number[] | null; preferredWidths: number[] | null}
 
 export function selectedTableColumn(state: EditorState): SelectedTableColumn | null {
   if (!isInTable(state)) return null;
@@ -182,7 +201,7 @@ export function selectedTableColumn(state: EditorState): SelectedTableColumn | n
     if (!(selection instanceof CellSelection) && !selectedCellNode && $head.depth < depth + 2) return null;
     const cellPos = selection instanceof CellSelection || selectedCellNode ? $head.pos : $head.before(depth + 2);
     const rect = TableMap.get(table).findCell(cellPos - start);
-    return {table, pos, column: rect.left, row: rect.top, widths: table.attrs[widthAttribute] ?? null};
+    return {table, pos, column: rect.left, row: rect.top, widths: table.attrs[widthAttribute] ?? null, preferredWidths: table.attrs[autoPreferredAttribute] ?? null};
   }
   return null;
 }
@@ -200,7 +219,7 @@ function validateProspectiveDocument(document: Node): void {
     }
     for (let index = node.childCount - 1; index >= 0; index--) stack.push({node: node.child(index), depth: depth + 1});
   }
-  const snapshot = omitDefaultTableWidths(document.toJSON());
+  const snapshot = omitDefaultParagraphIndent(omitDefaultTableWidths(document.toJSON()));
   validateTableWidthsDocument(snapshot);
   validatePageGeometryDocument(omitDefaultPageGeometry(snapshot));
   validateParagraphIndentDocument(omitDefaultParagraphIndent(omitDefaultPageGeometry(snapshot)));
@@ -219,10 +238,10 @@ export function createTableColumnWidthTransaction(state: EditorState, width: num
   const defaultWidth = pageTableWidthTwips(table.attrs, isPageGeometry(page) ? page : null);
   const defaults = Array.from({length: columns}, (_, index) => Math.floor(defaultWidth / columns)
     + Number(index < defaultWidth % columns));
-  const widths = width === null ? null : [...(selected.widths ?? defaults)];
+  const widths = width === null ? null : [...(selected.widths ?? selected.preferredWidths ?? defaults)];
   if (widths) widths[column] = width!;
-  if (JSON.stringify(widths) === JSON.stringify(selected.widths)) return null;
-  const transaction = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks}).tr.setNodeMarkup(pos, undefined, {...table.attrs, [widthAttribute]: widths}, table.marks);
+  if (!selected.preferredWidths && JSON.stringify(widths) === JSON.stringify(selected.widths)) return null;
+  const transaction = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks}).tr.setNodeMarkup(pos, undefined, {...table.attrs, [widthAttribute]: widths, [autoPreferredAttribute]: null}, table.marks);
   validateProspectiveDocument(transaction.doc);
   if (state.storedMarks) transaction.setStoredMarks(state.storedMarks);
   return transaction;
@@ -419,7 +438,8 @@ export function createTableStructureTransaction(state: EditorState, action: Tabl
   const selected = selectedTableColumn(state);
   if (!selected) return null;
   const rect = selectedRect(state), {table, pos} = selected;
-  let widths = selected.widths ? [...selected.widths] : null;
+  const vectorField = selected.preferredWidths ? autoPreferredAttribute : widthAttribute;
+  let widths = selected.preferredWidths ? [...selected.preferredWidths] : selected.widths ? [...selected.widths] : null;
   // Check additions before constructing structural steps, including the total
   // width budget. The newly inserted column inherits its adjacent column.
   if (action === 'addColumnBefore' || action === 'addColumnAfter') {
@@ -443,7 +463,7 @@ export function createTableStructureTransaction(state: EditorState, action: Tabl
   structuralCommands[action](detached, tr => {
     if (action !== 'deleteTable') {
       const nextPos = tr.mapping.map(pos), next = tr.doc.nodeAt(nextPos)!;
-      if (widths) tr.setNodeMarkup(nextPos, undefined, {...next.attrs, [widthAttribute]: widths}, next.marks);
+      if (widths) tr.setNodeMarkup(nextPos, undefined, {...next.attrs, [vectorField]: widths}, next.marks);
       // Deleting a terminal row/column otherwise leaves the caret in a later
       // table or after this table. Pick the nearest surviving cell explicitly.
       if (action === 'deleteColumn' || action === 'deleteRow') {
@@ -463,11 +483,14 @@ export function createTableStructureTransaction(state: EditorState, action: Tabl
 // never enter history or autosave. Our structural commands pass one complete,
 // already validated transaction rather than temporarily inconsistent columns.
 export function tableWidthGuard(onRejected: (message: string) => void = () => {}): Plugin {
-  return new Plugin({props: {handlePaste: (_view, event) => {
+  return new Plugin({props: {handlePaste: (view, event, slice) => {
+    try {validateAutoPreferredPaste(view.state, slice);} catch (error) {onRejected(String(error)); return true;}
     const html = event.clipboardData?.getData('text/html');
-    if (!html || !/data-(?:table-cell-margins-twips|row-min-height-twips|cell-vertical-align|cell-fill-rgb|cell-fill-mode|cell-text-color-mode)/i.test(html)) return false;
+    if (!html || !/data-(?:auto-preferred-column-widths-twips|table-cell-margins-twips|row-min-height-twips|cell-vertical-align|cell-fill-rgb|cell-fill-mode|cell-text-color-mode)/i.test(html)) return false;
+    if (!isValidAutoPreferredHTML(html)) {onRejected(autoPreferredError); return true;}
     if (!isValidTableCellColorsHTML(html)) {onRejected(tableCellColorsError); return true;}
     const parsed = new DOMParser().parseFromString(html, 'text/html');
+    if (!validAutoPreferredHTML(parsed)) {onRejected(autoPreferredError); return true;}
     if (!validTableCellMarginsHTML(parsed)) {onRejected(tableCellMarginsError); return true;}
     if (!validTableVerticalHTML(parsed)) {onRejected(tableVerticalError); return true;}
     if (!validTableCellColorsHTML(parsed)) {onRejected(tableCellColorsError); return true;}
@@ -481,10 +504,13 @@ export function tableWidthGuard(onRejected: (message: string) => void = () => {}
 
 export const WordTable = Table.extend<TableOptions & {onWidthError: (message: string) => void; locked: () => boolean}>({
   addOptions() { return {...this.parent!(), onWidthError: () => {}, locked: () => false}; },
-  transformPastedHTML: preflightTableCellColorsHTML,
+  transformPastedHTML: html => preflightAutoPreferredHTML(preflightTableCellColorsHTML(html)),
   addGlobalAttributes() {return [...(this.parent?.() ?? []), ...tableVerticalAttributes(), ...tableCellColorsAttributes(), ...tableRowPaginationAttributes()];},
   addAttributes() {
-    return {...this.parent?.(), [widthAttribute]: {
+    return {...this.parent?.(), [autoPreferredAttribute]: {default: null, rendered: false, parseHTML: element => {
+      const raw = element.getAttribute(autoPreferredDataAttribute);
+      return raw === null ? null : parseAutoPreferredMetadata(raw) ?? 'invalid-auto-preferred-widths';
+    }}, [widthAttribute]: {
       default: null, rendered: false,
       parseHTML: element => parseTableColumnWidthsMetadata(element.getAttribute(widthDataAttribute)),
     }, [tableCellMarginsAttribute]: {default: null, rendered: false, parseHTML: element => {
@@ -495,6 +521,8 @@ export const WordTable = Table.extend<TableOptions & {onWidthError: (message: st
   },
   renderHTML({node, HTMLAttributes}) {
     const widths: unknown = node.attrs[widthAttribute];
+    const preferred = node.attrs[autoPreferredAttribute];
+    if (isAutoPreferredWidths(preferred)) return autoPreferredTableDOM(preferred, mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, tablePositionDOM(node.attrs, false)));
     const attributes = mergeAttributes(HTMLAttributes, tablePositionDOM(node.attrs, !isTableColumnWidths(widths)), tableCellMarginsDOM(node.attrs, !isTableColumnWidths(widths)));
     return isTableColumnWidths(widths) ? fixedTableDOM(widths, mergeAttributes(this.options.HTMLAttributes, attributes))
       : this.parent!({node, HTMLAttributes: attributes});

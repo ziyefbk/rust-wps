@@ -1,3 +1,4 @@
+import {autoPreferredAttribute, validateAutoPreferredDocument} from './word-table-auto-preferred';
 import {listGeometryStateSnapshot, validateListGeometryDocument} from './word-list-geometry-model';
 import {omitDefaultTableVertical, validateTableVerticalDocument} from './word-table-vertical-layout';
 import {omitDefaultTableCellMargins, validateTableCellMarginsDocument} from './word-table-cell-margins';
@@ -66,10 +67,11 @@ export function pageTableWidthTwips(attrs: Record<string, unknown>, page: PageGe
     ? Math.min(9000, page.widthTwips - page.marginLeftTwips - page.marginRightTwips) : 9000;
 }
 export function pageAutoTableDOM(attrs: Record<string, unknown>, page: PageGeometry | null): Record<string, string> {
-  if (!page || !unpositionedAutoTable(attrs)) return {};
+  if (!page || attrs[autoPreferredAttribute] != null || !unpositionedAutoTable(attrs)) return {};
   return {'data-page-auto-table': '', style: `--word-table-width: ${pageTableWidthTwips(attrs, page) / 20}pt`};
 }
 export function validatePageGeometryDocument(document: JSONContent): void {
+  validateAutoPreferredDocument(document, true);
   const geometry = documentPageGeometry(document), stack = [{node: document, depth: 0}];
   let nodes = 0;
   while (stack.length) {
@@ -81,7 +83,8 @@ export function validatePageGeometryDocument(document: JSONContent): void {
       const height = geometry.heightTwips - geometry.marginTopTwips - geometry.marginBottomTwips;
       if (node.type === 'table') {
         if (depth !== 1) throw new Error('显式页面设置仅支持正文顶层表格；嵌套表格或列表内表格的容器宽度无法用页面正文宽度替代。');
-        const total = pageTableWidthTwips(node.attrs ?? {}, geometry);
+        // Preferred hints have their own nominal budget above, not a physical frame.
+        const total = node.attrs?.[autoPreferredAttribute] != null ? 0 : pageTableWidthTwips(node.attrs ?? {}, geometry);
         const indent: unknown = node.attrs?.tableIndentTwips ?? 0;
         // Conservative right-edge test; legacy explicit-zero indentation keeps
         // the intentional 108-twip left-border protrusion.

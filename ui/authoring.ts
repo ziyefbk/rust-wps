@@ -385,13 +385,13 @@ function updateToolbar() {
   const columnWidth = el<HTMLInputElement>('edit-column-width');
   columnWidth.disabled = locked || saving || !column;
   el<HTMLButtonElement>('edit-column-width-apply').disabled = locked || saving || !column;
-  el<HTMLButtonElement>('edit-column-width-reset').disabled = locked || saving || !column?.widths;
+  el<HTMLButtonElement>('edit-column-width-reset').disabled = locked || saving || !(column?.widths || column?.preferredWidths);
   if (!tableWidthInputEditing && document.activeElement !== columnWidth) {
     columnWidth.value = column?.widths ? String(column.widths[column.column] / 20) : '';
     columnWidth.placeholder = column ? '自动' : '先选表格';
-    columnWidth.dataset.columnWidthState = column?.widths ? 'fixed' : 'auto';
+    columnWidth.dataset.columnWidthState = column?.widths ? 'fixed' : column?.preferredWidths ? 'preferred' : 'auto';
   }
-  el('edit-column-width-state').textContent = column ? `第 ${column.column + 1} 列${column.widths ? ` · 总宽 ${column.widths.reduce((sum, width) => sum + width, 0) / 20} pt` : ''}` : '';
+  el('edit-column-width-state').textContent = column ? `第 ${column.column + 1} 列${column.preferredWidths ? ' · 自动首选列宽（非固定宽度）' : ''}${column.widths ? ` · 总宽 ${column.widths.reduce((sum, width) => sum + width, 0) / 20} pt` : ''}` : '';
   const position = editor ? selectedTablePosition(editor.state) : null;
   const positionLocked = locked || saving || !position?.supported;
   const tableAlign = el<HTMLSelectElement>('edit-table-align'), tableIndent = el<HTMLInputElement>('edit-table-indent');

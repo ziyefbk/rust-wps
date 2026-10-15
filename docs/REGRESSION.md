@@ -1,5 +1,24 @@
 # 当前跨格式回归记录
 
+## 发布 38：有界自动首选列宽
+
+发布 38（2026-10-15）：本地验证已完成；验证范围与限制如下。最终 v2 stable / MSRV 1.88.0 各 856 项 / 47 阶段已独立接受，测试名称集合相同；源 / 包、收窄的真实原件消费和编辑证据、两工具链 portable 资格验证已接受。一般 intrinsic AutoFit / 浏览器 / 原生 Office 保真仍未证明。
+
+简单顶层表格新增独立的自动首选列宽，保留受证明的 auto/0 与逐列 grid / tcW 提示，不把首选值解释为固定物理边界。未改造 Bug60337 在固定 LibreOffice 中的源 / 产品完整测量与两分辨率光栅相同，本样本此前列宽差异消除。两轮 AUTO / FIXED 区分控制均不具区分力，原消费者区分门禁未满足；接受范围明确收窄到 OOXML 语义与该真实原件改进，不承诺一般 AutoFit、固有内容适配或浏览器 / Word / WPS 保真。 见 [自动首选列宽](TABLE_AUTO_PREFERRED_WIDTHS.md)。
+
+- 独立源 / 包：56 个源端点、14 个产品模型、302 个无新增字段旧作者 DOCX 整包 golden、1,018 个命令通过；完整导入风险 / 模型、外部导入、可信重开、原始 XML / 部件及不覆盖均按预先冻结完整预期核对
+- 编辑链路：20 状态 / 63 CLI 调用、实际完整模型与独立 XML 通过；最终 752 个不同前端检查 = 原 724 + 新 28，TypeScript / build 通过。这是 detached 编辑器 / DOM 运输与实际 CLI，不是真实浏览器、系统剪贴板、原生按键或打印验收
+- 最终 v2 stable / MSRV 1.88.0 各 856 项 = 原 845 + 新 11，325 library + 531 integration，47 阶段含 46 harness 和显式 doctest，failed / ignored / filtered 均为 0，已独立接受。这是串行无筛选 Cargo target 覆盖，不是一次字面 cargo test 命令；原 driver aggregate 的阻断记录保留，独立原始覆盖 aggregate 另给出接受。两工具链完整测试名称集合相等，各自实际执行，不合计成 1,712 个不同测试
+- 两工具链生产后端提取各 35 项通过，但属于 v1 generation；最终 v2 不冒称重跑后端。最终 v2 两工具链构建、fmt / diff 及 scoped Clippy 已通过：原严格 Clippy 均返回 101，仅允许对应单一既有 lint 后返回 0，不称无 allowance 严格全通过
+- 最终 v2 桥接：112 调用覆盖 56 源端点与 14 产品，14 DOCX 整包与已接受 v1 精确相同；完整 trusted / external 响应及不覆盖通过。此前 v1 的 752 前端、20 编辑状态、消费者及后端结果仍按 v1 记录，不描述为 v2 重新执行
+- 公开小包按不可变的 5 文件草稿和 3 个共享 fixture / license 文件隔离布局运行：最终 v2 stable / MSRV 均 positive 返回 0，旧 release37 全响应不匹配、损坏 fixture、损坏 expected、陈旧 XML 哈希四项负例返回 1；输入与 CLI 散列不变。只是在同一云主机运行，不是 fresh-host 验收
+- 主消费者：5 对源 / 产品、10 新 PDF / 20 整页 PNG，全部捕获字段及 72 / 144 dpi 光栅精确一致；107 字符长 token 全部存在，受测格界内未观察到裁剪。不是通用物理包含保证
+- 加强区分控制：4 新 PDF / 8 PNG，源 / 产品同样精确一致；AUTO 与 FIXED 也零差异。原控制及加强控制均 INCONCLUSIVE，原区分门禁未达成，不标记完整原消费者计划 PASS。接受口径缩小为语义与特定真实样本改善
+
+最终 stable aggregate SHA-256 `6053866a9f4d6c776c7ecea1f01d2fdd34c1da9f59b4675d1f914966f83aae2d`；MSRV aggregate SHA-256 `f7337db36b149c47d2b890a19dd5a8d2b4b5d0e30dc59806f01edce882b23e16`；v2 行为桥 SHA-256 `4ea23a7ab75bb6fba5a69c059a4c193d755f2f917a71b113b4b929752d51ac5c`。最终静态 / portable 与代际说明见上述指南；原生缺七项依赖，未声明桌面 GUI / IPC 通过。
+
+首次候选 59 命令处的外部预期失败、旧基线证明后的完整 oracle v2、原始与加强两次不可区分结果均保留。原完整消费者计划不标 PASS，两工具链各自实际运行，不借用旧轮结果。详细字段 / 证据定位见上述指南。
+
 ## 本轮：DOCX 表格显式无底色（2026-10-15，发布 37）
 
 > 发布 37（2026-10-15）：stable / MSRV 1.88.0 串行全套各 845 项、47 阶段通过并完成独立验收；724 项不同前端检查及 TypeScript / build、两工具链后端各 35 项通过。项目按用户要求在本次推送后暂停，不继续开发新功能。

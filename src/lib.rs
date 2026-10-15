@@ -10,6 +10,7 @@ mod paragraph_indentation;
 mod paragraph_pagination;
 mod pdf_snapshot;
 mod presentation_vertical;
+mod table_auto_preferred;
 mod table_cell_colors;
 mod table_cell_no_fill;
 mod table_row_pagination;

@@ -1,0 +1,160 @@
+{
+  "fixture": "../docx-cell-no-fill/Bug60337.docx",
+  "fixture_sha256": "87f983bdd93b3b5b8469104a5b09ccff41e0f5c144060e13fd4db07bfd2e39da",
+  "main_part": "word/document.xml",
+  "main_part_sha256": "6e6f917945834f27a3afff7cf8f490c775787312b9646a57718b6013b7566023",
+  "derivation": "Independent Python stdlib ZIP/XML reading of pinned genuine fixture; no candidate output",
+  "raw_candidate_tables": [
+    {
+      "rows": [
+        {
+          "cells": [
+            [
+              ""
+            ],
+            [
+              "Branden"
+            ],
+            [
+              "Nicolaas"
+            ],
+            [
+              "Sam"
+            ],
+            [
+              "Simon"
+            ]
+          ]
+        },
+        {
+          "cells": [
+            [
+              "Task I"
+            ],
+            [
+              "10"
+            ],
+            [
+              "10"
+            ],
+            [
+              "10"
+            ],
+            [
+              "10"
+            ]
+          ]
+        },
+        {
+          "cells": [
+            [
+              "Task II"
+            ],
+            [
+              "20"
+            ],
+            [
+              "5"
+            ],
+            [
+              "5"
+            ],
+            [
+              "15"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "width": {
+    "type": "auto",
+    "w": "0"
+  },
+  "grid": [
+    "1870",
+    "1870",
+    "1870",
+    "1870",
+    "1870"
+  ],
+  "cell_widths": [
+    [
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      }
+    ],
+    [
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      }
+    ],
+    [
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      },
+      {
+        "type": "dxa",
+        "w": "1870"
+      }
+    ]
+  ],
+  "layout": "absent",
+  "header_rows": [
+    true,
+    false,
+    false
+  ],
+  "cant_split_rows": [
+    false,
+    false,
+    true
+  ]
+}

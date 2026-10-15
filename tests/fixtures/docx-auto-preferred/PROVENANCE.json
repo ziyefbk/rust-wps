@@ -1,0 +1,61 @@
+{
+  "status": "DRAFT_UNEXECUTED_PENDING_INDEPENDENT_REVIEW",
+  "fixture": {
+    "relative_path": "../docx-cell-no-fill/Bug60337.docx",
+    "sha256": "87f983bdd93b3b5b8469104a5b09ccff41e0f5c144060e13fd4db07bfd2e39da",
+    "upstream_url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/Bug60337.docx",
+    "licenses": [
+      "../docx-cell-no-fill/LICENSE",
+      "../docx-cell-no-fill/NOTICE"
+    ]
+  },
+  "expected_response": {
+    "file": "expected-import.json",
+    "sha256": "087ed2e6175b147d5b425126d0a0812a3c22f4293c08074eae48d28d7bb30340",
+    "source_binding_record_name": "FROZEN-BINDINGS-v1/genuine-Bug60337.expected-import.json",
+    "seal_sha256": "744922768bf42610619c82246ef93aaba24e75c6ce6bc785b6ceffded8c8b42d",
+    "pre_candidate_baseline_stdout_sha256": "395fab57ab86e4e83acffb02ca189292eaa299578c9d974a6780183a32d50693",
+    "allowed_model_delta": {
+      "table_index": 0,
+      "attribute": "autoPreferredColumnWidthsTwips",
+      "value": [
+        1870,
+        1870,
+        1870,
+        1870,
+        1870
+      ]
+    },
+    "allowed_risk_delta": {
+      "add": [
+        "Automatic table width preferences preserved; intrinsic layout and pagination remain consumer-dependent"
+      ],
+      "remove": [
+        "Autofit table widths normalized; fixed column widths were not inferred"
+      ]
+    },
+    "construction": "Exact independently frozen full response; not candidate-derived"
+  },
+  "raw_source_proof": {
+    "file": "source-proof.json",
+    "derivation": "Independent Python stdlib ZIP/XML reading of pinned genuine fixture; no candidate output"
+  },
+  "runner_donor": {
+    "relative_path": "../docx-cell-no-fill/check.py",
+    "sha256": "a61e9f920e43bf0576ea3078261cc0848c1d15110dae98841cf5785fd35a1eb5",
+    "adaptation": "Retain bounded subprocess/package/no-overwrite machinery; pin shared fixture/licenses and new independent oracle; add auto0/grid/tcW/retained attribute checks; remove release36 no-fill reconstruction"
+  },
+  "required_input_pins": {
+    "../docx-cell-no-fill/Bug60337.docx": "87f983bdd93b3b5b8469104a5b09ccff41e0f5c144060e13fd4db07bfd2e39da",
+    "../docx-cell-no-fill/LICENSE": "6e7c918e5a49f677c1b85a9eb2d035cd85c217fc42af6b4a336964a434001a9c",
+    "../docx-cell-no-fill/NOTICE": "a89ff8b670bcacd3e98ebee64979e0569181c7942e9ad795f4222b25e5637a61",
+    "expected-import.json": "087ed2e6175b147d5b425126d0a0812a3c22f4293c08074eae48d28d7bb30340",
+    "source-proof.json": "5397882810d697616377933f38e9db24d456d5787888308db70e60f425b7a138"
+  },
+  "bundle_sha256": {
+    "README.md": "b491fe6e71b9f873bf613a87daf80268f55bd41f5aeba68a3eda2a1d65fdffb8",
+    "check.py": "4290a9d67a4b99a460d10c55a76f47762049c6aec3419be1e3426b745205a230",
+    "expected-import.json": "087ed2e6175b147d5b425126d0a0812a3c22f4293c08074eae48d28d7bb30340",
+    "source-proof.json": "5397882810d697616377933f38e9db24d456d5787888308db70e60f425b7a138"
+  }
+}

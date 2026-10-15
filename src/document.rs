@@ -397,7 +397,11 @@ fn validate_page_content(doc: &Node, page: &PageGeometry) -> Result<()> {
                 depth == 1,
                 "Explicit page geometry supports only top-level tables"
             );
-            let total = table_layout_width(node, Some(page))?;
+            // This is a nominal preference budget, not an intrinsic AutoFit fit proof.
+            let total = match table_auto_preferred_widths(node)? {
+                Some(widths) => widths.iter().sum(),
+                None => table_layout_width(node, Some(page))?,
+            };
             let (_, indent) = table_position(node)?;
             ensure!(
                 total + indent.unwrap_or(0) <= width,
@@ -654,6 +658,54 @@ pub fn table_column_widths(node: &Node) -> Result<Option<Vec<u64>>> {
         );
         widths.push(width);
     }
+    Ok(Some(widths))
+}
+
+/// Automatic preferences are nominal hints, not physical column bounds.
+pub fn table_auto_preferred_widths(node: &Node) -> Result<Option<Vec<u64>>> {
+    let Some(value) = node.attrs.get("autoPreferredColumnWidthsTwips") else {
+        return Ok(None);
+    };
+    ensure!(
+        !node.attrs.contains_key("columnWidthsTwips"),
+        "Fixed and automatic preferred widths are mutually exclusive"
+    );
+    let values = value
+        .as_array()
+        .context("Automatic preferred widths must be an integer array")?;
+    let columns = node.content.first().map_or(0, |row| row.content.len());
+    ensure!(
+        (1..=50).contains(&columns) && values.len() == columns,
+        "Automatic preferred width count must match columns"
+    );
+    let mut total = 0u64;
+    let widths = values
+        .iter()
+        .map(|value| {
+            let width = value
+                .as_u64()
+                .context("Automatic preferred widths must be positive integers")?;
+            ensure!(
+                (1..=MAX_TABLE_WIDTH_TWIPS).contains(&width),
+                "Automatic preferred width exceeds limits"
+            );
+            total += width;
+            ensure!(
+                total <= MAX_TABLE_WIDTH_TWIPS,
+                "Automatic preferred total exceeds limits"
+            );
+            Ok(width)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let (alignment, indent) = table_position(node)?;
+    ensure!(
+        alignment.is_none_or(|value| value == "left") && indent.unwrap_or(0) == 0,
+        "Reset or convert automatic preferences before changing table position"
+    );
+    ensure!(
+        !node.attrs.contains_key("tableCellMarginsTwips") && !has_paragraph_indents(node),
+        "Reset or convert automatic preferences before adding cell margins or paragraph indentation"
+    );
     Ok(Some(widths))
 }
 
@@ -1155,6 +1207,7 @@ pub fn validate(doc: &Node) -> Result<()> {
             "orderedList" => &["start", "type", "markerFont"],
             "table" => &[
                 "columnWidthsTwips",
+                "autoPreferredColumnWidthsTwips",
                 "tableAlign",
                 "tableIndentTwips",
                 "tableCellMarginsTwips",
@@ -1480,8 +1533,14 @@ pub fn validate(doc: &Node) -> Result<()> {
             !colors || depth == 1,
             "Cell colors require a top-level table"
         );
+        let preferred = node.kind == "table" && table_auto_preferred_widths(node)?.is_some();
+        ensure!(
+            !preferred || depth == 1,
+            "Automatic preferences require a top-level table"
+        );
         let fixed = node.kind == "table"
             && (table_column_widths(node)?.is_some()
+                || preferred
                 || positioned
                 || explicit_margins
                 || vertical
@@ -1515,6 +1574,14 @@ pub fn validate(doc: &Node) -> Result<()> {
         Ok(())
     }
     visit(doc, 0, 0, false, &mut nodes, &mut text_bytes)?;
+    ensure!(
+        page.is_some()
+            || !doc
+                .content
+                .iter()
+                .any(|node| node.attrs.contains_key("autoPreferredColumnWidthsTwips")),
+        "Automatic preferences require explicit page geometry"
+    );
     validate_table_cell_content(doc, page.as_ref())?;
     validate_table_vertical(doc, page.as_ref())?;
     validate_paragraph_indents(doc)?;
@@ -1801,18 +1868,24 @@ impl Writer {
             "table" => {
                 let columns = node.content[0].content.len();
                 let fixed_widths = table_column_widths(node)?;
+                let preferred_widths = table_auto_preferred_widths(node)?;
                 let total = table_layout_width(node, self.page.as_ref())?;
                 let normalized = self.page.is_some()
                     && !node.attrs.contains_key("tableAlign")
                     && !node.attrs.contains_key("tableIndentTwips");
-                let widths = fixed_widths.clone().unwrap_or_else(|| {
-                    (0..columns)
-                        .map(|index| {
-                            total / columns as u64
-                                + u64::from(normalized && (index as u64) < total % columns as u64)
-                        })
-                        .collect()
-                });
+                let widths = preferred_widths
+                    .clone()
+                    .or_else(|| fixed_widths.clone())
+                    .unwrap_or_else(|| {
+                        (0..columns)
+                            .map(|index| {
+                                total / columns as u64
+                                    + u64::from(
+                                        normalized && (index as u64) < total % columns as u64,
+                                    )
+                            })
+                            .collect()
+                    });
                 let layout = if fixed_widths.is_some() {
                     "<w:tblLayout w:type=\"fixed\"/>"
                 } else {
@@ -1840,8 +1913,13 @@ impl Writer {
                     .iter()
                     .map(|width| format!("<w:gridCol w:w=\"{width}\"/>"))
                     .collect();
+                let table_width = if preferred_widths.is_some() {
+                    "<w:tblW w:w=\"0\" w:type=\"auto\"/>".to_owned()
+                } else {
+                    format!("<w:tblW w:w=\"{total}\" w:type=\"dxa\"/>")
+                };
                 let mut table = format!(
-                    "<w:tbl><w:tblPr><w:tblW w:w=\"{total}\" w:type=\"dxa\"/>{position}<w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders>{layout}{margins}</w:tblPr><w:tblGrid>{grid}</w:tblGrid>"
+                    "<w:tbl><w:tblPr>{table_width}{position}<w:tblBorders><w:top w:val=\"single\" w:sz=\"4\"/><w:left w:val=\"single\" w:sz=\"4\"/><w:bottom w:val=\"single\" w:sz=\"4\"/><w:right w:val=\"single\" w:sz=\"4\"/><w:insideH w:val=\"single\" w:sz=\"4\"/><w:insideV w:val=\"single\" w:sz=\"4\"/></w:tblBorders>{layout}{margins}</w:tblPr><w:tblGrid>{grid}</w:tblGrid>"
                 );
                 for row in &node.content {
                     table.push_str("<w:tr>");
@@ -2470,5 +2548,149 @@ mod no_fill_tests {
         assert!(!xml.contains("E8EEF7"));
         assert!(xml.contains("w:color w:val=\"auto\""));
         assert!(reopen(&data).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod auto_preferred_tests {
+    use super::*;
+    use serde_json::json;
+    fn model() -> Node {
+        let cell = |text| json!({"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":text}]}]});
+        serde_json::from_value(json!({"type":"doc","attrs":{"styleProfile":"standard-v2","pageGeometry":{"widthTwips":12240,"heightTwips":15840,"marginTopTwips":1440,"marginRightTwips":1440,"marginBottomTwips":1440,"marginLeftTwips":1440}},"content":[{"type":"table","attrs":{"autoPreferredColumnWidthsTwips":[1870,1870],"tableIndentTwips":0},"content":[{"type":"tableRow","content":[cell("A"),cell("B")]}]}]})).unwrap()
+    }
+    #[test]
+    fn preferred_strict_values_and_exclusivity() {
+        validate(&model()).unwrap();
+        for widths in [json!([1, 1]), json!([4680, 4680])] {
+            let mut doc = model();
+            doc.content[0]
+                .attrs
+                .insert("autoPreferredColumnWidthsTwips".into(), widths);
+            doc.content[0]
+                .attrs
+                .insert("tableAlign".into(), json!("left"));
+            validate(&doc).unwrap();
+        }
+        for value in [
+            json!(null),
+            json!([]),
+            json!([1]),
+            json!([0, 1]),
+            json!([-1, 1]),
+            json!([1.0, 1]),
+            json!(["1", 1]),
+            json!([true, 1]),
+            json!([u64::MAX, 1]),
+            json!([31680, 1]),
+            json!([1, 1, 1]),
+        ] {
+            let mut doc = model();
+            doc.content[0]
+                .attrs
+                .insert("autoPreferredColumnWidthsTwips".into(), value.clone());
+            assert!(validate(&doc).is_err(), "{value}");
+        }
+        let mut doc = model();
+        doc.content[0]
+            .attrs
+            .insert("columnWidthsTwips".into(), json!([1870, 1870]));
+        assert!(validate(&doc).is_err());
+    }
+    #[test]
+    fn preferred_page_and_incompatible_geometry_reject_atomically() {
+        let original = model();
+        for (key, value) in [
+            ("tableAlign", json!("center")),
+            ("tableAlign", json!("right")),
+            ("tableIndentTwips", json!(1)),
+            ("tableCellMarginsTwips", json!({"left":0,"right":0})),
+        ] {
+            let mut doc = original.clone();
+            doc.content[0].attrs.insert(key.into(), value);
+            assert!(validate(&doc).is_err());
+        }
+        let mut doc = original.clone();
+        doc.attrs.remove("pageGeometry");
+        assert!(validate(&doc).is_err());
+        let mut doc = original.clone();
+        doc.content[0]
+            .attrs
+            .insert("autoPreferredColumnWidthsTwips".into(), json!([5000, 5000]));
+        assert!(validate(&doc).is_err());
+        for key in PARAGRAPH_INDENT_FIELDS {
+            let mut doc = original.clone();
+            doc.content[0].content[0].content[0].content[0]
+                .attrs
+                .insert(key.into(), json!(0));
+            assert!(validate(&doc).is_err());
+        }
+        validate(&original).unwrap();
+    }
+    #[test]
+    fn preferred_metadata_never_becomes_a_physical_frame() {
+        let doc = model();
+        let table = &doc.content[0];
+        let page = page_geometry(&doc).unwrap().unwrap();
+        assert_eq!(table_column_widths(table).unwrap(), None);
+        assert_eq!(table_layout_width(table, Some(&page)).unwrap(), 9000);
+        assert_eq!(
+            table_layout_columns(table, Some(&page)).unwrap(),
+            vec![4500, 4500]
+        );
+        assert_eq!(
+            table_auto_preferred_widths(table).unwrap(),
+            Some(vec![1870, 1870])
+        );
+    }
+    #[test]
+    fn preferred_export_roundtrips_independent_metadata() {
+        let mut doc = model();
+        doc.content[0].content[0]
+            .attrs
+            .insert("rowCantSplit".into(), json!(true));
+        doc.content[0].content[0]
+            .attrs
+            .insert("rowMinHeightTwips".into(), json!(400));
+        let cell = &mut doc.content[0].content[0].content[0];
+        cell.attrs.insert("cellFillMode".into(), json!("none"));
+        cell.attrs
+            .insert("cellVerticalAlign".into(), json!("center"));
+        let bytes = encode_docx(&doc).unwrap().0;
+        let parts = crate::editing::parts(&bytes).unwrap();
+        let xml = std::str::from_utf8(&parts["word/document.xml"]).unwrap();
+        assert!(xml.contains("<w:tblW w:w=\"0\" w:type=\"auto\"/>"));
+        assert_eq!(xml.matches("<w:gridCol w:w=\"1870\"/>").count(), 2);
+        assert_eq!(
+            xml.matches("<w:tcW w:w=\"1870\" w:type=\"dxa\"/>").count(),
+            2
+        );
+        assert!(!xml.contains("<w:tblLayout"));
+        assert!(xml.contains("<w:tblInd w:w=\"0\" w:type=\"dxa\"/>"));
+        assert!(xml.contains("<w:cantSplit w:val=\"1\"/>"));
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), bytes).unwrap();
+        assert_eq!(
+            serde_json::to_value(load_authored_docx(file.path()).unwrap().unwrap()).unwrap(),
+            serde_json::to_value(doc).unwrap()
+        );
+    }
+    #[test]
+    fn preferred_nested_misplaced_and_ragged_reject() {
+        let mut doc = model();
+        doc.content[0].content[0].content[0]
+            .content
+            .push(model().content.remove(0));
+        assert!(validate(&doc).is_err());
+        let mut doc = model();
+        doc.content[0].content[0]
+            .attrs
+            .insert("autoPreferredColumnWidthsTwips".into(), json!([1870, 1870]));
+        assert!(validate(&doc).is_err());
+        let mut doc = model();
+        let mut row = doc.content[0].content[0].clone();
+        row.content.pop();
+        doc.content[0].content.push(row);
+        assert!(validate(&doc).is_err());
     }
 }

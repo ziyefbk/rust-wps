@@ -1,3 +1,4 @@
+import {autoPreferredError, validAutoPreferredHTML, isValidAutoPreferredHTML, validateAutoPreferredPaste} from './word-table-auto-preferred';
 import {Extension} from '@tiptap/core';
 import {tableCellMarginsError, validTableCellMarginsHTML} from './word-table-cell-margins';
 import {tableVerticalError, validTableVerticalHTML} from './word-table-vertical-layout';
@@ -147,13 +148,16 @@ export function tableRowPaginationGuard(onError: (message: string) => void = () 
     catch (error) {onError(String(error)); return false;}
   }, props: {handlePaste(view, event, slice) {
     try {
+      validateAutoPreferredPaste(view.state, slice);
       const html = event.clipboardData?.getData('text/html');
+      if (html && !isValidAutoPreferredHTML(html)) throw new Error(autoPreferredError);
       if (html && !isValidTableRowPaginationHTML(html)) throw new Error(tableRowPaginationError);
       // Our handled paste must not skip the older late table guard's raw
       // wrong-node protections when schema parsing already erased evidence.
-      if (html && /data-(?:table-cell-margins-twips|row-min-height-twips|cell-vertical-align|cell-fill-rgb|cell-fill-mode|cell-text-color-mode)/i.test(html)) {
+      if (html && /data-(?:auto-preferred-column-widths-twips|table-cell-margins-twips|row-min-height-twips|cell-vertical-align|cell-fill-rgb|cell-fill-mode|cell-text-color-mode)/i.test(html)) {
         if (!isValidTableCellColorsHTML(html)) throw new Error(tableCellColorsError);
         const parsed = new DOMParser().parseFromString(html, 'text/html');
+        if (!validAutoPreferredHTML(parsed)) throw new Error(autoPreferredError);
         if (!validTableCellMarginsHTML(parsed)) throw new Error(tableCellMarginsError);
         if (!validTableVerticalHTML(parsed)) throw new Error(tableVerticalError);
         if (!validTableCellColorsHTML(parsed)) throw new Error(tableCellColorsError);

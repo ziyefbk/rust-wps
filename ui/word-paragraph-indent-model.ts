@@ -1,3 +1,4 @@
+import {validateAutoPreferredDocument} from './word-table-auto-preferred';
 import type {JSONContent} from '@tiptap/core';
 import {isPageGeometry} from './word-page-geometry-model';
 import {cellMarginsTableColumnWidths, tableCellMargins} from './word-table-cell-margins';
@@ -40,6 +41,7 @@ export function indentBodyWidth(page: unknown): number {
   return widthTwips - marginLeftTwips - marginRightTwips;
 }
 export function validateParagraphIndentDocument(document: JSONContent): void {
+  validateAutoPreferredDocument(document, true);
   const page = document.attrs?.pageGeometry;
   // Raw null, partial and malformed geometry is not evidence of paper bounds.
   // Internal schema defaults must be omitted before this validator is called.

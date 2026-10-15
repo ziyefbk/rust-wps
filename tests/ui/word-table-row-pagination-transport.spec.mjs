@@ -175,3 +175,28 @@ test('deep and oversized ordinary HTML with literal owned spelling remains uncha
   const large = '<p>' + 'x'.repeat(32 * 1024 * 1024) + 'data-row-cant-split=true</p>';
   expect(rows.isValidTableRowPaginationHTML(large)).toBe(true);
 });
+
+// Release 38: exercise the actual schema serializer/parser on a DOM double,
+// never a browser parser, system clipboard or computed layout claim.
+test('preferred widths survive owned DOM transport with independent row properties', () => {
+  const field='autoPreferredColumnWidthsTwips', source=table([false,true],{[field]:[1870,1870],tableIndentTwips:0});
+  const element=serialize(source), parsed=parse(element);
+  expect(parsed.firstChild.eq(source)).toBe(true);
+  expect(element.getAttribute('data-auto-preferred-column-widths-twips')).toBe('1870,1870');
+  expect(element.style.cssText).toContain('table-layout: auto');
+  expect(element.querySelectorAll('col').map(col=>col.style.cssText)).toEqual(['width: 124.66666666666667px','width: 124.66666666666667px']);
+  for(const bad of ['', '0,1870', '1870,', 'null']) {
+    const malformed=serialize(source);malformed.setAttribute('data-auto-preferred-column-widths-twips',bad);
+    expect(parse(malformed).firstChild.attrs[field]).toBe('invalid-auto-preferred-widths');
+  }
+});
+test('preferred widths raw metadata is checked before row-pagination handled paste', () => {
+  const source=serialize(table([false,true],{autoPreferredColumnWidthsTwips:[1870,1870]}));
+  source.setAttribute('data-auto-preferred-column-widths-twips','bad');
+  const root=wrapped(source), errors=[];const state=stateAt(doc(),0,errors);
+  parserResult(root,()=>{
+    const handled=rows.tableRowPaginationGuard(error=>errors.push(error)).props.handlePaste({state,dispatch(){throw new Error('must not dispatch');}},
+      {clipboardData:{getData:()=>'<table data-auto-preferred-column-widths-twips="bad"></table>'}},new Slice(Fragment.from(table([false,true])),0,0));
+    expect(handled).toBe(true);expect(errors.join('')).toContain('自动首选列宽');
+  });
+});
