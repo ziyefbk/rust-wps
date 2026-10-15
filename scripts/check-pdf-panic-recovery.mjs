@@ -11,6 +11,10 @@ import ts from 'typescript';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
+const searchSource = readFileSync(new URL('../ui/reading-search.ts', import.meta.url), 'utf8');
+const searchJs = ts.transpileModule(searchSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const { findReadingMatches } = await import(`data:text/javascript;base64,${Buffer.from(searchJs).toString('base64')}`);
+
 const root = path.resolve(path.dirname(scriptPath), '..');
 const options = {};
 const allowed = ['output', 'corpus-dir', 'baseline', 'candidate', 'preview-runner', 'preview-source', 'preview-library', 'preview-provenance'];
@@ -163,9 +167,9 @@ try {
     const document = { createTextNode: value => ({ textContent: value }), createElement: tag => ({ tag, textContent: '' }) };
     const current = { inspection: structuredClone(inspection) };
     const trackedExtract = async (...args) => { const result = await extractor(...args); reports.push(structuredClone(result)); return result; };
-    const build = new Function('extractPdfText', 'textSummary', 'pdf', 'current', 'document', 'el', 'notice',
+    const build = new Function('findReadingMatches', 'extractPdfText', 'textSummary', 'pdf', 'current', 'document', 'el', 'notice',
       `let stopText = false, pdfTextSummary = null; ${integrationJs}; return { recoverPdfText, renderText, summary: () => pdfTextSummary, stop: () => { stopText = true; } };`);
-    return { ...build(trackedExtract, helper.textSummary, pdf, current, document, el, message => notices.push(message)), el, current, notices, reports };
+    return { ...build(findReadingMatches, trackedExtract, helper.textSummary, pdf, current, document, el, message => notices.push(message)), el, current, notices, reports };
   }
   const search = (app, phrase) => {
     app.el('search').value = phrase; app.renderText();

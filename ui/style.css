@@ -232,3 +232,5 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
 .tiptap td[data-cell-fill-mode="none"], .tiptap th[data-cell-fill-mode="none"],
 #print-document .tiptap [data-cell-fill-mode="none"] { background-color:transparent; }
 .tiptap [data-cell-fill-mode="none"].selectedCell { outline:2px solid #477fc6; outline-offset:-2px; }
+
+.pdf-ligature-search { display:flex; align-items:center; gap:5px; white-space:nowrap; }

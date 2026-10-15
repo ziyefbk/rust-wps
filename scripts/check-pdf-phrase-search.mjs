@@ -10,6 +10,10 @@ import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
+const searchSource = readFileSync(new URL('../ui/reading-search.ts', import.meta.url), 'utf8');
+const searchJs = ts.transpileModule(searchSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const { findReadingMatches } = await import(`data:text/javascript;base64,${Buffer.from(searchJs).toString('base64')}`);
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const options = Object.fromEntries(process.argv.slice(2).reduce((pairs, value, at, args) => {
   if (at % 2 === 0) { assert(value.startsWith('--') && args[at + 1], 'Use --name value options'); pairs.push([value.slice(2), args[at + 1]]); }
@@ -53,8 +57,8 @@ function integration(pdf, initialText) {
   const el = id => { if (!elements.has(id)) elements.set(id, { value: '', textContent: '', hidden: false, nodes: [], replaceChildren() { this.nodes = []; }, append(node) { this.nodes.push(node); } }); return elements.get(id); };
   const document = { createTextNode: text => ({ textContent: text }), createElement: tag => ({ tag, textContent: '' }) };
   const current = { inspection: { format: 'pdf', text: initialText } };
-  const build = new Function('extractPdfText', 'textSummary', 'pdf', 'current', 'document', 'el', 'notice', `let stopText = false, pdfTextSummary = null; ${integrationJs}; return { recoverPdfText, renderText };`);
-  return { ...build(newHelper.extractPdfText, newHelper.textSummary, pdf, current, document, el, () => {}), el, current };
+  const build = new Function('findReadingMatches', 'extractPdfText', 'textSummary', 'pdf', 'current', 'document', 'el', 'notice', `let stopText = false, pdfTextSummary = null; ${integrationJs}; return { recoverPdfText, renderText };`);
+  return { ...build(findReadingMatches, newHelper.extractPdfText, newHelper.textSummary, pdf, current, document, el, () => {}), el, current };
 }
 mkdirSync(output, { recursive: false });
 const report = {

@@ -2,11 +2,14 @@
 import { test, expect } from '@playwright/test';
 import ts from 'typescript';
 import { readFileSync } from 'node:fs';
+const searchJs = ts.transpileModule(readFileSync('ui/reading-search.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const { findReadingMatches } = await import(`data:text/javascript;base64,${Buffer.from(searchJs).toString('base64')}`);
 const source = readFileSync('ui/main.ts', 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
-const names = ['clearPdf', 'renderPage', 'showPdf', 'recoverPdfText', 'renderText', 'setMode', 'operation', 'openDocument', 'prepareEditorWorkspace'];
+const names = ['clearPdf', 'renderPage', 'showPdf', 'recoverPdfText', 'renderText', 'setMode', 'operation', 'openDocument', 'prepareEditorWorkspace', 'controls', 'currentDisplayedPdfPage'];
 const functions = names.map(name => ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(ast)).join('\n');
-const js = ts.transpileModule(functions, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const changeBinding = ast.statements.find(node => node.getText(ast).startsWith("el('pdf-ligature-search').addEventListener")).getText(ast);
+const js = ts.transpileModule(functions + '\n' + changeBinding, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const owner = (token = '1', path = 'a.pdf') => ({ session_token: token, name: path, path, inspection: { format: 'pdf', text: 'retained Rust text', bytes: 10, warnings: [] } });
@@ -17,8 +20,8 @@ function harness({ queuedClose = false, current = owner(), pdf = null, invoke = 
   const el = id => {
     if (!elements.has(id)) {
       const listeners = new Map();
-      elements.set(id, { value: id === 'zoom' ? '1' : '', textContent: '', hidden: false, open: false, nodes: [], style: {}, classList: { toggle() {} },
-        replaceChildren(...nodes) { this.nodes = nodes; this.textContent = ''; }, append(node) { this.nodes.push(node); }, setAttribute() {}, getContext: () => ({}), focus() {},
+      elements.set(id, { value: id === 'zoom' ? '1' : '', textContent: '', hidden: false, open: false, checked: false, disabled: false, nodes: [], style: {}, classList: { toggle() {} },
+        querySelectorAll: () => [], dispatch(type) { for (const fn of listeners.get(type) ?? []) fn(); }, replaceChildren(...nodes) { this.nodes = nodes; this.textContent = ''; }, append(node) { this.nodes.push(node); }, setAttribute() {}, getContext: () => ({}), focus() {},
         addEventListener(type, fn) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn); },
         removeEventListener(type, fn) { listeners.get(type)?.delete(fn); },
         showModal() { this.open = true; }, close(value) { this.open = false; this.returnValue = value; const dispatch = () => { for (const fn of [...listeners.get('close') ?? []]) fn(); }; if (queuedClose) closeEvents.push(dispatch); else dispatch(); },
@@ -27,19 +30,19 @@ function harness({ queuedClose = false, current = owner(), pdf = null, invoke = 
     return elements.get(id);
   };
   const document = { createElement: name => ({ ...el(`new-${name}-${Math.random()}`), tag: name }), createTextNode: textContent => ({ textContent }), querySelector: () => el('zoom-wrap') };
-  const deps = { current, pdf, el, document, window: { devicePixelRatio: 1 }, invoke: async (...args) => { calls.push(args); return invoke(...args); },
+  const deps = { current, pdf, findReadingMatches, el, document, window: { devicePixelRatio: 1 }, invoke: async (...args) => { calls.push(args); return invoke(...args); },
     pdfjs: { PasswordResponses: { INCORRECT_PASSWORD: 2 }, getDocument: args => { loads.push(args); return typeof task === 'function' ? task() : task; } },
     extractPdfText: extract, textSummary: report => report.complete ? 'complete' : 'partial', notice: (...args) => notices.push(args),
   };
   const build = new Function('deps', `
-    let {current,pdf,el,document,window,invoke,pdfjs,extractPdfText,textSummary,notice}=deps;
+    let {current,pdf,findReadingMatches,el,document,window,invoke,pdfjs,extractPdfText,textSummary,notice}=deps;
     let workspaceAttempt=null; let busy=false, mode='text', pageNumber=1, renderTask=null, pdfTextSummary=null, stopText=false;
     let pdfLoadingTask=null,pdfLoadAttempt=null,cancelPdfPassword=null,displayedPdfPage=null,pdfRenderAttempt=null;
-    const controls=()=>{},pauseAuthoring=()=>{},pauseWorkbook=()=>{},pausePresentation=()=>{};
+    const isTauri=()=>true; let pdfRotationPending=false; const pauseAuthoring=()=>{},pauseWorkbook=()=>{},pausePresentation=()=>{};
     const canLeaveAuthoring=async()=>true,closeAuthoring=()=>{},closeWorkbook=()=>{},closePresentation=()=>{},closePresentationEditor=()=>{};
     const openPresentationEditor=()=>{},openPresentation=()=>{},openWorkbook=()=>{},openAuthored=async()=>{};
     ${js}
-    return {${names.join(',')}, state:()=>({current,pdf,busy,mode,pdfTextSummary}), set:(value,documentPdf=null)=>{current=value;pdf=documentPdf;}, setToken:value=>{current.session_token=value;}};
+    return {${names.join(',')}, state:()=>({current,pdf,busy,mode,pdfTextSummary}), stop:()=>{stopText=true;}, set:(value,documentPdf=null)=>{current=value;pdf=documentPdf;}, setToken:value=>{current.session_token=value;}};
   `);
   return { ...build(deps), el, calls, loads, notices, modes, flushClose: () => { while (closeEvents.length) closeEvents.shift()(); } };
 }
@@ -178,4 +181,65 @@ test('PDF queued old dialog close event cannot consume a newer password prompt l
   app.el('pdf-password-input').value = 'correct local password'; app.el('pdf-password').close('unlock'); app.flushClose();
   expect(password).toBe('correct local password'); expect(app.el('pdf-password-input').value).toBe('');
   second.resolve(proxy()); await newer; expect(app.state().mode).toBe('page');
+});
+
+test('PDF ligature toggle re-renders actual original marks and count through its change binding', () => {
+  const current = owner(); current.inspection.text = '<img onerror="ﬃ">😀 ffi';
+  const app = harness({ current }); app.el('search').value = 'ffi'; app.renderText();
+  const marks = () => app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent);
+  expect(marks()).toEqual(['ffi']);
+  app.el('pdf-ligature-search').checked = true; app.el('pdf-ligature-search').dispatch('change');
+  expect(marks()).toEqual(['ﬃ', 'ffi']); expect(app.el('match-count').textContent).toBe('2 处');
+  expect(app.el('text-content').nodes.map(node => node.textContent).join('')).toBe(current.inspection.text);
+  expect(app.el('text-content').nodes.every(node => !node.tag || node.tag === 'mark')).toBe(true);
+  app.el('pdf-ligature-search').checked = false; app.el('pdf-ligature-search').dispatch('change');
+  expect(marks()).toEqual(['ffi']); expect(app.el('match-count').textContent).toBe('1 处');
+});
+
+test('PDF ligature control is PDF-only and disabled on pages, empty text, and busy operations without reset', async () => {
+  const app = harness(); app.controls(); expect(app.el('pdf-ligature-search-control').hidden).toBe(false);
+  expect(app.el('pdf-ligature-search').disabled).toBe(false);
+  app.el('pdf-ligature-search').checked = true; app.setMode('page');
+  expect(app.el('pdf-ligature-search').disabled).toBe(true); expect(app.el('pdf-ligature-search-hint').hidden).toBe(true);
+  app.setMode('text'); expect(app.el('pdf-ligature-search').disabled).toBe(false);
+  await app.operation('busy', async () => { expect(app.el('pdf-ligature-search').disabled).toBe(true); });
+  expect(app.el('pdf-ligature-search').checked).toBe(true);
+  app.state().current.inspection.text = ''; app.controls(); expect(app.el('pdf-ligature-search').disabled).toBe(true);
+  for (const format of ['doc', 'docx', 'xlsx', 'pptx']) {
+    const next = owner(); next.inspection.format = format; next.inspection.text = 'ﬃ ffi'; app.set(next); app.controls();
+    expect(app.el('pdf-ligature-search-control').hidden).toBe(true); expect(app.el('pdf-ligature-search').disabled).toBe(true);
+    app.el('search').value = 'ffi'; app.renderText();
+    expect(app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent)).toEqual(['ffi']);
+  }
+});
+
+test('PDF ligature preference and original matches survive canceled or failed opens', async () => {
+  for (const fail of [false, true]) {
+    const current = owner(); current.inspection.text = 'oﬃce';
+    const app = harness({ current, invoke: async () => { if (fail) throw new Error('failed'); return null; } });
+    app.el('pdf-ligature-search').checked = true; app.el('search').value = 'office'; app.renderText();
+    await app.openDocument();
+    expect(app.el('pdf-ligature-search').checked).toBe(true); expect(app.el('search').value).toBe('office');
+    expect(app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent)).toEqual(['oﬃce']);
+  }
+});
+
+test('PDF ligature preference resets on a committed same-path reopen and on editor reset', async () => {
+  const next = owner('2'), app = harness({ invoke: async command => command === 'open_document' ? next : Uint8Array.of(1).buffer, task: { promise: Promise.resolve(proxy()), async destroy() {} } });
+  app.el('pdf-ligature-search').checked = true; app.el('search').value = 'old';
+  await app.openDocument(); expect(app.state().current).toBe(next);
+  expect(app.el('pdf-ligature-search').checked).toBe(false); expect(app.el('search').value).toBe('');
+  app.el('pdf-ligature-search').checked = true; await app.prepareEditorWorkspace();
+  expect(app.el('pdf-ligature-search').checked).toBe(false); expect(app.el('pdf-ligature-search-control').hidden).toBe(true);
+});
+
+test('PDF ligature preference survives extraction cancellation and searches only current accepted text', async () => {
+  const pending = deferred(); let canceled;
+  const current = owner(); current.inspection.text = 'oﬃce';
+  const app = harness({ current, pdf: proxy(), extract: async (_, stop) => { canceled = stop; return pending.promise; } });
+  app.el('pdf-ligature-search').checked = true; app.el('search').value = 'office';
+  const run = app.recoverPdfText(); app.stop(); expect(canceled()).toBe(true);
+  pending.resolve({ text: '', complete: false }); await run;
+  expect(app.el('pdf-ligature-search').checked).toBe(true); expect(app.state().current.inspection.text).toBe('oﬃce');
+  expect(app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent)).toEqual(['oﬃce']);
 });

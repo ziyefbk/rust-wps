@@ -8,6 +8,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { initializeAuthoring, isAuthoring, canLeaveAuthoring, closeAuthoring, openAuthored, openImported, pauseAuthoring } from './authoring';
 import type { JSONContent } from '@tiptap/core';
 import { extractPdfText, textSummary } from './pdf-text';
+import { findReadingMatches } from './reading-search';
 import { initializeSpreadsheet, openWorkbook, closeWorkbook, pauseWorkbook, canLeaveWorkbook, workbookView, type Workbook } from './spreadsheet';
 import type { EditableWorkbook } from './workbook-model';
 
@@ -59,6 +60,9 @@ function controls() {
   el<HTMLButtonElement>('sheet-import').disabled = busy;
   el<HTMLButtonElement>('save-replacement').disabled = busy;
   el<HTMLInputElement>('search').disabled = busy || !current || mode === 'page' || !current.inspection.text;
+  el('pdf-ligature-search-control').hidden = current?.inspection.format !== 'pdf';
+  el('pdf-ligature-search-hint').hidden = current?.inspection.format !== 'pdf' || mode === 'page';
+  el<HTMLInputElement>('pdf-ligature-search').disabled = busy || current?.inspection.format !== 'pdf' || mode === 'page' || !current.inspection.text;
   el<HTMLSelectElement>('zoom').disabled = busy;
   el<HTMLButtonElement>('prev-page').disabled = busy || !pdf || pageNumber <= 1;
   el<HTMLButtonElement>('next-page').disabled = busy || !pdf || pageNumber >= pdf.numPages;
@@ -97,15 +101,15 @@ function renderText() {
     el('match-count').textContent = ''; return;
   }
   // Use text nodes throughout: document text is never interpreted as HTML.
-  let offset = 0, count = 0;
-  if (query) {
-    let at = text.indexOf(query);
-    while (at !== -1 && count < 2000) {
-      target.append(document.createTextNode(text.slice(offset, at)));
-      const mark = document.createElement('mark'); mark.textContent = query; target.append(mark);
-      offset = at + query.length; count++; at = text.indexOf(query, offset);
-    }
+  const searchMode = current.inspection.format === 'pdf' && el<HTMLInputElement>('pdf-ligature-search').checked ? 'pdf-ligatures' : 'literal';
+  const matches = findReadingMatches(text, query, searchMode);
+  let offset = 0;
+  for (const match of matches) {
+    target.append(document.createTextNode(text.slice(offset, match.start)));
+    const mark = document.createElement('mark'); mark.textContent = text.slice(match.start, match.end); target.append(mark);
+    offset = match.end;
   }
+  const count = matches.length;
   target.append(document.createTextNode(text.slice(offset)));
   el('match-count').textContent = query ? (count >= 2000 ? '2000+' : `${count} 处`) : '';
 }
@@ -313,6 +317,7 @@ async function openDocument() {
     if (!opened || workspaceAttempt !== selection) return;
     closeAuthoring(); closeWorkbook(); closePresentation(); closePresentationEditor(); el('reading-toolbar').hidden = false;
     current = opened;
+    el<HTMLInputElement>('pdf-ligature-search').checked = false;
     await clearPdf();
     if (current !== opened || workspaceAttempt !== selection) return;
     pageNumber = 1; renderTask = null; pdfTextSummary = null;
@@ -471,6 +476,7 @@ el('pdf-password-cancel').addEventListener('click', () => el<HTMLDialogElement>(
 el('page-view').addEventListener('click', () => operation('正在显示页面…', showPdf));
 el('replace-toggle').addEventListener('click', () => { const panel = el('replace-panel'); panel.hidden = !panel.hidden; if (!panel.hidden) el('find').focus(); });
 el('search').addEventListener('input', renderText);
+el('pdf-ligature-search').addEventListener('change', renderText);
 el('save-replacement').addEventListener('click', () => operation('正在替换并另存…', async () => {
   const find = el<HTMLInputElement>('find').value;
   if (!find) { notice('请输入要查找的文字。', true); el('find').focus(); return; }
@@ -491,6 +497,7 @@ async function prepareEditorWorkspace() {
   closePresentation();
   closeWorkbook();
   current = null;
+  el<HTMLInputElement>('pdf-ligature-search').checked = false;
   await clearPdf();
   if (workspaceAttempt !== selection) throw new Error('文档会话已更新，请重试。');
   el('empty').hidden = true; el('document').hidden = true; el('pdf-pages').hidden = true;

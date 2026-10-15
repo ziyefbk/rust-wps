@@ -10,6 +10,10 @@ import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
+const searchSource = readFileSync(new URL('../ui/reading-search.ts', import.meta.url), 'utf8');
+const searchJs = ts.transpileModule(searchSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
+const { findReadingMatches } = await import(`data:text/javascript;base64,${Buffer.from(searchJs).toString('base64')}`);
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const scriptPath = fileURLToPath(import.meta.url);
 const options = {};
@@ -210,9 +214,9 @@ try {
     const document = { createTextNode: value => ({ textContent: value }), createElement: tag => ({ tag, textContent: '' }) };
     const current = { inspection: structuredClone(inspection), session_token: '1' };
     const trackedExtract = async (...args) => { const result = await extractor(...args); reports.push(structuredClone(result)); return result; };
-    const build = new Function('extractPdfText', 'textSummary', 'initialPdf', 'initialCurrent', 'document', 'el', 'notice',
+    const build = new Function('findReadingMatches', 'extractPdfText', 'textSummary', 'initialPdf', 'initialCurrent', 'document', 'el', 'notice',
       `let pdf = initialPdf, current = initialCurrent, stopText = false, pdfTextSummary = null; ${integrationJs}; return { recoverPdfText, renderText, summary: () => pdfTextSummary, stop: () => { stopText = true; }, replace: (next) => { current = next; } };`);
-    return { ...build(trackedExtract, helper.textSummary, sourcePdf, current, document, el, message => notices.push(message)), el, current, notices, reports };
+    return { ...build(findReadingMatches, trackedExtract, helper.textSummary, sourcePdf, current, document, el, message => notices.push(message)), el, current, notices, reports };
   }
   async function verifyRecovery(sourcePdf, inspection, expectedText, queries) {
     const app = integration(sourcePdf, inspection);
