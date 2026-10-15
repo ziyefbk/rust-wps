@@ -318,7 +318,7 @@ test('snapshot omission distinguishes explicit zero from defaults and preserves 
   const internal = schema.nodeFromJSON(legacy);
   const internalJson = internal.toJSON();
   expect(JSON.stringify(snapshot(internal))).toBe(JSON.stringify(legacy));
-  expect(internalJson.content[0].attrs).toEqual({spaceBefore: null, spaceAfter: null, lineSpacing: null});
+  expect(internalJson.content[0].attrs).toEqual({spaceBefore: null, spaceAfter: null, lineSpacing: null, minimumLineHeightTwips: null});
   const zero = snapshot(doc([paragraph('Zero', {spaceBefore: 0, spaceAfter: 0}), paragraph('Default')]));
   expect(zero.content[0].attrs).toEqual({spaceBefore: 0, spaceAfter: 0});
   expect(zero.content[1]).not.toHaveProperty('attrs');

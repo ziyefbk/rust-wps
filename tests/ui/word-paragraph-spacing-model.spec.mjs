@@ -101,7 +101,7 @@ test('all-selected paragraphs include nested lists, headings and table cells wit
     schema.node('table', null, [schema.node('tableRow', null, [schema.node('tableHeader', null, [paragraph('header')]),
       schema.node('tableCell', null, [paragraph('cell'), paragraph('second')])])])]);
   const transaction = createParagraphSpacingTransaction(all(original), {spaceBefore: 20, spaceAfter: 40, lineSpacing: 276});
-  expect(blocks(transaction.doc).map(({node}) => ({...node.attrs, level: undefined}))).toEqual(Array(5).fill({spaceBefore: 20, spaceAfter: 40, lineSpacing: 276, level: undefined}));
+  expect(blocks(transaction.doc).map(({node}) => ({...node.attrs, level: undefined}))).toEqual(Array(5).fill({spaceBefore: 20, spaceAfter: 40, lineSpacing: 276, minimumLineHeightTwips: null, level: undefined}));
   expect(transaction.doc.child(1).type.name).toBe('bulletList');
   expect(transaction.doc.child(2).child(0).child(0).attrs).toEqual(original.child(2).child(0).child(0).attrs);
   expect(transaction.doc.textContent).toBe(original.textContent);

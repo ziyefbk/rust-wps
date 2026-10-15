@@ -1,10 +1,11 @@
+import {approveMinimumLineHeightChange, isMinimumLineHeight, minimumLineHeightData, minimumLineHeightError, minimumLineHeightField, validateMinimumLineHeightDocument} from './word-minimum-line-height-model';
 import {Extension, type JSONContent} from '@tiptap/core';
 import type {Node} from '@tiptap/pm/model';
-import type {EditorState, Transaction} from '@tiptap/pm/state';
+import {EditorState, type Transaction} from '@tiptap/pm/state';
 
 export const paragraphSpacingFields = ['spaceBefore', 'spaceAfter', 'lineSpacing'] as const;
 export type ParagraphSpacingField = typeof paragraphSpacingFields[number];
-export type ParagraphSpacingPatch = Partial<Record<ParagraphSpacingField, number | null>>;
+export type ParagraphSpacingPatch = Partial<Record<ParagraphSpacingField | typeof minimumLineHeightField, number | null>>;
 const paragraphTypes = new Set(['paragraph', 'heading']);
 
 export function isParagraphSpace(value: unknown): value is number {
@@ -69,7 +70,7 @@ const dataNames: Record<ParagraphSpacingField, string> = {
 export const ParagraphSpacing = Extension.create({
   name: 'paragraphSpacing',
   addGlobalAttributes() {
-    return [{types: ['paragraph', 'heading'], attributes: Object.fromEntries(paragraphSpacingFields.map(field => [field, {
+    return [{types: ['paragraph', 'heading'], attributes: {...Object.fromEntries(paragraphSpacingFields.map(field => [field, {
       default: null,
       parseHTML: (element: HTMLElement) => {
         const exact = element.getAttribute(dataNames[field]);
@@ -86,11 +87,21 @@ export const ParagraphSpacing = Extension.create({
         // legacy and standard profile defaults without changing those defaults.
         return {[dataNames[field]]: String(value), style: `${property}: ${css}`};
       },
-    }]))}];
+    }])), [minimumLineHeightField]: {
+      default: null, keepOnSplit: true,
+      parseHTML: (element: HTMLElement) => {
+        const raw = element.getAttribute(minimumLineHeightData);
+        return raw === null ? null : /^[1-9][0-9]{0,4}$/.test(raw) && isMinimumLineHeight(Number(raw)) ? Number(raw) : 'invalid-minimum-line-height';
+      },
+      // Never emit a fixed CSS line-height for Word's minimum line-height.
+      renderHTML: (attrs: Record<string, unknown>) => isMinimumLineHeight(attrs[minimumLineHeightField])
+        ? {[minimumLineHeightData]: String(attrs[minimumLineHeightField])} : {},
+    }}}];
   },
 });
 
 export function validateParagraphSpacingDocument(document: JSONContent): void {
+  validateMinimumLineHeightDocument(document);
   const stack = [document];
   while (stack.length) {
     const node = stack.pop()!;
@@ -110,14 +121,14 @@ export function omitDefaultParagraphSpacing(document: JSONContent): JSONContent 
   const result = {...document};
   if (paragraphTypes.has(result.type ?? '') && result.attrs) {
     result.attrs = {...result.attrs};
-    for (const field of paragraphSpacingFields) if (result.attrs[field] === null) delete result.attrs[field];
+    for (const field of [...paragraphSpacingFields, minimumLineHeightField]) if (result.attrs[field] === null) delete result.attrs[field];
     if (Object.keys(result.attrs).length === 0) delete result.attrs;
   }
   if (result.content) result.content = result.content.map(omitDefaultParagraphSpacing);
   return result;
 }
 
-function selectedParagraphs(state: EditorState): Map<number, Node> {
+export function selectedSpacingParagraphs(state: EditorState): Map<number, Node> {
   const result = new Map<number, Node>();
   if (state.selection.empty) {
     const {$from} = state.selection;
@@ -138,8 +149,23 @@ function selectedParagraphs(state: EditorState): Map<number, Node> {
   return result;
 }
 
+export function minimumLineHeightSelectionSupported(state: EditorState): boolean {
+  const selected = selectedSpacingParagraphs(state);
+  let supported = !!selected.size && [...selected].every(([pos, node]) => state.doc.resolve(pos).depth === 0
+    && (node.type.name !== 'heading' || [1, 2, 3].includes(node.attrs.level))
+    && Array.from({length: node.childCount}, (_, index) => node.child(index)).every(child => child.isText || child.type.name === 'hardBreak'));
+  if (!state.selection.empty) for (const {$from, $to} of state.selection.ranges) state.doc.nodesBetween($from.pos, $to.pos, (node, pos) => {
+    if (node.isTextblock || node.isAtom) {
+      if (pos + (node.isTextblock ? 1 : 0) < $to.pos && pos + node.nodeSize > $from.pos && !paragraphTypes.has(node.type.name)) supported = false;
+      return false;
+    }
+    if (!paragraphTypes.has(node.type.name)) supported = false;
+  });
+  return supported;
+}
+
 export function selectedParagraphSpacing(state: EditorState): Record<ParagraphSpacingField, {value: number | null; mixed: boolean}> {
-  const nodes = [...selectedParagraphs(state).values()];
+  const nodes = [...selectedSpacingParagraphs(state).values()];
   return Object.fromEntries(paragraphSpacingFields.map(field => {
     const values = nodes.map(node => validSpacing(field, node.attrs[field]) ? node.attrs[field] as number : null);
     const first = values[0] ?? null, mixed = values.some(value => value !== first);
@@ -167,20 +193,32 @@ function checkSpacingBudget(document: Node): void {
 }
 
 export function createParagraphSpacingTransaction(state: EditorState, patch: ParagraphSpacingPatch): Transaction | null {
-  const fields = Object.keys(patch) as ParagraphSpacingField[];
+  const fields = Object.keys(patch) as (ParagraphSpacingField | typeof minimumLineHeightField)[];
   for (const field of fields) {
-    if (!paragraphSpacingFields.includes(field) || patch[field] !== null && !validSpacing(field, patch[field])) {
+    if (!(paragraphSpacingFields as readonly string[]).includes(field) && field !== minimumLineHeightField || patch[field] !== null && !(field === minimumLineHeightField ? isMinimumLineHeight(patch[field]) : validSpacing(field, patch[field]))) {
       throw new Error('段前/段后须为 0–1584 pt（0.05 pt 递增），行距须为 0.5–10 行（1/240 行递增）。');
     }
   }
-  const transaction = state.tr;
-  for (const [pos, node] of selectedParagraphs(state)) {
-    if (!fields.some(field => (node.attrs[field] ?? null) !== patch[field])) continue;
-    transaction.setNodeMarkup(pos, undefined, {...node.attrs, ...patch}, node.marks);
+  if (patch.lineSpacing != null && patch.minimumLineHeightTwips != null) throw new Error(minimumLineHeightError);
+  const normalized = {...patch};
+  if (Object.prototype.hasOwnProperty.call(patch, 'lineSpacing')) normalized.minimumLineHeightTwips = null;
+  if (Object.prototype.hasOwnProperty.call(patch, minimumLineHeightField)) normalized.lineSpacing = null;
+  // A numeric minimum wins over an explicit clearing of the old multiple.
+  if (patch.minimumLineHeightTwips != null) normalized.minimumLineHeightTwips = patch.minimumLineHeightTwips;
+  if (patch.lineSpacing != null) normalized.lineSpacing = patch.lineSpacing;
+  const changedFields = Object.keys(normalized) as (keyof ParagraphSpacingPatch)[];
+  const selected = selectedSpacingParagraphs(state);
+  if (normalized.minimumLineHeightTwips != null && !minimumLineHeightSelectionSupported(state)) throw new Error(minimumLineHeightError);
+  const transaction = EditorState.create({doc: state.doc, selection: state.selection, storedMarks: state.storedMarks}).tr;
+  for (const [pos, node] of selected) {
+    if (!changedFields.some(field => (node.attrs[field] ?? null) !== normalized[field])) continue;
+    transaction.setNodeMarkup(pos, undefined, {...node.attrs, ...normalized}, node.marks);
   }
   if (!transaction.docChanged) return null;
   // All limits are checked on a prospective document before the caller dispatches.
+  validateParagraphSpacingDocument(omitDefaultParagraphSpacing(transaction.doc.toJSON()));
   checkSpacingBudget(transaction.doc);
+  approveMinimumLineHeightChange(transaction);
   if (state.storedMarks) transaction.setStoredMarks(state.storedMarks);
   return transaction;
 }

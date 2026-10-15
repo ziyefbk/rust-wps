@@ -17,6 +17,7 @@ fn has_unsupported_paragraph_spacing(
     data: &[u8],
     used: &BTreeSet<String>,
     allow_contextual: bool,
+    allow_minimum: bool,
 ) -> Result<bool> {
     let mut reader = Reader::from_reader(data);
     let mut stack: Vec<String> = Vec::new();
@@ -52,6 +53,8 @@ fn has_unsupported_paragraph_spacing(
                     continue;
                 }
                 if tag == "spacing" && stack.last().is_some_and(|tag| tag == "pPr") {
+                    let minimum_line =
+                        allow_minimum && w_attribute(&e, "lineRule")?.as_deref() == Some("atLeast");
                     let mut has_line = false;
                     let mut has_rule = false;
                     for attribute in e.attributes() {
@@ -79,7 +82,9 @@ fn has_unsupported_paragraph_spacing(
                         match key {
                             "before" | "after" | "line" => {
                                 has_line |= key == "line";
-                                let (min, max) = if key == "line" {
+                                let (min, max) = if key == "line" && minimum_line {
+                                    (1, 31680)
+                                } else if key == "line" {
                                     (120, 2400)
                                 } else {
                                     (0, 31680)
@@ -93,7 +98,7 @@ fn has_unsupported_paragraph_spacing(
                             }
                             "lineRule" => {
                                 has_rule = true;
-                                unsupported |= value != "auto";
+                                unsupported |= value != "auto" && !minimum_line;
                             }
                             "beforeAutospacing" | "afterAutospacing" => {
                                 unsupported |= !matches!(value.as_ref(), "0" | "false" | "off")
@@ -491,6 +496,7 @@ pub(crate) struct DocxGeometryAudit {
     pub paragraph_indents: crate::paragraph_indentation::ParagraphIndentAudit,
     pub list_geometry: crate::list_geometry::Audit,
     pub contextual_spacing: crate::paragraph_contextual_spacing::ContextualSpacingAudit,
+    pub minimum_line_height: crate::paragraph_minimum_line_height::MinimumLineHeightAudit,
 }
 
 pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometryAudit> {
@@ -507,6 +513,13 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             "Page layout, fonts and pagination require visual verification".into(),
         ]),
         fidelity_verified: false,
+    };
+    let minimum_line_height = match crate::paragraph_minimum_line_height::analyze(bytes) {
+        Ok(audit) => audit,
+        Err(_) => {
+            report.risks.insert(PARAGRAPH_SPACING_RISK.into());
+            crate::paragraph_minimum_line_height::MinimumLineHeightAudit::default()
+        }
     };
     let mut links = std::collections::BTreeMap::new();
     let mut normalized_main = None;
@@ -608,6 +621,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             normalized_main.as_deref().expect("main read"),
             &BTreeSet::new(),
             contextual_spacing.proved,
+            minimum_line_height.proved(),
         )? {
             report.risks.insert(PARAGRAPH_SPACING_RISK.into());
         }
@@ -729,7 +743,12 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         if has_hidden_text_declaration(styles)? {
             report.risks.insert(HIDDEN_TEXT_RISK.into());
         }
-        if has_unsupported_paragraph_spacing(styles, &used, contextual_spacing.proved)? {
+        if has_unsupported_paragraph_spacing(
+            styles,
+            &used,
+            contextual_spacing.proved,
+            minimum_line_height.proved(),
+        )? {
             report.risks.insert(PARAGRAPH_SPACING_RISK.into());
         }
         if let Some(data) = spacing_parts.get(rel_types::NUMBERING)
@@ -738,7 +757,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             report.risks.insert(PARAGRAPH_SPACING_RISK.into());
         }
         if let Some(data) = spacing_parts.get(rel_types::SETTINGS)
-            && has_unsupported_paragraph_spacing(data, &BTreeSet::new(), false)?
+            && has_unsupported_paragraph_spacing(data, &BTreeSet::new(), false, false)?
         {
             report.risks.insert(PARAGRAPH_SPACING_RISK.into());
         }
@@ -785,7 +804,12 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
             .insert(crate::page_geometry::PAGE_GEOMETRY_NORMALIZED_RISK.into());
     }
     if normalized_main.is_none()
-        && has_unsupported_paragraph_spacing(&parts["word/document.xml"], &BTreeSet::new(), false)?
+        && has_unsupported_paragraph_spacing(
+            &parts["word/document.xml"],
+            &BTreeSet::new(),
+            false,
+            false,
+        )?
     {
         report.risks.insert(PARAGRAPH_SPACING_RISK.into());
     }
@@ -1083,6 +1107,7 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
         paragraph_indents,
         list_geometry,
         contextual_spacing,
+        minimum_line_height,
     })
 }
 

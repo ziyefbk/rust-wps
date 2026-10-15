@@ -1186,6 +1186,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "spaceBefore",
                 "spaceAfter",
                 "lineSpacing",
+                "minimumLineHeightTwips",
                 "indentLeftTwips",
                 "indentRightTwips",
                 "firstLineIndentTwips",
@@ -1200,6 +1201,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "spaceBefore",
                 "spaceAfter",
                 "lineSpacing",
+                "minimumLineHeightTwips",
                 "indentLeftTwips",
                 "indentRightTwips",
                 "firstLineIndentTwips",
@@ -1268,6 +1270,7 @@ pub fn validate(doc: &Node) -> Result<()> {
             ("spaceBefore", 0, 31680),
             ("spaceAfter", 0, 31680),
             ("lineSpacing", 120, 2400),
+            ("minimumLineHeightTwips", 1, 31680),
         ] {
             if let Some(value) = node.attrs.get(key) {
                 ensure!(
@@ -1277,6 +1280,18 @@ pub fn validate(doc: &Node) -> Result<()> {
                     "{key} must be an integer in {minimum}..={maximum}; omit it for the default"
                 );
             }
+        }
+        if node.attrs.contains_key("minimumLineHeightTwips") {
+            ensure!(
+                depth == 1
+                    && matches!(node.kind.as_str(), "paragraph" | "heading")
+                    && !node.attrs.contains_key("lineSpacing")
+                    && node
+                        .content
+                        .iter()
+                        .all(|child| matches!(child.kind.as_str(), "text" | "hardBreak")),
+                "Minimum line height requires a top-level text paragraph or heading and excludes lineSpacing"
+            );
         }
         ensure!(
             node.kind == "text" || node.text.is_none(),
@@ -1575,6 +1590,14 @@ pub fn validate(doc: &Node) -> Result<()> {
     }
     visit(doc, 0, 0, false, &mut nodes, &mut text_bytes)?;
     ensure!(
+        !doc.attrs.contains_key("splitPageBreakAndParagraphMark")
+            || !doc
+                .content
+                .iter()
+                .any(|node| node.attrs.contains_key("minimumLineHeightTwips")),
+        "Minimum line height does not support legacy split-page-break paragraph metrics"
+    );
+    ensure!(
         page.is_some()
             || !doc
                 .content
@@ -1713,6 +1736,12 @@ impl Writer {
         }
         if node.attrs.contains_key("lineSpacing") {
             spacing.push_str(" w:lineRule=\"auto\"");
+        } else if let Some(value) = node
+            .attrs
+            .get("minimumLineHeightTwips")
+            .and_then(Value::as_u64)
+        {
+            spacing.push_str(&format!(" w:line=\"{value}\" w:lineRule=\"atLeast\""));
         }
         if !spacing.is_empty() {
             self.has_spacing = true;

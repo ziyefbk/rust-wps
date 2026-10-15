@@ -138,7 +138,7 @@ for (const reordered of [false, true]) test(`single final paragraph input rule u
   const {editor} = editorFor(doc([paragraph('##', a)]));
   if (reordered) {const plugins = [...editor.state.plugins]; const index = plugins.findIndex(plugin => plugin.key.startsWith('wordBlockTypeInputHistory')); const [plugin] = plugins.splice(index, 1); plugins.unshift(plugin); editor.view.updateState(editor.state.reconfigure({plugins}));}
   select(editor, 3); expect(input(editor, ' ')).toBe(true); expect(editor.state.doc.childCount).toBe(2); expect(editor.state.doc.lastChild.type.name).toBe('paragraph');
-  expect(key(editor, 'Backspace')).toBe(true); expect(editor.state.doc.childCount).toBe(1); expect(editor.state.doc.firstChild.textContent).toBe('## '); expect(attrs(editor.state.doc.firstChild)).toEqual({...a});
+  expect(key(editor, 'Backspace')).toBe(true); expect(editor.state.doc.childCount).toBe(1); expect(editor.state.doc.firstChild.textContent).toBe('## '); expect(attrs(editor.state.doc.firstChild)).toEqual({...a, minimumLineHeightTwips: null});
 });
 
 test('input undo retains pre-existing trailing empty paragraph and exact suffix marks', () => {
@@ -162,7 +162,7 @@ test('input conversion uses stored formatting with and without an appended trail
 test('input conversion history is separate from trigger and later typing', () => {
   const {editor} = editorFor(doc([paragraph('#', a)])); select(editor, 2); expect(input(editor, ' ')).toBe(true); const converted = editor.state.doc;
   editor.view.dispatch(editor.state.tr.insertText('later')); expect(editor.commands.undo()).toBe(true); expect(editor.state.doc.eq(converted)).toBe(true);
-  expect(editor.commands.undo()).toBe(true); expect(editor.state.doc.childCount).toBe(1); expect(editor.state.doc.firstChild.textContent).toBe('# '); expect(editor.state.doc.firstChild.attrs).toEqual(a);
+  expect(editor.commands.undo()).toBe(true); expect(editor.state.doc.childCount).toBe(1); expect(editor.state.doc.firstChild.textContent).toBe('# '); expect(editor.state.doc.firstChild.attrs).toEqual({...a, minimumLineHeightTwips: null});
   expect(editor.commands.redo()).toBe(true); expect(editor.state.doc.eq(converted)).toBe(true);
 });
 
@@ -214,7 +214,7 @@ test('compositionend processes completed marker after composing input is skipped
   const view = editor.view; Object.defineProperty(editor, 'view', {get: () => view}); view.composing = true;
   expect(input(editor, ' ')).toBe(false); editor.view.dispatch(editor.state.tr.insertText(' ')); view.composing = false;
   for (const plugin of editor.state.plugins) plugin.props.handleDOMEvents?.compositionend?.(view, {});
-  await new Promise(resolve => setTimeout(resolve, 20)); expect(editor.state.doc.firstChild.attrs).toEqual({...a, level: 2});
+  await new Promise(resolve => setTimeout(resolve, 20)); expect(editor.state.doc.firstChild.attrs).toEqual({...a, minimumLineHeightTwips: null, level: 2});
   expect(editor.commands.undoInputRule()).toBe(true); expect(editor.state.doc.firstChild.textContent).toBe('## ');
 });
 
@@ -229,7 +229,7 @@ test('code marks composing and read-only states block input-rule conversion', ()
 test('plain paste transaction does not become a heading or create input-rule metadata', () => {
   const {editor} = editorFor(doc([paragraph('', a), paragraph('outside')])); select(editor, 1);
   editor.view.dispatch(editor.state.tr.insertText('## ').setMeta('paste', true).setMeta('uiEvent', 'paste'));
-  expect(editor.state.doc.firstChild.type.name).toBe('paragraph'); expect(editor.state.doc.firstChild.attrs).toEqual(a); expect(editor.commands.undoInputRule()).toBe(false);
+  expect(editor.state.doc.firstChild.type.name).toBe('paragraph'); expect(editor.state.doc.firstChild.attrs).toEqual({...a, minimumLineHeightTwips: null}); expect(editor.commands.undoInputRule()).toBe(false);
 });
 
 test('non-prefix and unsupported hash counts remain ordinary text', () => {

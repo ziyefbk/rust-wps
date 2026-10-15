@@ -22,7 +22,9 @@ import {TextColor, createTextColorTransaction, parseTextColor, selectedTextColor
 import {FontFamily, createFontFamilyTransaction, isFontFamilyName, selectedFontFamily} from './word-font-family';
 import {WordFontFamilyMetadata, fontFamilyMetadataDocumentDOM, fontFamilyMetadataPreviewWarning, prepareFontFamilyMetadataDocument} from './word-font-family-metadata';
 import {STANDARD_WORD_STYLE_PROFILE, documentStyleProfile, editorStyleProfile, snapshotDocument as snapshotStyledDocument, withStandardWordStyle} from './word-style-profile';
-import {ParagraphSpacing, createParagraphSpacingTransaction, formatLineSpacingLines, omitDefaultParagraphSpacing, paragraphSpacingFields, parseLineSpacingLines, parseParagraphSpacePoints, selectedParagraphSpacing, validateParagraphSpacingDocument, type ParagraphSpacingField, type ParagraphSpacingPatch} from './word-paragraph-spacing';
+import {ParagraphSpacing, omitDefaultParagraphSpacing, validateParagraphSpacingDocument} from './word-paragraph-spacing';
+import {MinimumLineHeight, preflightMinimumLineHeightHTML} from './word-minimum-line-height';
+import {WordParagraphSpacingControls} from './word-paragraph-spacing-controls';
 import { Editor, Extension, Mark as TiptapMark, Node as TiptapNode, type JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import {WordTable, createTableColumnWidthTransaction, createTablePositionTransaction, createTableStructureTransaction, omitDefaultTableWidths, parseTableColumnWidthPoints, selectedTableColumn, validateTableWidthsDocument, type TableStructureAction} from './word-table-widths';
@@ -97,7 +99,7 @@ let textColorInputChanged = false;
 let textColorInputEditing = false;
 let fontFamilyInputChanged = false;
 let fontFamilyInputEditing = false;
-let paragraphSpacingInputEditing = false;
+let paragraphSpacingControls: WordParagraphSpacingControls | null = null;
 let tableWidthInputEditing = false;
 let pageControls: WordPageControls | null = null;
 let tableCellColorControls: WordTableCellColorControls | null = null;
@@ -111,10 +113,6 @@ let emptyParagraphFontControls: WordEmptyParagraphFontControls | null = null;
 let imageParagraphControls: WordImageParagraphControls | null = null;
 let tableIndentInputEditing = false;
 let tableIndentInputChanged = false;
-const paragraphSpacingInputChanged = new Set<ParagraphSpacingField>();
-const paragraphSpacingIds: Record<ParagraphSpacingField, string> = {
-  spaceBefore: 'edit-space-before', spaceAfter: 'edit-space-after', lineSpacing: 'edit-line-spacing',
-};
 function snapshotDocument(owner: Pick<Editor, 'getJSON'>): JSONContent {
   return omitDefaultParagraphPagination(omitDefaultListGeometry(omitDefaultParagraphIndent(omitDefaultImageDimensions(omitDefaultTableWidths(omitDefaultParagraphSpacing(snapshotStyledDocument(owner)))))));
 }
@@ -261,34 +259,6 @@ function applyFontFamily(reset = false) {
   editor.view.focus();
   updateToolbar();
 }
-function applyParagraphSpacing(reset = false) {
-  if (!editor || leaving || paused || printing || saving) return;
-  const patch: ParagraphSpacingPatch = {};
-  // Read the whole group before selection synchronization updates the toolbar.
-  for (const field of paragraphSpacingFields) {
-    const input = el<HTMLInputElement>(paragraphSpacingIds[field]), value = input.value.trim();
-    if (reset) { patch[field] = null; continue; }
-    if (!value && input.dataset.spacingState === 'mixed' && !paragraphSpacingInputChanged.has(field)) continue;
-    const parsed = !value ? null : field === 'lineSpacing' ? parseLineSpacingLines(value) : parseParagraphSpacePoints(value);
-    if (input.validity.badInput || value !== '' && parsed === null) {
-      showNotice('段前/段后须为 0–1584 pt（0.05 pt 递增），行距须为 0.5–10 行；非整小数可输入 241/240 这样的精确行数。', true);
-      return;
-    }
-    patch[field] = parsed;
-  }
-  syncDomTextSelection();
-  try {
-    const transaction = createParagraphSpacingTransaction(editor.state, patch);
-    if (transaction) {
-      editor.view.dispatch(closeHistory(transaction));
-      editor.view.dispatch(closeHistory(editor.state.tr));
-    }
-  } catch (error) { showNotice(String(error), true); return; }
-  paragraphSpacingInputEditing = false;
-  paragraphSpacingInputChanged.clear();
-  editor.view.focus();
-  updateToolbar();
-}
 function applyTableColumnWidth(reset = false) {
   if (!editor || leaving || paused || printing || saving) return;
   const input = el<HTMLInputElement>('edit-column-width'), value = input.value.trim();
@@ -354,6 +324,7 @@ function updateToolbar() {
   pageControls?.update();
   emptyParagraphFontControls?.update();
   paragraphIndentControls?.update();
+  paragraphSpacingControls?.update();
   paragraphPaginationControls?.update();
   tableCellMarginsControls?.update();
   tableCellColorControls?.update();
@@ -409,20 +380,6 @@ function updateToolbar() {
   }
   el('edit-table-position-state').textContent = !position?.count ? '' : !position.supported ? '仅限无合并、无嵌套的矩形表格'
     : position.count > 1 ? `${position.count} 张表格` : '当前表格';
-  const selectedSpacing = editor ? selectedParagraphSpacing(editor.state) : null;
-  for (const field of paragraphSpacingFields) {
-    const input = el<HTMLInputElement>(paragraphSpacingIds[field]);
-    input.disabled = locked || saving;
-    if (!paragraphSpacingInputEditing && document.activeElement !== input) {
-      const selected = selectedSpacing?.[field] ?? {value: null, mixed: false};
-      input.value = selected.value === null ? '' : field === 'lineSpacing' ? formatLineSpacingLines(selected.value) : String(selected.value / 20);
-      input.placeholder = selected.mixed ? '混合' : '默认';
-      input.dataset.spacingState = selected.mixed ? 'mixed' : selected.value === null ? 'default' : 'explicit';
-      paragraphSpacingInputChanged.delete(field);
-    }
-  }
-  el<HTMLButtonElement>('edit-paragraph-spacing-apply').disabled = locked || saving;
-  el<HTMLButtonElement>('edit-paragraph-spacing-reset').disabled = locked || saving;
   const fontFamily = el<HTMLInputElement>('edit-font-family');
   fontFamily.disabled = locked || saving;
   el<HTMLButtonElement>('edit-font-family-apply').disabled = locked || saving;
@@ -501,8 +458,7 @@ export function closeAuthoring() {
   tableWidthInputEditing = false;
   tableIndentInputEditing = false;
   tableIndentInputChanged = false;
-  paragraphSpacingInputEditing = false;
-  paragraphSpacingInputChanged.clear();
+  paragraphSpacingControls?.reset();
   fontFamilyInputEditing = false;
   fontSizeInputEditing = false;
   textColorInputEditing = false;
@@ -535,7 +491,7 @@ async function create(content?: JSONContent, ask = true) {
   editor = new Editor({
     editable: !paused,
     element: el('editor-content'),
-    extensions: [TableRowPagination.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}), ParagraphPagination.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),PreservedListGeometry.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),EmptyParagraphFont.configure({onError: message => showNotice(message, true)}),FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
+    extensions: [MinimumLineHeight.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}), TableRowPagination.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}), ParagraphPagination.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),PreservedListGeometry.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),EmptyParagraphFont.configure({onError: message => showNotice(message, true)}),FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
       WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), WordFontFamilyMetadata.configure({onError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, ParagraphIndent.configure({onIndentError: message => showNotice(message, true)}), PageBreak, PageBreakParagraph.configure({onError: message => showNotice(message, true)}), TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
     content: initial,
     editorProps: {
@@ -548,7 +504,7 @@ async function create(content?: JSONContent, ask = true) {
       // Do not load remote images pasted from web/Office HTML. Preserve text.
       transformPastedHTML: html => {
         // Audit raw empty-font metadata before remote-image removal can erase it.
-        const parsed = new DOMParser().parseFromString(preflightPageBreakHTML(preflightParagraphPaginationHTML(preflightEmptyParagraphFontHTML(preflightListGeometryHTML(preflightTableRowPaginationHTML(html))))), 'text/html');
+        const parsed = new DOMParser().parseFromString(preflightPageBreakHTML(preflightParagraphPaginationHTML(preflightEmptyParagraphFontHTML(preflightListGeometryHTML(preflightTableRowPaginationHTML(preflightMinimumLineHeightHTML(html)))))), 'text/html');
         parsed.querySelectorAll('img').forEach(image => {
           if (!/^data:image\/(png|jpeg);base64,/.test(image.getAttribute('src') ?? '')) image.remove();
         });
@@ -564,7 +520,7 @@ async function create(content?: JSONContent, ask = true) {
       draftTimer = setTimeout(() => { draftTimer = null; if (owner === editor) queueDraft(snapshotDocument(owner)); }, 700);
       updateToolbar();
     },
-    onFocus: () => { tableCellColorControls?.cancelEditing(); tableVerticalControls?.cancelEditing(); tableCellMarginsControls?.cancelEditing(); paragraphIndentControls?.cancelEditing(); tableIndentInputEditing = false; tableWidthInputEditing = false; paragraphSpacingInputEditing = false; fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
+    onFocus: () => { tableCellColorControls?.cancelEditing(); tableVerticalControls?.cancelEditing(); tableCellMarginsControls?.cancelEditing(); paragraphIndentControls?.cancelEditing(); tableIndentInputEditing = false; tableWidthInputEditing = false; paragraphSpacingControls?.cancelEditing(); fontFamilyInputEditing = false; fontSizeInputEditing = false; textColorInputEditing = false; updateToolbar(); },
     onSelectionUpdate: updateToolbar,
   });
   dirty = !!content; version++;
@@ -581,6 +537,7 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
   tableVerticalControls = new WordTableVerticalControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   tableCellMarginsControls = new WordTableCellMarginsControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   paragraphPaginationControls = new WordParagraphPaginationControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
+  paragraphSpacingControls = new WordParagraphSpacingControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   paragraphIndentControls = new WordParagraphIndentControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error), syncSelection: syncDomTextSelection});
   imageParagraphControls = new WordImageParagraphControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
   pageControls = new WordPageControls({editor: () => editor, locked: () => leaving || paused || printing || saving, notice: (message, error) => showNotice(message, error)});
@@ -609,26 +566,6 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
     editor.chain().focus().extendMarkRange('link').setLink({ href }).run();
   });
   el('edit-find').addEventListener('input',()=>{refreshWordSearch();updateToolbar();});
-  el('paragraph-spacing-controls').addEventListener('focusout', event => {
-    if (event.relatedTarget instanceof HTMLElement && el('paragraph-spacing-controls').contains(event.relatedTarget)) return;
-    paragraphSpacingInputEditing = false;
-    updateToolbar();
-  });
-  for (const field of paragraphSpacingFields) {
-    const input = el<HTMLInputElement>(paragraphSpacingIds[field]);
-    input.addEventListener('pointerdown', syncDomTextSelection);
-    input.addEventListener('focus', () => { paragraphSpacingInputEditing = true; });
-    input.addEventListener('input', () => { paragraphSpacingInputChanged.add(field); });
-    input.addEventListener('keydown', event => {
-      if (event.isComposing || event.keyCode === 229) return;
-      if (event.key === 'Enter') { event.preventDefault(); applyParagraphSpacing(); }
-      if (event.key === 'Escape') {
-        event.preventDefault(); paragraphSpacingInputEditing = false; paragraphSpacingInputChanged.clear(); editor?.view.focus(); updateToolbar();
-      }
-    });
-  }
-  el('edit-paragraph-spacing-apply').addEventListener('click', () => applyParagraphSpacing());
-  el('edit-paragraph-spacing-reset').addEventListener('click', () => applyParagraphSpacing(true));
   el('edit-font-family').addEventListener('pointerdown', syncDomTextSelection);
   el('edit-font-family').addEventListener('focus', () => { fontFamilyInputEditing = true; });
   el('edit-font-family').addEventListener('blur', event => {

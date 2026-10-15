@@ -7,6 +7,7 @@ mod list_geometry;
 mod page_geometry;
 mod paragraph_contextual_spacing;
 mod paragraph_indentation;
+mod paragraph_minimum_line_height;
 mod paragraph_pagination;
 mod pdf_snapshot;
 mod presentation_vertical;

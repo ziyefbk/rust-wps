@@ -65,9 +65,13 @@
       <span id="paragraph-spacing-controls" role="group" aria-label="段落间距">
         <label>段前 <input id="edit-space-before" type="text" inputmode="decimal" aria-label="段前间距（pt）" placeholder="默认" title="0–1584 pt，0.05 pt 递增；清空后应用恢复默认" autocomplete="off"> pt</label>
         <label>段后 <input id="edit-space-after" type="text" inputmode="decimal" aria-label="段后间距（pt）" placeholder="默认" title="0–1584 pt，0.05 pt 递增；清空后应用恢复默认" autocomplete="off"> pt</label>
-        <label>行距 <input id="edit-line-spacing" type="text" aria-label="行距（行）" placeholder="默认" title="0.5–10 行，每行 240 单位；可输入 1.5 或 241/240，清空后应用恢复默认" autocomplete="off"> 行</label>
+        <label>行距模式 <select id="edit-line-mode" aria-label="行距模式"><option value="default">默认</option><option value="multiple">倍数</option><option value="minimum">最小行高</option><option value="mixed" disabled>混合</option></select></label>
+        <label id="edit-multiple-line-spacing-control">行距 <input id="edit-line-spacing" type="text" aria-label="行距（行）" placeholder="默认" title="0.5–10 行，每行 240 单位；可输入 1.5 或 241/240，清空后应用恢复默认" autocomplete="off"> 行</label>
+        <label id="edit-minimum-line-height-control" hidden>最小行高 <input id="edit-minimum-line-height" type="text" inputmode="decimal" aria-label="最小行高（pt）" placeholder="默认" title="0.05–1584 pt，0.05 pt 递增；仅顶层正文和标题。编辑/打印不模拟 Word 最小行高" autocomplete="off"> pt</label>
+        <button id="edit-line-spacing-reset" title="仅重置倍数/最小行高，保留段前段后">默认行距</button>
         <button id="edit-paragraph-spacing-apply" title="应用到光标所在段落或选中的所有段落；混合字段留空则不变，可一次撤销">应用间距</button>
         <button id="edit-paragraph-spacing-reset" title="移除所选段落的段前、段后和行距，恢复文档默认样式">默认间距</button>
+        <span id="edit-line-spacing-state" aria-live="polite"></span>
       </span>
       <label class="font-family-control">字体 <input id="edit-font-family" type="text" list="edit-font-family-options" aria-label="字体" placeholder="默认" title="输入单个本机字体名；Enter 或应用按钮提交，清空后应用恢复默认；未安装的字体由系统替代" autocomplete="off" spellcheck="false"></label><datalist id="edit-font-family-options"><option value="Arial"><option value="Calibri"><option value="Times New Roman"><option value="Consolas"><option value="Microsoft YaHei"><option value="SimSun"><option value="SimHei"><option value="KaiTi"><option value="FangSong"></datalist><button id="edit-font-family-apply">应用字体</button><button id="edit-font-family-reset" title="移除选区的显式字体，使用所在段落的默认字体">默认字体</button>
       <span id="empty-paragraph-font-controls" role="group" aria-label="导入空段字体" hidden>

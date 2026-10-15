@@ -82,7 +82,7 @@ test('active input rule has priority, expired window uses shell-only conversion'
     if (expire) {select(editor, 4); select(editor, 1);}
     expect(key(editor)).toBe(true); expect(editor.state.doc.firstChild.type.name).toBe('paragraph');
     expect(editor.state.doc.firstChild.textContent).toBe(expire ? '' : '## ');
-    expect(editor.state.doc.firstChild.attrs).toEqual({...a, emptyParagraphFont: null});
+    expect(editor.state.doc.firstChild.attrs).toEqual({...a, minimumLineHeightTwips: null, emptyParagraphFont: null});
     expect(editor.commands.undo()).toBe(true); expect(editor.state.doc.eq(heading)).toBe(true);
   }
 });

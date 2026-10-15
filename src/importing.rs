@@ -74,7 +74,7 @@ pub fn import_doc(path: &Path) -> Result<ImportReport> {
         "DOC structural conversion reported uncertainty: {:?}",
         ir.metadata.warnings
     );
-    let mut report = convert_ir(ir, compatibility, false)?;
+    let mut report = convert_ir(ir, compatibility, false, None)?;
     // Only the unstructured fallback needs blank-line recovery. Structured
     // paragraphs now preserve real blank paragraphs and manual page breaks;
     // never reconstruct their boundaries from flattened plain text.
@@ -165,6 +165,8 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     );
     let auto_preferred = crate::table_auto_preferred::analyze(&bytes);
     let font_families = crate::docx_font_families::analyze(&bytes);
+    crate::paragraph_minimum_line_height::verify_source(&audit.minimum_line_height, &bytes)
+        .with_context(|| crate::compatibility::PARAGRAPH_SPACING_RISK)?;
     let parsed = office_oxide::Document::from_reader(
         std::io::Cursor::new(bytes),
         office_oxide::DocumentFormat::Docx,
@@ -188,7 +190,9 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         crate::table_cell_colors::verify_ir(&audit.cell_colors, &ir).is_ok();
     let no_fill_identity_matches =
         crate::table_cell_no_fill::verify_ir(&audit.cell_no_fill, &ir).is_ok();
-    let mut report = convert_ir(ir, compatibility, true)?;
+    crate::paragraph_minimum_line_height::verify_ir(&audit.minimum_line_height, &ir)
+        .with_context(|| crate::compatibility::PARAGRAPH_SPACING_RISK)?;
+    let mut report = convert_ir(ir, compatibility, true, Some(&audit.minimum_line_height))?;
     if !color_identity_matches
         || crate::table_cell_colors::attach(
             &audit.cell_colors,
@@ -357,7 +361,9 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     fn materialize(node: &mut Node) {
         if matches!(node.kind.as_str(), "paragraph" | "heading") {
             for (key, value) in [("spaceBefore", 0), ("spaceAfter", 0), ("lineSpacing", 240)] {
-                node.attrs.entry(key).or_insert(value.into());
+                if key != "lineSpacing" || !node.attrs.contains_key("minimumLineHeightTwips") {
+                    node.attrs.entry(key).or_insert(value.into());
+                }
             }
         }
         for child in &mut node.content {
@@ -424,6 +430,17 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
         &mut report.document,
         &mut report.compatibility.risks,
     );
+    crate::paragraph_minimum_line_height::verify_model(
+        &audit.minimum_line_height,
+        &report.document,
+    )
+    .with_context(|| crate::compatibility::PARAGRAPH_SPACING_RISK)?;
+    if audit.minimum_line_height.has_minimum() {
+        report
+            .compatibility
+            .risks
+            .insert(crate::paragraph_minimum_line_height::WARNING.into());
+    }
     Ok(report)
 }
 
@@ -536,6 +553,7 @@ fn convert_ir(
     ir: office_oxide::ir::DocumentIR,
     mut compatibility: CompatibilityReport,
     spacing: bool,
+    minimum: Option<&crate::paragraph_minimum_line_height::MinimumLineHeightAudit>,
 ) -> Result<ImportReport> {
     for warning in &ir.metadata.warnings {
         compatibility
@@ -555,7 +573,13 @@ fn convert_ir(
                 && section.even_page_footer.is_none(),
             "Import cannot preserve headers or footers; source remains read-only"
         );
-        content.extend(blocks(&section.elements, 0, &mut compatibility, spacing)?);
+        content.extend(blocks(
+            &section.elements,
+            0,
+            &mut compatibility,
+            spacing,
+            minimum,
+        )?);
     }
     if content.is_empty() {
         content.push(node("paragraph", vec![]));
@@ -714,7 +738,7 @@ fn list(
     ensure!(depth <= 24, "Import nesting exceeds limits");
     let mut items = Vec::new();
     for item in &value.items {
-        let mut children = blocks(&item.content, depth + 1, report, spacing)?;
+        let mut children = blocks(&item.content, depth + 1, report, spacing, None)?;
         if children.is_empty() {
             children.push(node("paragraph", vec![]));
         }
@@ -766,6 +790,7 @@ fn blocks(
     depth: usize,
     report: &mut CompatibilityReport,
     spacing: bool,
+    minimum: Option<&crate::paragraph_minimum_line_height::MinimumLineHeightAudit>,
 ) -> Result<Vec<Node>> {
     ensure!(
         depth <= 24 && elements.len() <= 10000,
@@ -789,6 +814,7 @@ fn blocks(
                         p.space_before_twips,
                         p.space_after_twips,
                         p.line_spacing.as_ref(),
+                        minimum.filter(|audit| depth == 0 && audit.proved()),
                     )?;
                 }
                 value
@@ -813,6 +839,7 @@ fn blocks(
                         h.space_before_twips,
                         h.space_after_twips,
                         h.line_spacing.as_ref(),
+                        minimum.filter(|audit| depth == 0 && audit.proved()),
                     )?;
                 }
                 value
@@ -827,7 +854,7 @@ fn blocks(
                             cell.col_span <= 1 && cell.row_span <= 1,
                             "Merged table cells require a richer editor model"
                         );
-                        let mut content = blocks(&cell.content, depth + 1, report, spacing)?;
+                        let mut content = blocks(&cell.content, depth + 1, report, spacing, None)?;
                         if content.is_empty() {
                             content.push(node("paragraph", vec![]));
                         }
@@ -929,6 +956,7 @@ fn preserve_spacing(
     before: Option<u32>,
     after: Option<u32>,
     line: Option<&office_oxide::ir::LineSpacing>,
+    minimum: Option<&crate::paragraph_minimum_line_height::MinimumLineHeightAudit>,
 ) -> Result<()> {
     for (key, value) in [("spaceBefore", before), ("spaceAfter", after)] {
         if let Some(value) = value {
@@ -941,6 +969,16 @@ fn preserve_spacing(
     }
     if let Some(line) = line {
         use office_oxide::ir::LineSpacing;
+        if let LineSpacing::AtLeast(value) = line {
+            ensure!(
+                minimum.is_some_and(|audit| audit.proved()) && (1..=31680).contains(value),
+                "{}; source remains read-only",
+                crate::compatibility::PARAGRAPH_SPACING_RISK
+            );
+            node.attrs
+                .insert("minimumLineHeightTwips".into(), (*value).into());
+            return Ok(());
+        }
         let (LineSpacing::Auto(value) | LineSpacing::Multiple(value)) = line else {
             bail!(
                 "{}; source remains read-only",
@@ -1007,7 +1045,7 @@ mod side_story_tests {
                 fidelity_verified: false,
             };
             assert!(
-                convert_ir(ir, report, true)
+                convert_ir(ir, report, true, None)
                     .unwrap_err()
                     .to_string()
                     .contains("headers or footers")
@@ -1088,5 +1126,41 @@ mod image_conversion_tests {
                 "{mutation}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod minimum_line_height_conversion_tests {
+    use super::*;
+    use office_oxide::ir::LineSpacing;
+
+    #[test]
+    fn minimum_line_height_requires_proved_source_capability() {
+        let inactive = crate::paragraph_minimum_line_height::MinimumLineHeightAudit::default();
+        for audit in [None, Some(&inactive)] {
+            let mut paragraph = node("paragraph", vec![]);
+            assert!(
+                preserve_spacing(
+                    &mut paragraph,
+                    None,
+                    None,
+                    Some(&LineSpacing::AtLeast(276)),
+                    audit
+                )
+                .is_err()
+            );
+            assert!(!paragraph.attrs.contains_key("minimumLineHeightTwips"));
+        }
+        let mut paragraph = node("paragraph", vec![]);
+        preserve_spacing(
+            &mut paragraph,
+            Some(0),
+            Some(200),
+            Some(&LineSpacing::Auto(276)),
+            None,
+        )
+        .unwrap();
+        assert_eq!(paragraph.attrs["lineSpacing"], 276);
+        assert!(!paragraph.attrs.contains_key("minimumLineHeightTwips"));
     }
 }

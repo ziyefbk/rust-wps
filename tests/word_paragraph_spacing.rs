@@ -138,7 +138,7 @@ fn unsupported_raw_spacing_fails_closed_without_modifying_source() {
         r#"<w:spacing w:line="119"/>"#,
         r#"<w:spacing w:line="2401"/>"#,
         r#"<w:spacing w:line="240" w:lineRule="exact"/>"#,
-        r#"<w:spacing w:line="240" w:lineRule="atLeast"/>"#,
+        r#"<w:spacing w:line="0" w:lineRule="atLeast"/>"#,
         r#"<w:spacing w:line="240" w:lineRule="mystery"/>"#,
         r#"<w:spacing w:lineRule="auto"/>"#,
         r#"<w:spacing w:before="12.5"/>"#,
@@ -615,4 +615,188 @@ fn v1_and_v2_without_spacing_match_pre_feature_part_hashes() {
             expected["profiles"][profile]
         );
     }
+}
+
+const MINIMUM_WARNING: &str = "Minimum paragraph line height preserved; actual line layout and pagination remain consumer-dependent";
+
+#[test]
+fn minimum_line_height_strict_model_bounds_and_context() {
+    for value in [1, 276, 31680] {
+        document::validate(&model(json!({"minimumLineHeightTwips":value}), true)).unwrap();
+    }
+    for value in [
+        Value::Null,
+        json!(0),
+        json!(-1),
+        json!(31681),
+        json!(1.5),
+        json!("276"),
+        json!(true),
+    ] {
+        assert!(document::validate(&model(json!({"minimumLineHeightTwips":value}), true)).is_err());
+    }
+    for line in [Value::Null, json!(240)] {
+        assert!(
+            document::validate(&model(
+                json!({"minimumLineHeightTwips":276,"lineSpacing":line}),
+                true
+            ))
+            .is_err()
+        );
+    }
+    let mut legacy = model(json!({"minimumLineHeightTwips":276}), true);
+    legacy
+        .attrs
+        .insert("splitPageBreakAndParagraphMark".into(), json!(true));
+    assert!(document::validate(&legacy).is_err());
+    let mut ordinary_break = model(json!({"minimumLineHeightTwips":276}), true);
+    ordinary_break
+        .content
+        .push(serde_json::from_value(json!({"type":"pageBreak"})).unwrap());
+    document::validate(&ordinary_break).unwrap();
+    let paragraph = model(json!({"minimumLineHeightTwips":276}), true)
+        .content
+        .remove(0);
+    for nested in [
+        json!({"type":"bulletList","content":[{"type":"listItem","content":[paragraph.clone()]}]}),
+        json!({"type":"table","content":[{"type":"tableRow","content":[{"type":"tableCell","content":[paragraph.clone()]}]}]}),
+    ] {
+        let doc: Node = serde_json::from_value(json!({"type":"doc","content":[nested]})).unwrap();
+        assert!(document::validate(&doc).is_err());
+    }
+    let mut heading = model(json!({"minimumLineHeightTwips":276,"level":3}), true);
+    heading.content[0].kind = "heading".into();
+    document::validate(&heading).unwrap();
+}
+
+#[test]
+fn minimum_line_height_export_and_trusted_reopen_keep_distinct_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    for modern in [false, true] {
+        let doc = model(
+            json!({"minimumLineHeightTwips":276,"spaceBefore":0,"spaceAfter":200}),
+            modern,
+        );
+        let path = dir.path().join(format!("minimum-{modern}.docx"));
+        document::export_docx(&doc, &path).unwrap();
+        let original = fs::read(&path).unwrap();
+        let archive = parts(&original);
+        let xml = String::from_utf8(archive["word/document.xml"].clone()).unwrap();
+        assert!(xml.contains(
+            r#"<w:spacing w:before="0" w:after="200" w:line="276" w:lineRule="atLeast"/>"#
+        ));
+        assert!(archive.contains_key("word/settings.xml"));
+        assert_eq!(
+            serde_json::to_value(document::load_authored_docx(&path).unwrap().unwrap()).unwrap(),
+            serde_json::to_value(&doc).unwrap()
+        );
+        assert!(document::export_docx(&doc, &path).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        let mut forged = archive;
+        let name = if modern {
+            "rust-wps/model-v2.json"
+        } else {
+            "rust-wps/model-v1.json"
+        };
+        let mut metadata: Value = serde_json::from_slice(&forged[name]).unwrap();
+        metadata["document"]["content"][0]["attrs"]["minimumLineHeightTwips"] = json!(277);
+        forged.insert(name.into(), serde_json::to_vec(&metadata).unwrap());
+        let corrupt = dir.path().join(format!("minimum-forged-{modern}.docx"));
+        write_parts(&corrupt, &forged);
+        assert!(document::load_authored_docx(&corrupt).is_err());
+    }
+}
+
+#[test]
+fn minimum_line_height_inherits_and_direct_omitted_rule_resets_to_auto() {
+    let dir = tempfile::tempdir().unwrap();
+    let styles = r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after="200" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Default"><w:pPr><w:spacing w:line="276" w:lineRule="atLeast"/></w:pPr></w:style></w:styles>"#;
+    let path = dir.path().join("minimum-inherited.docx");
+    external(
+        &path,
+        r#"<w:p><w:r><w:t>First</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:before="0" w:line="360"/></w:pPr><w:r><w:t>Second</w:t></w:r></w:p>"#,
+        styles,
+    );
+    let original = fs::read(&path).unwrap();
+    let report = importing::import_docx(&path).unwrap();
+    assert_eq!(
+        report.document.content[0].attrs["minimumLineHeightTwips"],
+        276
+    );
+    assert!(!report.document.content[0].attrs.contains_key("lineSpacing"));
+    assert_eq!(report.document.content[0].attrs["spaceAfter"], 200);
+    assert_eq!(report.document.content[1].attrs["lineSpacing"], 360);
+    assert!(
+        !report.document.content[1]
+            .attrs
+            .contains_key("minimumLineHeightTwips")
+    );
+    assert!(report.compatibility.risks.contains(MINIMUM_WARNING));
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn minimum_line_height_does_not_erase_unrelated_spacing_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    for (index, other) in [
+        r#"<w:p><w:pPr><w:spacing w:line="240" w:lineRule="exact"/></w:pPr></w:p>"#,
+        r#"<w:p><w:pPr><w:spacing w:beforeLines="100"/></w:pPr></w:p>"#,
+        r#"<w:p><w:pPr><w:contextualSpacing/></w:pPr></w:p>"#,
+    ]
+    .iter()
+    .enumerate()
+    {
+        let path = dir.path().join(format!("minimum-unrelated-{index}.docx"));
+        external(
+            &path,
+            &format!(
+                r#"<w:p><w:pPr><w:spacing w:line="276" w:lineRule="atLeast"/></w:pPr><w:r><w:t>Minimum</w:t></w:r></w:p>{other}"#
+            ),
+            STYLES,
+        );
+        assert!(
+            importing::import_docx(&path)
+                .unwrap_err()
+                .to_string()
+                .contains(RISK)
+        );
+    }
+}
+
+#[test]
+fn formerly_unsupported_at_least_240_now_has_proved_minimum_output() {
+    // Intentional feature extension: retain the exact historical source case
+    // as a positive, with invalid zero separately retained in the refusal test.
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("historical-at-least-240.docx");
+    external(
+        &source,
+        r#"<w:p><w:pPr><w:spacing w:line="240" w:lineRule="atLeast"/></w:pPr><w:r><w:t>Source</w:t></w:r></w:p>"#,
+        STYLES,
+    );
+    let bytes = fs::read(&source).unwrap();
+    let report = importing::import_docx(&source).unwrap();
+    assert_eq!(
+        serde_json::to_value(&report.document).unwrap(),
+        json!({
+            "type":"doc", "attrs":{"styleProfile":"standard-v2"},
+            "content":[{"type":"paragraph", "attrs":{
+                "minimumLineHeightTwips":240,"spaceBefore":0,"spaceAfter":0,
+                "keepNext":false,"keepLines":false,"pageBreakBefore":false
+            }, "content":[{"type":"text","text":"Source"}]}]
+        })
+    );
+    assert!(report.compatibility.risks.contains(MINIMUM_WARNING));
+    assert!(!report.compatibility.risks.contains(RISK));
+    assert!(!report.compatibility.fidelity_verified);
+    let output = dir.path().join("historical-at-least-240-output.docx");
+    document::export_docx(&report.document, &output).unwrap();
+    let archive = parts(&fs::read(&output).unwrap());
+    let xml = String::from_utf8(archive["word/document.xml"].clone()).unwrap();
+    assert!(xml.contains(r#"w:line="240" w:lineRule="atLeast""#));
+    assert_eq!(
+        serde_json::to_value(document::load_authored_docx(&output).unwrap().unwrap()).unwrap(),
+        serde_json::to_value(&report.document).unwrap()
+    );
+    assert_eq!(fs::read(&source).unwrap(), bytes);
 }

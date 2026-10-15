@@ -1,3 +1,4 @@
+import {omitDefaultMinimumLineHeight} from './word-minimum-line-height-model';
 import {omitDefaultParagraphPagination} from './word-paragraph-pagination-model';
 import type {JSONContent} from '@tiptap/core';
 import {omitDefaultEmptyParagraphFont} from './word-empty-paragraph-font-model';
@@ -84,5 +85,5 @@ export function listGeometryStyle(geometry: ListGeometry): string {
 // Use only after schema construction: raw incoming JSON must reach the strict
 // validator unchanged, while legitimate PM null defaults are omitted here.
 export function listGeometryStateSnapshot(document: JSONContent): JSONContent {
-  return omitDefaultParagraphPagination(omitDefaultEmptyParagraphFont(omitDefaultParagraphIndent(omitDefaultListGeometry(document))));
+  return omitDefaultMinimumLineHeight(omitDefaultParagraphPagination(omitDefaultEmptyParagraphFont(omitDefaultParagraphIndent(omitDefaultListGeometry(document)))));
 }
