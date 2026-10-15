@@ -91,3 +91,63 @@ test('Reading search preserves original HTML-like text and expansion spelling fo
   for (const { start, end } of matches) { reconstructed += text.slice(offset, start) + text.slice(start, end); offset = end; }
   expect(reconstructed + text.slice(offset)).toBe(text);
 });
+
+const whitespace = (text, query, ligatures = false) => findReadingMatches(text, query, ligatures ? 'pdf-ligatures' : 'literal', true);
+for (const run of [' ', '\t', ' \t  ', '\n', '\r', '\r\n', ' \t\r\n\t ']) test(`PDF whitespace compatibility preserves complete ${JSON.stringify(run)} source span`, () => {
+  expect(whitespace(`a${run}b`, 'a b')).toEqual([{ start: 0, end: run.length + 2 }]);
+  expect(whitespace('a b', `a${run}b`)).toEqual([{ start: 0, end: 3 }]);
+  expect(whitespace(`a${run}b`, ' b')).toEqual([{ start: 1, end: run.length + 2 }]);
+  expect(whitespace(`a${run}b`, 'a ')).toEqual([{ start: 0, end: run.length + 1 }]);
+});
+
+test('PDF whitespace mode rejects blank-line and form-feed barriers symmetrically', () => {
+  for (const run of ['\n\n', '\r\r', '\r\n\r\n', '\n \t\r', '\n\r', '\f', ' \f ', '\n\f\n']) {
+    expect(whitespace(`a${run}b`, 'a b')).toEqual([]);
+    expect(whitespace('a b', `a${run}b`)).toEqual([]);
+    expect(whitespace(`a${run}b`, `a${run}b`)).toEqual([]);
+    expect(whitespace(`a${run}b`, 'b')).toEqual([{ start: run.length + 1, end: run.length + 2 }]);
+  }
+});
+
+test('PDF whitespace mode rejects empty and Unicode whitespace-only queries without trimming words', () => {
+  for (const query of ['', ' ', '\t', '\r\n', ' \n ', '\f', '\u00a0', '\u2003', '\u2028']) expect(whitespace(`a${query}b`, query)).toEqual([]);
+  expect(whitespace('a b', ' a b')).toEqual([]);
+  expect(whitespace('a b ', 'a b ')).toEqual([{ start: 0, end: 4 }]);
+  expect(findReadingMatches('a  b', ' ')).toHaveLength(2);
+});
+
+test('PDF whitespace and ligature options compose only when explicitly enabled', () => {
+  const text = '😀oﬃce\r\n\twork';
+  expect(whitespace(text, 'office work')).toEqual([]);
+  expect(compatible(text, 'office work')).toEqual([]);
+  expect(whitespace(text, 'office work', true)).toEqual([{ start: 2, end: text.length }]);
+  expect(whitespace(text, 'fi', true)).toEqual([]);
+  expect(whitespace('ﬀf\nword', 'f word', true)).toEqual([{ start: 1, end: 7 }]);
+});
+
+test('PDF whitespace mode retains astral boundaries and literal Unicode distinctions', () => {
+  expect(whitespace('😀\n😀', '😀 😀')).toEqual([{ start: 0, end: 5 }]);
+  expect(whitespace('😀\n😀', '\ude00')).toEqual([]);
+  for (const [source, query] of [['a\u00a0b', 'a b'], ['a\u2003b', 'a b'], ['a\u2028b', 'a b'], ['a\vb', 'a b'], ['A\nb', 'a b'], ['hyphen-\nation', 'hyphenation'], ['é\nb', 'e\u0301 b']]) expect(whitespace(source, query)).toEqual([]);
+});
+
+test('PDF whitespace mode preserves nonoverlap and the 2000-result cap', () => {
+  expect(whitespace('a\na\na', 'a a')).toEqual([{ start: 0, end: 3 }]);
+  const hits = whitespace('a\t\nb!'.repeat(2001), 'a b');
+  expect(hits).toHaveLength(2000); expect(hits[1999]).toEqual({ start: 9995, end: 9999 });
+});
+
+test('PDF whitespace mode preserves the genuine tracemonkey title line-wrap text and offsets', () => {
+  const title = 'Trace-based Just-in-Time Type Specialization for Dynamic\nLanguages';
+  const query = 'Type Specialization for Dynamic Languages';
+  expect(findReadingMatches(title, query)).toEqual([]); expect(compatible(title, query)).toEqual([]);
+  expect(whitespace(title, query)).toEqual([{ start: 25, end: 66 }]);
+  expect(whitespace('\n\n' + title, query)).toEqual([{ start: 27, end: 68 }]);
+});
+
+test('PDF whitespace search remains bounded at the extraction text limit', () => {
+  const prefix = 'x'.repeat(2 * 1024 * 1024 - 4), text = prefix + 'a\nb!';
+  expect(whitespace(text, 'a b')).toEqual([{ start: prefix.length, end: prefix.length + 3 }]);
+  expect(whitespace(' \t'.repeat(1024 * 1024), 'word')).toEqual([]);
+  expect(whitespace('\r\n'.repeat(1024 * 1024), 'word')).toEqual([]);
+});

@@ -63,6 +63,9 @@ function controls() {
   el('pdf-ligature-search-control').hidden = current?.inspection.format !== 'pdf';
   el('pdf-ligature-search-hint').hidden = current?.inspection.format !== 'pdf' || mode === 'page';
   el<HTMLInputElement>('pdf-ligature-search').disabled = busy || current?.inspection.format !== 'pdf' || mode === 'page' || !current.inspection.text;
+  el('pdf-whitespace-search-control').hidden = current?.inspection.format !== 'pdf';
+  el('pdf-whitespace-search-hint').hidden = current?.inspection.format !== 'pdf' || mode === 'page';
+  el<HTMLInputElement>('pdf-whitespace-search').disabled = busy || current?.inspection.format !== 'pdf' || mode === 'page' || !current.inspection.text;
   el<HTMLSelectElement>('zoom').disabled = busy;
   el<HTMLButtonElement>('prev-page').disabled = busy || !pdf || pageNumber <= 1;
   el<HTMLButtonElement>('next-page').disabled = busy || !pdf || pageNumber >= pdf.numPages;
@@ -102,7 +105,8 @@ function renderText() {
   }
   // Use text nodes throughout: document text is never interpreted as HTML.
   const searchMode = current.inspection.format === 'pdf' && el<HTMLInputElement>('pdf-ligature-search').checked ? 'pdf-ligatures' : 'literal';
-  const matches = findReadingMatches(text, query, searchMode);
+  const whitespaceCompatible = current.inspection.format === 'pdf' && el<HTMLInputElement>('pdf-whitespace-search').checked;
+  const matches = findReadingMatches(text, query, searchMode, whitespaceCompatible);
   let offset = 0;
   for (const match of matches) {
     target.append(document.createTextNode(text.slice(offset, match.start)));
@@ -318,6 +322,7 @@ async function openDocument() {
     closeAuthoring(); closeWorkbook(); closePresentation(); closePresentationEditor(); el('reading-toolbar').hidden = false;
     current = opened;
     el<HTMLInputElement>('pdf-ligature-search').checked = false;
+    el<HTMLInputElement>('pdf-whitespace-search').checked = false;
     await clearPdf();
     if (current !== opened || workspaceAttempt !== selection) return;
     pageNumber = 1; renderTask = null; pdfTextSummary = null;
@@ -477,6 +482,7 @@ el('page-view').addEventListener('click', () => operation('正在显示页面…
 el('replace-toggle').addEventListener('click', () => { const panel = el('replace-panel'); panel.hidden = !panel.hidden; if (!panel.hidden) el('find').focus(); });
 el('search').addEventListener('input', renderText);
 el('pdf-ligature-search').addEventListener('change', renderText);
+el('pdf-whitespace-search').addEventListener('change', renderText);
 el('save-replacement').addEventListener('click', () => operation('正在替换并另存…', async () => {
   const find = el<HTMLInputElement>('find').value;
   if (!find) { notice('请输入要查找的文字。', true); el('find').focus(); return; }
@@ -498,6 +504,7 @@ async function prepareEditorWorkspace() {
   closeWorkbook();
   current = null;
   el<HTMLInputElement>('pdf-ligature-search').checked = false;
+  el<HTMLInputElement>('pdf-whitespace-search').checked = false;
   await clearPdf();
   if (workspaceAttempt !== selection) throw new Error('文档会话已更新，请重试。');
   el('empty').hidden = true; el('document').hidden = true; el('pdf-pages').hidden = true;

@@ -8,7 +8,7 @@ const source = readFileSync('ui/main.ts', 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
 const names = ['clearPdf', 'renderPage', 'showPdf', 'recoverPdfText', 'renderText', 'setMode', 'operation', 'openDocument', 'prepareEditorWorkspace', 'controls', 'currentDisplayedPdfPage'];
 const functions = names.map(name => ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(ast)).join('\n');
-const changeBinding = ast.statements.find(node => node.getText(ast).startsWith("el('pdf-ligature-search').addEventListener")).getText(ast);
+const changeBinding = ['pdf-ligature-search', 'pdf-whitespace-search'].map(id => ast.statements.find(node => node.getText(ast).startsWith(`el('${id}').addEventListener`)).getText(ast)).join('\n');
 const js = ts.transpileModule(functions + '\n' + changeBinding, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -242,4 +242,55 @@ test('PDF ligature preference survives extraction cancellation and searches only
   pending.resolve({ text: '', complete: false }); await run;
   expect(app.el('pdf-ligature-search').checked).toBe(true); expect(app.state().current.inspection.text).toBe('oﬃce');
   expect(app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent)).toEqual(['oﬃce']);
+});
+
+test('PDF whitespace change binding composes with ligatures and preserves safe original marks', () => {
+  const current = owner(); current.inspection.text = '<img onerror="oﬃce\r\n work">😀';
+  const app = harness({ current }); app.el('search').value = 'office work';
+  const marks = () => app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent);
+  app.renderText(); expect(marks()).toEqual([]);
+  app.el('pdf-whitespace-search').checked = true; app.el('pdf-whitespace-search').dispatch('change'); expect(marks()).toEqual([]);
+  app.el('pdf-ligature-search').checked = true; app.el('pdf-ligature-search').dispatch('change'); expect(marks()).toEqual(['oﬃce\r\n work']);
+  expect(app.el('match-count').textContent).toBe('1 处');
+  expect(app.el('text-content').nodes.map(node => node.textContent).join('')).toBe(current.inspection.text);
+  expect(app.el('text-content').nodes.every(node => !node.tag || node.tag === 'mark')).toBe(true);
+  app.el('pdf-whitespace-search').checked = false; app.el('pdf-whitespace-search').dispatch('change'); expect(marks()).toEqual([]);
+});
+
+test('PDF whitespace controls are gated by format, page view, empty text and busy state', async () => {
+  const app = harness(); app.controls(); expect(app.el('pdf-whitespace-search-control').hidden).toBe(false); expect(app.el('pdf-whitespace-search').disabled).toBe(false);
+  app.el('pdf-whitespace-search').checked = true; app.setMode('page'); expect(app.el('pdf-whitespace-search').disabled).toBe(true); expect(app.el('pdf-whitespace-search-hint').hidden).toBe(true);
+  app.setMode('text'); expect(app.el('pdf-whitespace-search').disabled).toBe(false);
+  await app.operation('busy', async () => { expect(app.el('pdf-whitespace-search').disabled).toBe(true); }); expect(app.el('pdf-whitespace-search').checked).toBe(true);
+  app.state().current.inspection.text = ''; app.controls(); expect(app.el('pdf-whitespace-search').disabled).toBe(true);
+  for (const format of ['doc', 'docx', 'xlsx', 'pptx']) {
+    const next = owner(); next.inspection.format = format; next.inspection.text = 'a\nb'; app.set(next); app.controls();
+    expect(app.el('pdf-whitespace-search-control').hidden).toBe(true); expect(app.el('pdf-whitespace-search').disabled).toBe(true);
+    app.el('search').value = 'a b'; app.renderText(); expect(app.el('match-count').textContent).toBe('0 处');
+  }
+});
+
+test('PDF whitespace preference and matches survive canceled and failed opens', async () => {
+  for (const fail of [false, true]) {
+    const current = owner(); current.inspection.text = 'a\nb';
+    const app = harness({ current, invoke: async () => { if (fail) throw new Error('failed'); return null; } });
+    app.el('pdf-whitespace-search').checked = true; app.el('search').value = 'a b'; app.renderText(); await app.openDocument();
+    expect(app.el('pdf-whitespace-search').checked).toBe(true);
+    expect(app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent)).toEqual(['a\nb']);
+  }
+});
+
+test('PDF whitespace preference resets on successful same-path open and editor workspace reset', async () => {
+  const next = owner('2'), app = harness({ invoke: async command => command === 'open_document' ? next : Uint8Array.of(1).buffer, task: { promise: Promise.resolve(proxy()), async destroy() {} } });
+  app.el('pdf-whitespace-search').checked = true; await app.openDocument(); expect(app.el('pdf-whitespace-search').checked).toBe(false);
+  app.el('pdf-whitespace-search').checked = true; await app.prepareEditorWorkspace(); expect(app.el('pdf-whitespace-search').checked).toBe(false); expect(app.el('pdf-whitespace-search-control').hidden).toBe(true);
+});
+
+test('PDF whitespace preference survives canceled extraction without using discarded text', async () => {
+  const pending = deferred(), current = owner(); current.inspection.text = 'a\nb';
+  const app = harness({ current, pdf: proxy(), extract: async () => pending.promise });
+  app.el('pdf-whitespace-search').checked = true; app.el('search').value = 'a b';
+  const run = app.recoverPdfText(); app.stop(); pending.resolve({ text: '', complete: false }); await run;
+  expect(app.el('pdf-whitespace-search').checked).toBe(true); expect(app.state().current.inspection.text).toBe('a\nb');
+  expect(app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent)).toEqual(['a\nb']);
 });
