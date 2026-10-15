@@ -670,7 +670,7 @@ fn safe_target(target: &str) -> Result<()> {
     );
     Ok(())
 }
-fn package_identity(
+pub(crate) fn package_identity(
     package: &mut OpcReader<Cursor<&[u8]>>,
     bytes: &[u8],
     main: &office_oxide::core::opc::PartName,

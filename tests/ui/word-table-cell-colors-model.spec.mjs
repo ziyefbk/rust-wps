@@ -221,14 +221,15 @@ function controlsHarness(run, initial = doc([table(), p('after'), table(['000000
   const previousDocument = globalThis.document, previousElement = globalThis.HTMLElement, elements = new Map();
   const element = id => {if (!elements.has(id)) {const node = new Element(); node.id = id; elements.set(id, node);} return elements.get(id);};
   globalThis.document = {getElementById: element}; globalThis.HTMLElement = Element;
-  let state = stateAt(initial), writes = 0, locked = false, pendingSelection, controls;
-  const notices = []; let editor = {get state() {return state;}, view: {focus() {}, dispatch(tr) {state = state.apply(tr); if (tr.docChanged) writes++; controls.update();}}};
+  let state = stateAt(initial), writes = 0, locked = false, composing = false, editable = true, pendingSelection, controls;
+  const notices = []; let editor = {get state() {return state;}, get isEditable() {return editable;}, view: {get composing() {return composing;}, focus() {}, dispatch(tr) {state = state.apply(tr); if (tr.docChanged) writes++; controls.update();}}};
   controls = new WordTableCellColorControls({editor: () => editor, locked: () => locked, notice: message => notices.push(message),
     syncSelection: () => {if (pendingSelection) {state = state.apply(state.tr.setSelection(pendingSelection)); controls.update(); pendingSelection = null;}}}); controls.update();
   const change = (tr, notify = true) => {state = state.apply(tr); if (notify) controls.update();};
   const fill = value => {const input = element('edit-cell-fill'); input.emit('pointerdown'); input.emit('focus'); input.value = value; input.emit('input');};
   const mode = value => {const select = element('edit-cell-text-color-mode'); select.emit('pointerdown'); select.value = value; select.emit('change');};
   try {run({element, notices, controls, change, fill, mode, get state() {return state;}, get writes() {return writes;}, lock(value) {locked = value; controls.update();},
+    composing(value) {composing = value; controls.update();}, editable(value) {editable = value; controls.update();},
     select(selection) {pendingSelection = selection;}, replace() {editor = Object.defineProperties({}, Object.getOwnPropertyDescriptors(editor)); controls.reset(); controls.update();}});}
   finally {globalThis.document = previousDocument; globalThis.HTMLElement = previousElement;}
 }
@@ -404,4 +405,153 @@ test('evidence helper preserves all imported font mark attrs despite null protot
   writeFileSync(input, JSON.stringify(raw));
   const rejected = spawnSync(process.execPath, ['tests/ui/edit-table-cell-colors.mjs', input, testInfo.outputPath('must-not-write')], {encoding: 'utf8'});
   expect(rejected.status).not.toBe(0); expect(rejected.stderr).toContain('Lost mark fontFamily.unmodeled');
+});
+
+const noFillDoc = (fillModes = ['none', null, null, 'none', null, 'none']) => {
+  const raw = snap(doc()); raw.content[0].content.forEach((row, r) => row.content.forEach((cell, c) => {
+    if (fillModes[r * 3 + c]) cell.attrs = {...cell.attrs, cellFillMode: fillModes[r * 3 + c]};
+  })); return schema.nodeFromJSON(raw);
+};
+const fillModes = state => cells(state.doc).map(pos => state.doc.nodeAt(pos).attrs.cellFillMode);
+
+test('no-fill raw model has exact token ownership and rejects collisions before schema loss', () => {
+  expect(colors.isCellFillMode('none')).toBe(true);
+  for (const value of [null, undefined, 'NONE', ' none', 'none ', '', 'transparent', 'FFFFFF', true, 0, [], {}]) {
+    expect(colors.isCellFillMode(value)).toBe(false);
+    const raw = snap(doc()); raw.content[0].content[0].content[0].attrs.cellFillMode = value;
+    expect(() => tables.validateTableWidthsDocument(raw)).toThrow();
+  }
+  for (const type of ['doc', 'table', 'tableRow', 'paragraph', 'text']) expect(() => tables.validateTableWidthsDocument({type: 'doc', content: [{type, attrs: {cellFillMode: 'none'}}]})).toThrow();
+  for (const rgb of ['FFFFFF', null, undefined]) {
+    const raw = snap(noFillDoc()); raw.content[0].content[0].content[0].attrs.cellFillRgb = rgb;
+    expect(() => tables.validateTableWidthsDocument(raw)).toThrow();
+  }
+  const marked = snap(doc()); marked.content[0].content[0].content[0].content[0].content[0].marks = [{type: 'bold', attrs: {cellFillMode: 'none'}}];
+  expect(() => tables.validateTableWidthsDocument(marked)).toThrow();
+  for (const mutate of [raw => raw.content[0].content[1].content.pop(), raw => {raw.content[0].content[0].content[0].attrs.rowspan = 2;},
+    raw => raw.content[0].content[0].content[0].content.push(snap(table()))]) {
+    const raw = snap(noFillDoc()); mutate(raw); expect(() => tables.validateTableWidthsDocument(raw)).toThrow();
+  }
+  const raw = snap(noFillDoc()); tables.validateTableWidthsDocument(raw); expect(snap(schema.nodeFromJSON(raw))).toEqual(raw);
+});
+
+test('no-fill patch transitions and partial null resets are atomic independent and exactly undoable', () => {
+  const initial = apply(stateAt(noFillDoc()), {cellTextColorMode: 'auto'});
+  for (const [patch, rgb, mode, textMode] of [
+    [{cellFillRgb: 'FFFFFF'}, 'FFFFFF', null, 'auto'], [{cellFillRgb: '123ABC', cellFillMode: null}, '123ABC', null, 'auto'],
+    [{cellFillRgb: null}, null, null, 'auto'], [{cellFillMode: null}, null, null, 'auto'],
+    [{cellTextColorMode: null}, null, 'none', null], [{cellFillMode: 'none', cellFillRgb: null, cellTextColorMode: null}, null, 'none', null],
+    [{cellFillRgb: null, cellFillMode: null, cellTextColorMode: null}, null, null, null],
+  ]) {
+    let state = apply(initial, patch), expected = structuredClone(snap(initial.doc));
+    const attrs = expected.content[0].content[0].content[0].attrs;
+    for (const [field, value] of [['cellFillRgb', rgb], ['cellFillMode', mode], ['cellTextColorMode', textMode]]) {if (value === null) delete attrs[field]; else attrs[field] = value;}
+    expect(snap(state.doc)).toEqual(expected);
+    const after = state.doc; expect(undo(state, tr => {state = state.apply(tr);})).toBe(true); expect(state.doc.eq(initial.doc)).toBe(true);
+    expect(redo(state, tr => {state = state.apply(tr);})).toBe(true); expect(state.doc.eq(after)).toBe(true);
+  }
+  const rgb = apply(initial, {cellFillRgb: 'FFFFFF'}), none = apply(rgb, {cellFillMode: 'none'});
+  expect(fillModes(none)[0]).toBe('none'); expect(fills(none)[0]).toBeNull(); expect(modes(none)[0]).toBe('auto');
+  expect(tables.createTableCellColorsTransaction(none, {cellFillMode: 'none'})).toBeNull();
+  for (const patch of [{cellFillRgb: 'FFFFFF', cellFillMode: 'none'}, {cellFillRgb: null, cellFillMode: 'None'}, {cellFillMode: undefined}, {cellFillMode: 'none', cellTextColorMode: 'bad'}]) {
+    const original = initial.doc, shared = initial.tr;
+    expect(() => tables.createTableCellColorsTransaction(initial, patch)).toThrow(); expect(initial.doc).toBe(original); expect(shared.steps).toEqual([]);
+  }
+});
+
+test('no-fill and absence are mixed even without any RGB and every existing selection scope is retained', () => {
+  const document = noFillDoc(), at = cells(document);
+  for (const selection of [NodeSelection.create(document, 0), CellSelection.create(document, at[0], at[1]), TextSelection.create(document, at[0] + 2, at[1] + 3)]) {
+    let state = choose(stateAt(document), selection), selected = tables.selectedTableCellColors(state);
+    expect(selected.cellFill).toEqual({value: null, mixed: true, hasExplicit: true}); expect(selected.cellFillRgb.mixed).toBe(false);
+    const before = state.doc, count = selected.cells.length; state = apply(state, {cellFillMode: 'none', cellTextColorMode: 'auto'});
+    expect(tables.selectedTableCellColors(state).cellFill).toEqual({value: 'none', mixed: false, hasExplicit: true});
+    expect(tables.selectedTableCellColors(state).cells).toHaveLength(count);
+    expect(undo(state, tr => {state = state.apply(tr);})).toBe(true); expect(state.doc.eq(before)).toBe(true);
+  }
+  const white = apply(stateAt(noFillDoc()), {cellFillRgb: 'FFFFFF'}); expect(tables.selectedTableCellColors(white).cellFill.value).toBe('FFFFFF');
+});
+
+test('no-fill structure retains survivors and header conversion while new rows and columns start absent', () => {
+  for (const action of ['addRowBefore', 'addRowAfter', 'addColumnBefore', 'addColumnAfter', 'deleteRow', 'deleteColumn']) {
+    const original = noFillDoc(Array(6).fill('none')), state = stateAt(original, 4);
+    let next = state.apply(closeHistory(tables.createTableStructureTransaction(state, action)));
+    tables.validateTableWidthsDocument(snap(next.doc));
+    if (action.startsWith('addRow')) {
+      const at = action === 'addRowBefore' ? 1 : 2; next.doc.firstChild.child(at).forEach(cell => expect(cell.attrs.cellFillMode).toBeNull());
+      expect(fillModes(next).filter(Boolean)).toHaveLength(6);
+    }
+    if (action.startsWith('addColumn')) {
+      const at = action === 'addColumnBefore' ? 1 : 2; next.doc.firstChild.forEach(row => expect(row.child(at).attrs.cellFillMode).toBeNull());
+      expect(fillModes(next).filter(Boolean)).toHaveLength(6);
+    }
+    expect(undo(next, tr => {next = next.apply(tr);})).toBe(true); expect(next.doc.eq(original)).toBe(true);
+  }
+  for (const command of [toggleHeaderCell, toggleHeaderRow]) {
+    let state = stateAt(noFillDoc(Array(6).fill('none')), 4), original = state.doc;
+    command(state, tr => {state = state.apply(closeHistory(tr));}); expect(fillModes(state)).toEqual(Array(6).fill('none'));
+    expect(undo(state, tr => {state = state.apply(tr);})).toBe(true); expect(state.doc.eq(original)).toBe(true);
+  }
+});
+
+test('distinct no-fill control displays transparency mixed and default without silently choosing white', () => {
+  controlsHarness(h => {
+    expect(h.element('edit-cell-fill').dataset.fillState).toBe('none'); expect(h.element('edit-cell-fill').placeholder).toBe('无底色');
+    expect(h.element('edit-cell-fill-reset').disabled).toBe(false); expect(h.element('edit-cell-fill-picker').title).toContain('透明');
+    h.mode('auto'); h.element('edit-cell-fill-reset').emit('click'); expect(fillModes(h.state)[0]).toBeNull(); expect(modes(h.state)[0]).toBe('auto');
+    h.element('edit-cell-fill-none').emit('click'); expect(fillModes(h.state)[0]).toBe('none');
+    h.fill('FFFFFF'); h.element('edit-cell-fill-apply').emit('click'); expect(fills(h.state)[0]).toBe('FFFFFF'); expect(fillModes(h.state)[0]).toBeNull();
+    h.element('edit-cell-fill-none').emit('click'); h.fill(''); h.element('edit-cell-fill-apply').emit('click');
+    expect(fillModes(h.state)[0]).toBeNull(); expect(fills(h.state)[0]).toBeNull(); expect(modes(h.state)[0]).toBe('auto');
+    h.change(h.state.tr.setSelection(NodeSelection.create(h.state.doc, 0))); expect(h.element('edit-cell-fill').placeholder).toBe('混合');
+    const before = h.state.doc, writes = h.writes; h.element('edit-cell-fill-apply').emit('click'); expect(h.state.doc).toBe(before); expect(h.writes).toBe(writes);
+    h.lock(true); expect(h.element('edit-cell-fill-none').disabled).toBe(true); h.element('edit-cell-fill-none').emit('click'); expect(h.state.doc).toBe(before);
+  }, noFillDoc());
+});
+
+test('no-fill HTML transport retains transparent headers and white stays a distinct opaque declaration', () => {
+  const original = noFillDoc(Array(6).fill('none')).firstChild, element = serializeNode(original), parsed = parseNode(element);
+  expect(parsed.firstChild.eq(original)).toBe(true); tables.validateTableWidthsDocument(snap(parsed));
+  const headers = element.querySelectorAll('th'); expect(headers).toHaveLength(3);
+  for (const header of headers) {expect(header.attrs['data-cell-fill-mode']).toBe('none'); expect(header.style.cssText).toContain('background-color: transparent');}
+  expect(colors.cellFillModeDOM({})).toEqual({}); expect(colors.cellFillModeDOM({cellFillRgb: 'FFFFFF'})).toEqual({});
+  expect(colors.cellFillDOM({cellFillRgb: 'FFFFFF'})).toEqual({'data-cell-fill-rgb': 'FFFFFF', style: 'background-color: #FFFFFF'});
+  const root = new ParseElement(); root.appendChild(element); expect(colors.validTableCellColorsHTML(root)).toBe(true);
+  for (const value of ['', 'NONE', 'transparent', 'null', ' none']) {
+    headers[0].setAttribute('data-cell-fill-mode', value); expect(colors.validTableCellColorsHTML(root)).toBe(false);
+    expect(() => tables.validateTableWidthsDocument(snap(parseNode(element)))).toThrow();
+  }
+  headers[0].setAttribute('data-cell-fill-mode', 'none'); headers[0].setAttribute('data-cell-fill-rgb', 'FFFFFF');
+  expect(colors.validTableCellColorsHTML(root)).toBe(false); expect(() => tables.validateTableWidthsDocument(snap(parseNode(element)))).toThrow();
+});
+
+test('no-fill print clone is captured before waits and remains independent from reset and explicit white', async () => {
+  const previous = globalThis.document, host = new Element(); let ready;
+  globalThis.document = {createElement: tag => new Element(tag), getElementById: () => host, fonts: {ready: new Promise(resolve => {ready = resolve;})}};
+  try {
+    const source = new Element(), cell = new Element('th'); source.appendChild(cell);
+    cell.attrs = schema.nodes.tableHeader.spec.toDOM(schema.node('tableHeader', {cellFillMode: 'none', cellTextColorMode: 'auto'}, p()))[1];
+    const pending = preparePrintSnapshot(source); cell.attrs = colors.cellFillDOM({cellFillRgb: 'FFFFFF'}); ready(); await pending;
+    expect(host.firstChild.firstChild.attrs['data-cell-fill-mode']).toBe('none'); expect(host.firstChild.firstChild.attrs.style).toContain('background-color: transparent');
+    expect(host.firstChild.firstChild.attrs.style).toContain('--word-cell-auto-preview: #000000');
+    await preparePrintSnapshot(source); expect(host.firstChild.firstChild.attrs['data-cell-fill-mode']).toBeUndefined(); expect(host.firstChild.firstChild.attrs.style).toBe('background-color: #FFFFFF');
+    const css = readFileSync('ui/style.css', 'utf8'); expect(css).toContain('.tiptap th[data-cell-fill-mode="none"]'); expect(css).toContain('#print-document .tiptap [data-cell-fill-mode="none"] { background-color:transparent; }');
+  } finally {globalThis.document = previous;}
+});
+
+
+test('no-fill button delayed click refuses changed selection document owner composing and readonly state', () => {
+  controlsHarness(h => {
+    const button = h.element('edit-cell-fill-none');
+    for (const invalidate of [() => h.change(h.state.tr.setSelection(TextSelection.create(h.state.doc, cells(h.state.doc)[1] + 2))),
+      () => h.change(h.state.tr.insertText('changed')), () => h.replace()]) {
+      button.emit('pointerdown'); button.emit('focus'); invalidate(); const before = h.state.doc; button.emit('click');
+      expect(h.state.doc).toBe(before); expect(h.writes).toBe(0);
+    }
+    for (const block of [h.composing, value => h.editable(!value), h.lock]) {
+      block(true); expect(button.disabled).toBe(true); button.emit('click'); expect(h.writes).toBe(0); block(false);
+    }
+    button.emit('focus'); const original = h.state.doc; h.change(h.state.tr.insertText('keyboard stale')); button.emit('click'); expect(h.writes).toBe(0);
+    button.emit('blur'); button.emit('focus'); button.emit('click'); expect(h.writes).toBe(1); expect(fillModes(h.state)[1]).toBe('none');
+  });
 });

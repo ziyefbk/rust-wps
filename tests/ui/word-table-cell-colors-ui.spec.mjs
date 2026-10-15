@@ -80,3 +80,18 @@ test('invalid fill and abandoned keyboard editing do not alter a cell', async ({
   await page.locator('#edit-cell-fill').fill('123456'); await page.locator(`${editor} > p`).last().click(); await expect(page.locator('#edit-cell-fill')).toHaveValue('');
   await cell(page).locator('p').click(); await expect(cell(page)).not.toHaveAttribute('data-cell-fill-rgb');
 });
+
+test('no-fill is transparent on a header distinct from white default and print with draft undo', async ({page}) => {
+  await page.addInitScript(() => {window.print = () => {};}); const draft = await open(page);
+  const header = page.locator(`${editor} th`).first(); await header.locator('p').click();
+  await expect(header).toHaveCSS('background-color', 'rgb(232, 238, 247)');
+  await page.locator('#edit-cell-fill-none').click(); await expect(header).toHaveAttribute('data-cell-fill-mode', 'none');
+  await expect(header).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)'); await expect(page.locator('#edit-cell-fill')).toHaveAttribute('placeholder', '无底色');
+  await expect.poll(() => draft()?.content[0].content[0].content[0].attrs?.cellFillMode).toBe('none');
+  await page.locator('#edit-print').click(); const printed = page.locator('#print-document th').first();
+  await expect(printed).toHaveAttribute('data-cell-fill-mode', 'none'); await expect(printed).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await fill(page, 'FFFFFF'); await expect(header).not.toHaveAttribute('data-cell-fill-mode'); await expect(header).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(printed).toHaveAttribute('data-cell-fill-mode', 'none');
+  await page.locator('#edit-undo').click(); await expect(header).toHaveAttribute('data-cell-fill-mode', 'none');
+  await page.locator('#edit-cell-fill-reset').click(); await expect(header).not.toHaveAttribute('data-cell-fill-mode'); await expect(header).toHaveCSS('background-color', 'rgb(232, 238, 247)');
+});

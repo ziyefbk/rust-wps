@@ -725,6 +725,10 @@ pub fn cell_vertical_align(node: &Node) -> Result<Option<&str>> {
 /// Direct cell fill and local automatic foreground are independent. Omission
 /// keeps the historical profile/header defaults and byte representation.
 pub fn cell_fill_rgb(node: &Node) -> Result<Option<&str>> {
+    ensure!(
+        !(node.attrs.contains_key("cellFillRgb") && node.attrs.contains_key("cellFillMode")),
+        "Cell fill RGB and mode are mutually exclusive"
+    );
     node.attrs
         .get("cellFillRgb")
         .map(|value| {
@@ -742,6 +746,18 @@ pub fn cell_fill_rgb(node: &Node) -> Result<Option<&str>> {
         })
         .transpose()
 }
+/// Explicit none suppresses cell shading; it is not white or a missing value.
+pub fn cell_fill_none(node: &Node) -> Result<bool> {
+    ensure!(
+        !(node.attrs.contains_key("cellFillRgb") && node.attrs.contains_key("cellFillMode")),
+        "Cell fill RGB and mode are mutually exclusive"
+    );
+    match node.attrs.get("cellFillMode") {
+        None => Ok(false),
+        Some(Value::String(value)) if value == "none" => Ok(true),
+        _ => bail!("Cell fill mode must be omitted or none"),
+    }
+}
 pub fn cell_text_auto(node: &Node) -> Result<bool> {
     match node.attrs.get("cellTextColorMode") {
         None => Ok(false),
@@ -751,6 +767,7 @@ pub fn cell_text_auto(node: &Node) -> Result<bool> {
 }
 fn has_table_colors(node: &Node) -> bool {
     node.attrs.contains_key("cellFillRgb")
+        || node.attrs.contains_key("cellFillMode")
         || node.attrs.contains_key("cellTextColorMode")
         || node.content.iter().any(has_table_colors)
 }
@@ -1149,6 +1166,7 @@ pub fn validate(doc: &Node) -> Result<()> {
                 "align",
                 "cellVerticalAlign",
                 "cellFillRgb",
+                "cellFillMode",
                 "cellTextColorMode",
             ],
             "tableRow" => &["rowMinHeightTwips", "rowCantSplit"],
@@ -1423,6 +1441,7 @@ pub fn validate(doc: &Node) -> Result<()> {
         if matches!(node.kind.as_str(), "tableCell" | "tableHeader") {
             cell_vertical_align(node)?;
             cell_fill_rgb(node)?;
+            cell_fill_none(node)?;
             cell_text_auto(node)?;
             ensure!(
                 integer(node, "colspan", 1)? == 1 && integer(node, "rowspan", 1)? == 1,
@@ -1855,6 +1874,8 @@ impl Writer {
                                 format!(
                                     "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"{fill}\"/>"
                                 )
+                            } else if cell_fill_none(cell)? {
+                                String::new()
                             } else if cell.kind == "tableHeader" {
                                 "<w:shd w:fill=\"E8EEF7\"/>".to_owned()
                             } else {
@@ -2002,6 +2023,14 @@ fn image_font_xml(font: &crate::image_dimensions::ImageParagraphFont) -> String 
 }
 
 fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
+    encode_docx_with_styles(doc, None)
+}
+// Private pre-completion test seam. Production always passes None; no public
+// caller can use it to bypass the independently checked generated package.
+fn encode_docx_with_styles(
+    doc: &Node,
+    styles_transform: Option<fn(&mut String)>,
+) -> Result<(Vec<u8>, ExportReport)> {
     validate(doc)?;
     let profile = style_profile(doc)?;
     let model_part = profile.model_part();
@@ -2048,6 +2077,9 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
     }
     styles.push_str(&writer.image_styles.concat());
     styles.push_str("</w:styles>");
+    if let Some(transform) = styles_transform {
+        transform(&mut styles);
+    }
     let mut numbering =
         r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">"#
             .to_string();
@@ -2157,6 +2189,7 @@ fn encode_docx(doc: &Node) -> Result<(Vec<u8>, ExportReport)> {
         zip.write_all(&embedded)?;
         zip.finish()?;
     }
+    crate::table_cell_no_fill::generated_package(bytes.get_ref(), doc)?;
     office_oxide::Document::from_reader(
         Cursor::new(bytes.get_ref().clone()),
         office_oxide::DocumentFormat::Docx,
@@ -2188,4 +2221,254 @@ pub fn export_docx(doc: &Node, output: &Path) -> Result<ExportReport> {
     temp.persist_noclobber(output)
         .map_err(|e| anyhow::anyhow!("Cannot publish output: {}", e.error))?;
     Ok(report)
+}
+
+#[cfg(test)]
+mod no_fill_tests {
+    use super::*;
+    use serde_json::json;
+    fn model() -> Node {
+        serde_json::from_value(json!({"type":"doc","content":[{"type":"table","content":[{"type":"tableRow","content":[{"type":"tableHeader","content":[{"type":"paragraph","content":[{"type":"text","text":"Header"}]}]}]},{"type":"tableRow","content":[{"type":"tableCell","content":[{"type":"paragraph","content":[{"type":"text","text":"Body"}]}]}]}]}]})).unwrap()
+    }
+    fn fill(doc: &mut Node, row: usize, value: Value) {
+        doc.content[0].content[row].content[0]
+            .attrs
+            .insert("cellFillMode".into(), value);
+    }
+    fn parts(doc: &Node) -> std::collections::BTreeMap<String, Vec<u8>> {
+        crate::editing::parts(&encode_docx(doc).unwrap().0).unwrap()
+    }
+    fn repack(parts: &std::collections::BTreeMap<String, Vec<u8>>) -> Vec<u8> {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in parts {
+            writer
+                .start_file(name, SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+    fn reopen(parts: &std::collections::BTreeMap<String, Vec<u8>>) -> Result<Option<Node>> {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), repack(parts)).unwrap();
+        load_authored_docx(file.path())
+    }
+    #[test]
+    fn no_fill_modes_are_strict_and_exclusive_by_presence() {
+        for value in [
+            json!(null),
+            json!(true),
+            json!(0),
+            json!([]),
+            json!({}),
+            json!("NONE"),
+            json!(""),
+            json!("transparent"),
+        ] {
+            let mut doc = model();
+            fill(&mut doc, 0, value);
+            assert!(validate(&doc).is_err());
+        }
+        for value in [json!(null), json!("FFFFFF"), json!("bad")] {
+            let mut doc = model();
+            fill(&mut doc, 0, json!("none"));
+            doc.content[0].content[0].content[0]
+                .attrs
+                .insert("cellFillRgb".into(), value);
+            assert!(validate(&doc).is_err());
+        }
+        for row in 0..2 {
+            let mut doc = model();
+            fill(&mut doc, row, json!("none"));
+            assert!(validate(&doc).is_ok());
+        }
+        for path in 0..5 {
+            let mut doc = model();
+            let node = match path {
+                0 => &mut doc,
+                1 => &mut doc.content[0],
+                2 => &mut doc.content[0].content[0],
+                3 => &mut doc.content[0].content[0].content[0].content[0],
+                _ => &mut doc.content[0].content[0].content[0].content[0].content[0],
+            };
+            node.attrs.insert("cellFillMode".into(), json!("none"));
+            assert!(validate(&doc).is_err());
+        }
+    }
+    #[test]
+    fn cell_fill_mode_is_rejected_on_every_supported_text_mark() {
+        for mark in [
+            json!({"type":"bold"}),
+            json!({"type":"italic"}),
+            json!({"type":"underline"}),
+            json!({"type":"strike"}),
+            json!({"type":"code"}),
+            json!({"type":"superscript"}),
+            json!({"type":"subscript"}),
+            json!({"type":"link","attrs":{"href":"https://example.com/"}}),
+            json!({"type":"textColor","attrs":{"rgb":"123456"}}),
+            json!({"type":"fontSize","attrs":{"halfPoints":24}}),
+            json!({"type":"fontFamily","attrs":{"name":"Arial"}}),
+        ] {
+            let mut doc = model();
+            doc.content[0].content[0].content[0].content[0].content[0].marks =
+                vec![serde_json::from_value(mark.clone()).unwrap()];
+            assert!(validate(&doc).is_ok());
+            let mut invalid = mark;
+            invalid["attrs"]["cellFillMode"] = json!("none");
+            doc.content[0].content[0].content[0].content[0].content[0].marks =
+                vec![serde_json::from_value(invalid).unwrap()];
+            assert!(validate(&doc).is_err());
+        }
+    }
+    #[test]
+    fn none_removes_only_header_shading_and_body_none_is_canonical_equivalent() {
+        for profile in [None, Some("standard-v2")] {
+            let mut doc = model();
+            if let Some(profile) = profile {
+                doc.attrs.insert("styleProfile".into(), profile.into());
+            }
+            let before = parts(&doc);
+            fill(&mut doc, 1, json!("none"));
+            let body = parts(&doc);
+            for (name, bytes) in &before {
+                if !name.starts_with("rust-wps/") {
+                    assert_eq!(body[name], *bytes, "{name}");
+                }
+            }
+            fill(&mut doc, 0, json!("none"));
+            let both = parts(&doc);
+            for (name, bytes) in &before {
+                if !name.starts_with("rust-wps/") && name != "word/document.xml" {
+                    assert_eq!(both[name], *bytes, "{name}");
+                }
+            }
+            let baseline = String::from_utf8(before["word/document.xml"].clone()).unwrap();
+            assert_eq!(baseline.matches("<w:shd").count(), 1);
+            assert_eq!(
+                String::from_utf8(both["word/document.xml"].clone()).unwrap(),
+                baseline.replace("<w:shd w:fill=\"E8EEF7\"/>", "")
+            );
+            assert!(reopen(&both).unwrap().is_some());
+        }
+    }
+    #[test]
+    fn generated_styles_guard_runs_before_export_completion() {
+        let mut doc = model();
+        fill(&mut doc, 0, json!("none"));
+        fn table_style(styles: &mut String) {
+            *styles = styles.replace("</w:styles>", "<w:style w:type=\"table\" w:default=\"1\" w:styleId=\"Shaded\"><w:tblPr><w:shd w:fill=\"FF0000\"/></w:tblPr></w:style></w:styles>");
+        }
+        fn active_paragraph(styles: &mut String) {
+            *styles = styles.replace(
+                "<w:name w:val=\"Normal\"/>",
+                "<w:name w:val=\"Normal\"/><w:pPr><w:shd w:fill=\"FF0000\"/></w:pPr>",
+            );
+        }
+        fn doc_defaults(styles: &mut String) {
+            *styles = styles.replacen("<w:rPr>", "<w:rPr><w:shd w:fill=\"FF0000\"/>", 1);
+        }
+        for transform in [
+            table_style as fn(&mut String),
+            active_paragraph,
+            doc_defaults,
+        ] {
+            assert!(encode_docx_with_styles(&doc, Some(transform)).is_err());
+            let mut body_only = model();
+            fill(&mut body_only, 1, json!("none"));
+            assert!(encode_docx_with_styles(&body_only, Some(transform)).is_err());
+        }
+        // Unmarked historical output is byte-for-byte on its old writer path.
+        assert!(encode_docx_with_styles(&model(), Some(table_style)).is_ok());
+    }
+    #[test]
+    fn trusted_reopen_checks_consistency_not_authenticity() {
+        let doc = model();
+        let original = parts(&doc);
+        for (row, accepted) in [(0, false), (1, true)] {
+            let mut changed = original.clone();
+            let model_name = changed
+                .keys()
+                .find(|n| n.starts_with("rust-wps/model-v"))
+                .unwrap()
+                .clone();
+            let mut metadata: Value = serde_json::from_slice(&changed[&model_name]).unwrap();
+            metadata["document"]["content"][0]["content"][row]["content"][0]["attrs"]["cellFillMode"] =
+                json!("none");
+            changed.insert(model_name, serde_json::to_vec(&metadata).unwrap());
+            assert_eq!(reopen(&changed).is_ok(), accepted);
+        }
+        let mut marked = model();
+        fill(&mut marked, 0, json!("none"));
+        fill(&mut marked, 1, json!("none"));
+        let original = parts(&marked);
+        for (row, accepted) in [(0, false), (1, true)] {
+            let mut changed = original.clone();
+            let model_name = changed
+                .keys()
+                .find(|n| n.starts_with("rust-wps/model-v"))
+                .unwrap()
+                .clone();
+            let mut metadata: Value = serde_json::from_slice(&changed[&model_name]).unwrap();
+            metadata["document"]["content"][0]["content"][row]["content"][0]["attrs"]
+                .as_object_mut()
+                .unwrap()
+                .remove("cellFillMode");
+            changed.insert(model_name, serde_json::to_vec(&metadata).unwrap());
+            assert_eq!(reopen(&changed).is_ok(), accepted);
+        }
+        for invalid in [json!(null), json!("invalid")] {
+            let mut changed = original.clone();
+            let name = changed
+                .keys()
+                .find(|n| n.starts_with("rust-wps/model-v"))
+                .unwrap()
+                .clone();
+            let mut metadata: Value = serde_json::from_slice(&changed[&name]).unwrap();
+            metadata["document"]["content"][0]["content"][1]["content"][0]["attrs"]["cellFillMode"] =
+                invalid;
+            changed.insert(name, serde_json::to_vec(&metadata).unwrap());
+            assert!(reopen(&changed).is_err());
+        }
+        let mut changed = original;
+        let style = changed.get_mut("word/styles.xml").unwrap();
+        style.extend_from_slice(b" ");
+        assert!(reopen(&changed).is_err());
+    }
+    #[test]
+    fn unrelated_legacy_nested_table_does_not_block_valid_no_fill_export() {
+        let mut doc = model();
+        fill(&mut doc, 0, json!("none"));
+        let mut unrelated = model().content.remove(0);
+        unrelated.content[1].content[0]
+            .content
+            .push(model().content.remove(0));
+        doc.content.push(unrelated);
+        assert!(validate(&doc).is_ok());
+        assert!(encode_docx(&doc).is_ok());
+    }
+    #[test]
+    fn none_and_auto_are_independent_of_white_and_row_geometry() {
+        let mut doc = model();
+        fill(&mut doc, 0, json!("none"));
+        let cell = &mut doc.content[0].content[0].content[0];
+        cell.attrs.insert("cellTextColorMode".into(), json!("auto"));
+        cell.attrs
+            .insert("cellVerticalAlign".into(), json!("center"));
+        doc.content[0].content[0]
+            .attrs
+            .insert("rowMinHeightTwips".into(), json!(500));
+        doc.content[0].content[1]
+            .attrs
+            .insert("rowCantSplit".into(), json!(true));
+        doc.content[0].content[1].content[0]
+            .attrs
+            .insert("cellFillRgb".into(), json!("FFFFFF"));
+        let data = parts(&doc);
+        let xml = String::from_utf8(data["word/document.xml"].clone()).unwrap();
+        assert!(xml.contains("w:fill=\"FFFFFF\""));
+        assert!(!xml.contains("E8EEF7"));
+        assert!(xml.contains("w:color w:val=\"auto\""));
+        assert!(reopen(&data).is_ok());
+    }
 }

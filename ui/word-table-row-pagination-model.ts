@@ -64,7 +64,7 @@ export function validTableRowPaginationHTML(root: ParentNode): boolean {
 // text, or another attribute's quoted value. The browser remains the semantic
 // parser; this bounded lexical pass only retains duplicate/orphan evidence it
 // would discard. Unowned HTML has no new interpretation or rejection.
-export function countRowPaginationHTMLAttributes(html: string): number {
+export function countRowPaginationHTMLAttributes(html: string, attribute = rowCantSplitDataAttribute): number {
   let at = 0, count = 0;
   const length = html.length, space = (char: string) => /[\t\n\f\r ]/.test(char);
   const rawText = new Set(['script', 'style', 'textarea', 'title', 'xmp', 'iframe', 'noembed', 'noframes']);
@@ -90,7 +90,7 @@ export function countRowPaginationHTMLAttributes(html: string): number {
       while (at < length && !space(html[at]) && !['/', '=', '>'].includes(html[at])) at++;
       // An unexpected '=' is not an owned attribute, but must make progress.
       if (start === at) {at++; continue;}
-      if (html.slice(start, at).toLowerCase() === rowCantSplitDataAttribute) count++;
+      if (html.slice(start, at).toLowerCase() === attribute) count++;
       while (at < length && space(html[at])) at++;
       if (html[at] !== '=') continue;
       at++; while (at < length && space(html[at])) at++;

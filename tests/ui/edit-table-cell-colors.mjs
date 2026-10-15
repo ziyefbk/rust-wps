@@ -72,14 +72,18 @@ assert.equal(state.doc.textContent, document.textContent); assert(transaction.se
 assert(undo(state, tr => {state = state.apply(tr);})); const undone = snapshot(state); assert.deepEqual(undone, before);
 assert(redo(state, tr => {state = state.apply(tr);})); const redone = snapshot(state); assert.deepEqual(redone, edited);
 const reset = patch => {const tr = tables.createTableCellColorsTransaction(editedState, patch); return snapshot(tr ? editedState.apply(tr) : editedState);};
-const outcomes = {before, edited, undo: undone, redo: redone, 'reset-fill': reset({cellFillRgb: null}), 'reset-mode': reset({cellTextColorMode: null}), 'reset-all': reset({cellFillRgb: null, cellTextColorMode: null})};
+const outcomes = {before, edited, undo: undone, redo: redone, 'reset-fill': reset({cellFillRgb: null}), 'reset-mode': reset({cellTextColorMode: null}), 'reset-all': reset({cellFillRgb: null, cellFillMode: null, cellTextColorMode: null})};
 // Compare each non-target node and every text mark against the normalized
 // before document; the actual product operation may only change selected attrs.
 const expected = structuredClone(before);
 const expectedTable = expected.content.filter(node => node.type === 'table')[tableIndex];
 const expectedCell = expectedTable.content.flatMap(row => row.content)[cellIndex];
 expectedCell.attrs = {...expectedCell.attrs, ...patch};
-for (const field of ['cellFillRgb', 'cellTextColorMode']) if (expectedCell.attrs[field] === null) delete expectedCell.attrs[field];
+if (Object.hasOwn(patch, 'cellFillRgb') || Object.hasOwn(patch, 'cellFillMode')) {
+  if (patch.cellFillRgb == null) delete expectedCell.attrs.cellFillRgb;
+  if (patch.cellFillMode == null) delete expectedCell.attrs.cellFillMode;
+}
+for (const field of ['cellFillRgb', 'cellFillMode', 'cellTextColorMode']) if (expectedCell.attrs[field] === null) delete expectedCell.attrs[field];
 if (!Object.keys(expectedCell.attrs).length) delete expectedCell.attrs;
 assert.deepEqual(edited, expected);
 const dir = resolve(outputDirectory); mkdirSync(dir, {recursive: true});

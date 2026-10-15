@@ -1,0 +1,274 @@
+{
+  "name": "genuine-original",
+  "source": "Bug60337.docx",
+  "source_sha256": "87f983bdd93b3b5b8469104a5b09ccff41e0f5c144060e13fd4db07bfd2e39da",
+  "style_evidence": {
+    "actual_styles": "word/styles.xml",
+    "chains": [
+      {
+        "kind": "table",
+        "ids": [
+          "TableGrid",
+          "TableNormal"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      },
+      {
+        "kind": "paragraph",
+        "ids": [
+          "Normal"
+        ]
+      },
+      {
+        "kind": "character",
+        "ids": [
+          "DefaultParagraphFont"
+        ]
+      }
+    ],
+    "work": 140,
+    "default_ids": {
+      "table": "TableNormal",
+      "paragraph": "Normal",
+      "character": "DefaultParagraphFont"
+    }
+  },
+  "source_outcome": "PROVED_SOURCE",
+  "proved_raw_indices": [
+    0
+  ],
+  "raw_candidate_tables": [
+    {
+      "rows": [
+        {
+          "header": true,
+          "cells": [
+            [
+              ""
+            ],
+            [
+              "Branden"
+            ],
+            [
+              "Nicolaas"
+            ],
+            [
+              "Sam"
+            ],
+            [
+              "Simon"
+            ]
+          ]
+        },
+        {
+          "header": false,
+          "cells": [
+            [
+              "Task I"
+            ],
+            [
+              "10"
+            ],
+            [
+              "10"
+            ],
+            [
+              "10"
+            ],
+            [
+              "10"
+            ]
+          ]
+        },
+        {
+          "header": false,
+          "cells": [
+            [
+              "Task II"
+            ],
+            [
+              "20"
+            ],
+            [
+              "5"
+            ],
+            [
+              "5"
+            ],
+            [
+              "15"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "text_bytes": 50,
+  "bookmark_ids": [
+    0
+  ],
+  "bookmark_names": [
+    "_GoBack"
+  ]
+}

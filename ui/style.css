@@ -226,3 +226,9 @@ dialog{max-width:560px;border:1px solid #d6deeb;border-radius:12px;padding:28px;
 #table-row-pagination-controls { display:flex; align-items:center; flex-wrap:wrap; gap:5px; }
 #table-row-pagination-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
 #edit-row-pagination-state { color:#61738a; font-size:11px; }
+
+/* Intentional no-fill overrides the legacy header blue in editor and print.
+   White RGB remains opaque; selection is an outline, never a durable fill. */
+.tiptap td[data-cell-fill-mode="none"], .tiptap th[data-cell-fill-mode="none"],
+#print-document .tiptap [data-cell-fill-mode="none"] { background-color:transparent; }
+.tiptap [data-cell-fill-mode="none"].selectedCell { outline:2px solid #477fc6; outline-offset:-2px; }

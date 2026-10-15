@@ -183,6 +183,8 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     crate::paragraph_pagination::verify_ir(&audit.pagination, &ir)?;
     let color_identity_matches =
         crate::table_cell_colors::verify_ir(&audit.cell_colors, &ir).is_ok();
+    let no_fill_identity_matches =
+        crate::table_cell_no_fill::verify_ir(&audit.cell_no_fill, &ir).is_ok();
     let mut report = convert_ir(ir, compatibility, true)?;
     if !color_identity_matches
         || crate::table_cell_colors::attach(
@@ -399,6 +401,14 @@ pub fn import_docx(path: &Path) -> Result<ImportReport> {
     crate::document::validate(&report.document)?;
     crate::docx_font_families::attach(
         font_families,
+        &mut report.document,
+        &mut report.compatibility.risks,
+    );
+    // All old fallible attachments and validations retain precedence. This
+    // optional group validates a complete clone before committing any mode.
+    crate::table_cell_no_fill::attach(
+        &audit.cell_no_fill,
+        no_fill_identity_matches,
         &mut report.document,
         &mut report.compatibility.risks,
     );

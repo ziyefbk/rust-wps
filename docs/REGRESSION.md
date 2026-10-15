@@ -1,5 +1,23 @@
 # 当前跨格式回归记录
 
+## 本轮：DOCX 表格显式无底色（2026-10-15，发布 37）
+
+> 发布 37（2026-10-15）：stable / MSRV 1.88.0 串行全套各 845 项、47 阶段通过并完成独立验收；724 项不同前端检查及 TypeScript / build、两工具链后端各 35 项通过。项目按用户要求在本次推送后暂停，不继续开发新功能。
+
+简单正文顶层表格新增显式“无底色”，与缺省及白色 RGB 分开保存。外部 DOCX 仅在直接启用表头、完整形状 / 文字与实际 OPC / 默认及活动样式均证明无底色时整组保留；真实 Bug60337 的 15 格得到 none，导出只去掉既有 5 个蓝色表头填充。固定 LibreOffice 消费者中产品 / 独立参考的完整文字、几何及两分辨率光栅精确一致；源自动列宽规范化仍造成最多 14 pt 文字与 17.5 pt 右边框差异，未新增原生 GUI / Word / WPS 或完整版式保证。 见 [DOCX_CELL_NO_FILL.md](DOCX_CELL_NO_FILL.md)。
+
+- stable / MSRV 1.88.0 Rust 串行全套各 845 项通过、各 47 阶段（46 harness + 1 doctest）；845 个不同测试含原 819 + 新增 26，314 library + 531 integration，两工具链重复执行不相加为 1,690 个不同测试。MSRV 零 failed / ignored / filtered，最终 aggregate SHA-256 `a5c55752af0964b11928a9dbe9108693b7e797fcd332b93108c8e67e65691687`，独立验收完成
+- 前端 666 + 88 − 30 = 724 个不同检查，TypeScript / build 通过；40 个编辑状态、122 CLI 调用和 40 个独立 XML 检查通过。DOM / 运输替身和真实 CLI 不等于真实浏览器、原生输入法 / 剪贴板 / 打印
+- 两工具链生产后端各 35 项通过；独立核对 694 个 worker / CLI 命令。七项原生 pkg-config 依赖缺失，未验收原生构建 / GUI / IPC
+- 独立源 / 包 / 消费者验收核对 3,588 个命令及输入 pin；包含 1,894 历史完整响应、302 整包 golden、208 新 audit/import 端点、104 inspect 响应及 111 源 / 作者包。inspect 只豁免已存在 u64 elapsed_ms，原始响应保留
+- 真原件 3×5 共 15 格显式 none；仅消除旧基线 5 个蓝色表头填充。固定 LibreOffice 产品 / 独立参考文字、几何、字体 / 内容流与 72 / 144 dpi 光栅精确相同；整个 PDF 字节不相等。源列宽 1870→1800 twip，最多 14 pt 文字 / 17.5 pt 右边框差异与源光栅失败保留
+- 原 portable bundle 在同一云端主机、stable / MSRV 固定 CLI 下分别通过 positive 和四个负例（旧 release36、损坏 fixture、损坏 expectation、陈旧 XML/哈希）。不是 fresh-host 执行；去私有路径公开副本现也已在两个冻结 CLI 下完成同样五项资格验证
+
+
+公开 bundle 最终资格验证：stable-8wgbybet 报告 SHA-256 `633eb508f1eca49ffbfdb02a06603bd441f3058bcf94c04171974f66dff7683a`；msrv-qhcru12a 报告 SHA-256 `df5a13f50234c1649418de2a8dbb0aef57df33f35b8170fe88537a4991945603`。两次均直接运行已提升的 `tests/fixtures/docx-cell-no-fill/check.py`，positive 返回 0，旧发布 36 / 损坏原件 / 损坏完整预期 / 陈旧 XML 与哈希四项负例分别返回 1，bundle 与 frozen CLI 前后散列不变。仍为同一云主机执行，不是 fresh-host、渲染或原生 GUI 验收。
+
+旧记录全文逐字节保留，不倒写为本轮结果。前述结果经最终构建相同 CLI / 649 源身份桥连接；不是声明在最终构建后重跑全部历史验证。格式检查使用 package scope；原 all-workspace vendor 格式失败和严格 Clippy 初次失败保留，仅已知诊断与精确主文件允许 scoped retry。
+
 ## 本轮：DOCX 表格行内不分页三态（2026-10-14，发布 36）
 
 基于发布 35 `6bb54c003b128c32ca6f8ededac8ade75fb83f38`，仅扩展简单正文顶层矩形表格的直接 `cantSplit` 源证明、严格 `rowCantSplit` 缺省 / false / true 模型、编辑 / 草稿 / DOCX / 可信重开闭环。任一候选表格证明失败时整文档不附加新行属性，只保留旧模型并追加分类风险；旧硬拒绝与优先级保持。主文档仍限定 `/word/document.xml`，只有实际 styles 关系可重定位；不展开活动样式继承。源高度 / 垂直几何与 cantSplit 组合仍拒绝，作者合法组合独立允许。完整合同见 [DOCX_ROW_PAGINATION.md](DOCX_ROW_PAGINATION.md)。下方发布 35 及更早正文逐字节保留，不将旧记录改写成新结果。

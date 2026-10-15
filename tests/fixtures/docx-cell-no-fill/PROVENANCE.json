@@ -1,0 +1,116 @@
+{
+  "status": "RELEASE37_PUBLIC_BUNDLE_QUALIFICATION_RECORDED_IN_REGRESSION",
+  "fixture": {
+    "url": "https://github.com/apache/poi/blob/ae62bb5116b9aee19ebd5834e3a82066132c9f7f/test-data/document/Bug60337.docx",
+    "revision": "ae62bb5116b9aee19ebd5834e3a82066132c9f7f",
+    "original_path": "tmp/paragraph-indentation-source/poi/Bug60337.docx",
+    "sha256": "87f983bdd93b3b5b8469104a5b09ccff41e0f5c144060e13fd4db07bfd2e39da"
+  },
+  "pre_candidate_binding": {
+    "path": "tmp/docx-cell-no-fill-verify/PRE-CANDIDATE-BINDING-v1.json",
+    "sha256": "e1b3476192efeb1963ec0292ba40035d521579d97f440a6c91e7cde99440bbe2"
+  },
+  "frozen_endpoint": {
+    "path": "tmp/docx-cell-no-fill-verify/row-endpoints-proposed-v3.json",
+    "sha256": "35b4423262cf44f3d45c091547fd342529790973e2ff3bba3c26ddcf0f4fa16f",
+    "selector": "cases[name=genuine-original].endpoints.import.expected_complete_json"
+  },
+  "source_proof_parent": {
+    "path": "tmp/docx-cell-no-fill-verify/row-source-proofs-proposed-v4.json",
+    "sha256": "d524ffa7850069a7b49a39021db439a348d3a1e5e2ea2030f91b74f5a9514608"
+  },
+  "baseline_import_triple": {
+    "argv": [
+      "tmp/docx-row-pagination-provisional-g1-stable-cli",
+      "import-docx",
+      "tmp/paragraph-indentation-source/poi/Bug60337.docx"
+    ],
+    "returncode": 0,
+    "stdout": "tmp/docx-row-pagination-verify/candidate-run-x9irybs6/command-0001.stdout",
+    "stderr": "tmp/docx-row-pagination-verify/candidate-run-x9irybs6/command-0001.stderr",
+    "stdout_sha256": "68ddd844d017d1ad19f3219549d6364104cc0409847d5a363523d7254b8403c4",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "baseline_cli": {
+    "path": "tmp/docx-row-pagination-provisional-g1-stable-cli",
+    "sha256": "c98735f17133e1ab89ab86f4156b99bc675794a3fd0a79755e90a2f01035eb8f"
+  },
+  "derivation": "Parse pinned baseline import; add cellFillMode:none to exactly 15 cells of its sole table; assert whole response equals the pre-candidate expected_complete_json. No accepted candidate output used.",
+  "bundled_sha256": {
+    "Bug60337.docx": "87f983bdd93b3b5b8469104a5b09ccff41e0f5c144060e13fd4db07bfd2e39da",
+    "LICENSE": "6e7c918e5a49f677c1b85a9eb2d035cd85c217fc42af6b4a336964a434001a9c",
+    "NOTICE": "a89ff8b670bcacd3e98ebee64979e0569181c7942e9ad795f4222b25e5637a61",
+    "README.md": "e4c29fdb5a8275ded7c4ed789d97117a3f4f5242d5f94e2684b0a4e655dbfe8c",
+    "baseline-import.json": "68ddd844d017d1ad19f3219549d6364104cc0409847d5a363523d7254b8403c4",
+    "check.py": "a61e9f920e43bf0576ea3078261cc0848c1d15110dae98841cf5785fd35a1eb5",
+    "expected-import.json": "fc220c57bdba3de0a27dcc92abf5296ceb043cbcd89c9d8e7dfff1d93be3d691",
+    "source-proof.json": "1f8ad99ffb65189801090e457e9ef35409b7ea39a711eecf3ed02774bc2b4781"
+  },
+  "audit_function_donor": {
+    "path": "tmp/docx-cell-no-fill-consumer-plan/run-consumer-v2.py",
+    "sha256": "f6f5d4ffe79e8330f5c5fb73366a631d7f0db6a9287638d2d8c2a73132714e8e",
+    "functions": "actual_part and package_audit; copied and tightened enabled header/cantSplit checks; new bounded ZIP reader"
+  },
+  "source_proof_sanitization": {
+    "old_sha256": "07680c40a6cd418d88af9b079b1f8b3d6acf3f8bee12cf00adf66233f56d50f5",
+    "new_sha256": "1f8ad99ffb65189801090e457e9ef35409b7ea39a711eecf3ed02774bc2b4781",
+    "only_semantic_change": "source audit locator replaced with bundled filename; all source proof assertions unchanged",
+    "runner_change": "exactly one source-proof.json PINS hash"
+  },
+  "historical_runtime_qualification": {
+    "stable": {
+      "report_sha256": "5967b7446d9a5be6ebb1816fe32492f92223699dfdb71e980542fb7ed5a7b351",
+      "cli_sha256": "8484e6b0efbfc98b8fb2dce18c708058e706fc882d6482d4702b46c39617a75d",
+      "cases": [
+        {
+          "case": "positive",
+          "returncode": 0
+        },
+        {
+          "case": "old-release36",
+          "returncode": 1
+        },
+        {
+          "case": "corrupted-fixture",
+          "returncode": 1
+        },
+        {
+          "case": "corrupted-expected",
+          "returncode": 1
+        },
+        {
+          "case": "stale-xml-text-refusal",
+          "returncode": 1
+        }
+      ],
+      "scope": "Original bundle on same cloud host, not fresh-host execution"
+    },
+    "msrv": {
+      "report_sha256": "151197e0c64f124c6fad284fe4db1f9262bc63fd8c337764b8822f2e8c5532f7",
+      "cli_sha256": "af0cd4c2d4a99ff2b623da3427875eadca8b90528c29a2a2048bae07435d0db8",
+      "cases": [
+        {
+          "case": "positive",
+          "returncode": 0
+        },
+        {
+          "case": "old-release36",
+          "returncode": 1
+        },
+        {
+          "case": "corrupted-fixture",
+          "returncode": 1
+        },
+        {
+          "case": "corrupted-expected",
+          "returncode": 1
+        },
+        {
+          "case": "stale-xml-text-refusal",
+          "returncode": 1
+        }
+      ],
+      "scope": "Original bundle on same cloud host, not fresh-host execution"
+    }
+  }
+}

@@ -482,6 +482,7 @@ pub(crate) struct DocxGeometryAudit {
     pub row_pagination: crate::table_row_pagination::Audit,
     pub empty_fonts: crate::empty_paragraph_fonts::Audit,
     pub cell_colors: crate::table_cell_colors::Audit,
+    pub cell_no_fill: crate::table_cell_no_fill::Audit,
     pub compatibility: CompatibilityReport,
     pub tables: Vec<crate::table_widths::TableGeometry>,
     pub vertical_tables: crate::table_vertical::VerticalAudit,
@@ -1057,7 +1058,19 @@ pub(crate) fn audit_docx_bytes_with_geometry(bytes: &[u8]) -> Result<DocxGeometr
     if let Some(warning) = row_pagination.warning {
         report.risks.insert(warning.into());
     }
+    // New optional preservation never changes an existing blocking decision.
+    let cell_no_fill = if parts_have_content_types(bytes)?
+        && !report.risks.iter().any(|risk| blocks_editing(risk))
+    {
+        crate::table_cell_no_fill::analyze(bytes)
+    } else {
+        crate::table_cell_no_fill::Audit::default()
+    };
+    if let Some(warning) = cell_no_fill.warning {
+        report.risks.insert(warning.into());
+    }
     Ok(DocxGeometryAudit {
+        cell_no_fill,
         pagination,
         row_pagination,
         cell_colors,

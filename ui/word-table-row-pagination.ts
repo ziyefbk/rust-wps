@@ -1,7 +1,7 @@
 import {Extension} from '@tiptap/core';
 import {tableCellMarginsError, validTableCellMarginsHTML} from './word-table-cell-margins';
 import {tableVerticalError, validTableVerticalHTML} from './word-table-vertical-layout';
-import {tableCellColorsError, validTableCellColorsHTML} from './word-table-cell-colors';
+import {tableCellColorsError, validTableCellColorsHTML, isValidTableCellColorsHTML} from './word-table-cell-colors';
 import {type Node, Slice} from '@tiptap/pm/model';
 import {Plugin, PluginKey, TextSelection, type Transaction} from '@tiptap/pm/state';
 import {isHistoryTransaction, closeHistory} from '@tiptap/pm/history';
@@ -151,7 +151,8 @@ export function tableRowPaginationGuard(onError: (message: string) => void = () 
       if (html && !isValidTableRowPaginationHTML(html)) throw new Error(tableRowPaginationError);
       // Our handled paste must not skip the older late table guard's raw
       // wrong-node protections when schema parsing already erased evidence.
-      if (html && /data-(?:table-cell-margins-twips|row-min-height-twips|cell-vertical-align|cell-fill-rgb|cell-text-color-mode)/i.test(html)) {
+      if (html && /data-(?:table-cell-margins-twips|row-min-height-twips|cell-vertical-align|cell-fill-rgb|cell-fill-mode|cell-text-color-mode)/i.test(html)) {
+        if (!isValidTableCellColorsHTML(html)) throw new Error(tableCellColorsError);
         const parsed = new DOMParser().parseFromString(html, 'text/html');
         if (!validTableCellMarginsHTML(parsed)) throw new Error(tableCellMarginsError);
         if (!validTableVerticalHTML(parsed)) throw new Error(tableVerticalError);
