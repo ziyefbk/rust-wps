@@ -119,8 +119,9 @@ function snapshotDocument(owner: Pick<Editor, 'getJSON'>): JSONContent {
 let onChangeMode: (() => Promise<void>) | null = null;
 let canLeaveOther: () => Promise<boolean> = async () => true;
 let showNotice: (text: string, error?: boolean) => void = () => {};
+function authoringLocked() { return paused || leaving || saving || printing; }
 export const isAuthoring = () => !!editor;
-export function pauseAuthoring(value: boolean) { paused = value; editor?.setEditable(!paused && !leaving, false); updateToolbar(); }
+export function pauseAuthoring(value: boolean) { paused = value; editor?.setEditable(!authoringLocked(), false); updateToolbar(); }
 export async function openAuthored(content: JSONContent, name: string, path: string) {
   await create(content, false); dirty = false;
   el('title').textContent = name; el('file-name').textContent = name; el('subtitle').textContent = path;
@@ -154,7 +155,7 @@ export async function canLeaveAuthoring(): Promise<boolean> {
   } catch (error) {
     showNotice(`草稿保存失败，已保留当前文档：${String(error)}。可以重试或先另存 DOCX。`, true);
     return false;
-  } finally { leaving = false; if (owner === editor) owner?.setEditable(!paused, false); updateToolbar(); }
+  } finally { leaving = false; if (owner === editor) owner?.setEditable(!authoringLocked(), false); updateToolbar(); }
 }
 
 let wordMatches:WordMatch[]=[];
@@ -316,7 +317,7 @@ function applyTablePosition(patch?: TablePositionPatch) {
 }
 function updateToolbar() {
   el('authoring-sheet').dataset.styleProfile = editor ? editorStyleProfile(editor) ?? 'legacy-v1' : 'legacy-v1';
-  const locked = leaving || paused || printing;
+  const locked = authoringLocked();
   el<HTMLInputElement>('edit-find').disabled=locked;
   el<HTMLInputElement>('edit-replacement').disabled=locked;
   for (const button of document.querySelectorAll<HTMLButtonElement>('#editor-toolbar button')) button.disabled = locked;
@@ -489,7 +490,7 @@ async function create(content?: JSONContent, ask = true) {
   el('title').textContent = '新文档'; el('subtitle').textContent = '编辑后另存为 DOCX';
   el('file-name').textContent = '新文档'; el('format').hidden = false; el('format').textContent = 'DOCX';
   editor = new Editor({
-    editable: !paused,
+    editable: !authoringLocked(),
     element: el('editor-content'),
     extensions: [MinimumLineHeight.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}), TableRowPagination.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}), ParagraphPagination.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),PreservedListGeometry.configure({onError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}),EmptyParagraphFont.configure({onError: message => showNotice(message, true)}),FontFamily,FontSize,TextColor,Superscript,Subscript,WordStarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false, autolink: false, linkOnPaste: false, isAllowedUri: url => supportedLink(url) }, blockquote: false, horizontalRule: false, codeBlock: false }),
       WordPageGeometry.configure({onPageError: message => showNotice(message, true)}), WordFontFamilyMetadata.configure({onError: message => showNotice(message, true)}), ParagraphAlignment, ParagraphSpacing, ParagraphIndent.configure({onIndentError: message => showNotice(message, true)}), PageBreak, PageBreakParagraph.configure({onError: message => showNotice(message, true)}), TableKit.configure({ table: false }), WordTable.configure({onWidthError: message => showNotice(message, true), locked: () => paused || leaving || saving || printing}), WordImage.configure({onDimensionError: message => showNotice(message, true)})],
@@ -777,7 +778,7 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
       showNotice(`${editor!.state.doc.attrs.pageGeometry ? '已准备所选页面的打印副本' : '已准备 A4 打印副本'}。请在系统打印窗口选择打印机或 PDF 目标，并核对预览、纸张、缩放和页眉页脚设置。${pageBreakPreviewWarning(snapshotDocument(editor!))}${fontFamilyMetadataPreviewWarning(snapshotDocument(editor!))}`);
       window.print();
     } catch (error) { showNotice(`打印准备失败：${String(error)}`, true); }
-    finally { printing = false; editor?.setEditable(!paused && !leaving, false); updateToolbar(); }
+    finally { printing = false; editor?.setEditable(!authoringLocked(), false); updateToolbar(); }
   };
   el('edit-print').addEventListener('click', () => void print());
   el('edit-export-pdf').addEventListener('click', async () => {
@@ -794,7 +795,7 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
         : await invoke<{ path: string; bytes: number } | null>('export_current_pdf');
       showNotice(saved ? `已另存 PDF：${saved.path}。DOCX 中的修改仍需另存。${pageBreakWarning}` : '已取消 PDF 导出，文档保留。');
     } catch (error) { showNotice(`PDF 导出失败：${String(error)}`, true); }
-    finally { el('print-document').replaceChildren(); printing = false; editor?.setEditable(!paused && !leaving, false); updateToolbar(); }
+    finally { el('print-document').replaceChildren(); printing = false; editor?.setEditable(!authoringLocked(), false); updateToolbar(); }
   });
   window.addEventListener('afterprint', () => el('print-document').replaceChildren());
   document.addEventListener('keydown', event => {
@@ -827,14 +828,25 @@ export function initializeAuthoring(onMode: () => Promise<void>, notice: typeof 
 async function save() {
   if (!editor || saving || printing || leaving || paused || !isTauri()) return;
   const owner = editor, generation = version, doc = snapshotDocument(editor);
-  saving = true; updateToolbar();
+  saving = true;
+  // Structural guards already reject edits during export. Reflect that lock in
+  // the editor itself so typing is not silently discarded by a writable view.
+  owner.setEditable(false, false);
+  showNotice('正在导出 DOCX，编辑区暂时只读，请等待导出完成。');
+  updateToolbar();
   try {
     const saved = await invoke<{ path: string } | null>('save_new_document', { doc });
     if (saved && editor === owner) {
       if (version === generation) dirty = false;
       showNotice(`已导出 DOCX：${saved.path}${dirty ? '。导出期间新增的修改尚未导出。' : ''}`);
       el('draft-state').textContent = dirty ? '有未导出的修改' : 'DOCX 已导出';
+    } else if (!saved && editor === owner) {
+      showNotice('已取消 DOCX 导出，文档保留，可继续编辑。');
     }
-  } catch (error) { showNotice(`DOCX 导出失败：${String(error)}`, true); }
-  finally { saving = false; updateToolbar(); }
+  } catch (error) { if (editor === owner) showNotice(`DOCX 导出失败：${String(error)}`, true); }
+  finally {
+    saving = false;
+    if (editor === owner) owner.setEditable(!authoringLocked(), false);
+    updateToolbar();
+  }
 }

@@ -1,5 +1,15 @@
 # 当前跨格式回归记录
 
+## 发布 43（2026-10-16）：文字工作流浏览器验收
+
+基于发布 42 `1e3df8d`，本轮新增真实 Chromium 工作流 harness 与独立 DOCX / PDF 检查，并修正保存期间的输入状态。原浏览器仍显示可编辑而事务保护丢弃输入；修正合同为显式只读锁及成功 / 取消 / 失败后恢复编辑，三种结果均已由实际浏览器验证。实际应用 UI / TipTap 由 Vite 开发转换运行，不是生产 dist；Tauri / 文件选择运输与磁盘 JSON 草稿为测试适配器，DOCX 操作使用冻结 release42 CLI。9 组流程及 6 份输出 DOCX 已独立接受，见 [文字工作流验收](WORD_WORKFLOW_ACCEPTANCE.md)。
+
+- 独立作者中文会议纪要和真实 Apache POI 英文表格来源分开；新建中文文档为操作产物，不把作者夹具算成真实中文原件
+- 3 份 PDF 共 4 页全部目视，Poppler 完整文字 3/3 通过；表格双读取器通过，两份中文文档的 pypdf 6.10.0 与产品 pdf-extract 提取出康熙部首。存在正确 ActualText 和可读页面，严格双读取器门禁仍为 FAIL，不用 NFKC / 字符替换放宽
+- 最初 shell Chromium 启动 EPERM、首次严格 PDF 失败、后续光标定位失败和保存期间无声丢弃输入均保留；受支持云 Terminal 已实际运行 Chromium，不能称浏览器不可用
+- 既有 826 项 headless 检查在最终源码复跑通过，零跳过 / 重试 / 错误；另 8 项真实 Chromium 保存锁专门回归通过，共 834 个不同检查，9 组工作流另计。TypeScript / build 通过，保留既有 bundle-size 警告。旧会话控制仅证明旧 Save 不改变暂停的新会话
+- 原生 GUI / IPC、系统对话框、IME、生产草稿后端、Windows 直接 PDF 未运行；Rust / 后端未重跑，发布 42 结果仅为历史证据
+
 ## 发布 42（2026-10-16）：DOCX 替换标记边界保护
 
 DOCX 原包文字替换新增对 `w:softHyphen`、`w:noBreakHyphen`、`w:sym` 的严格跨界拒绝；任一匹配内部含标记时，整次另存拒绝，原件不变且不创建输出。匹配恰好结束或开始于标记处仍可执行，标记保留；普通文字中的软连字符 / 不换行连字符仍按字面匹配。此项为不安全替换的保护，不新增标记编辑或完整 Office 兼容。 见 [DOCX 替换标记边界](DOCX_REPLACEMENT_MARKERS.md)。
