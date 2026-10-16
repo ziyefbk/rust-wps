@@ -1,5 +1,10 @@
 # Rust WPS exploration
 
+## Windows Word 原生门禁准备（2026-10-16）
+
+新增仅 `native-smoke` 可用的 DOCX 输出路径覆盖，原生脚本改为点击真实 Save / Tauri IPC，并检查独立 DOCX 读取、重开及重复保存拒绝覆盖。新增单一标准 Windows 托管作业，60 分钟上限、无缓存 / artifact；仅工作流文件的 main 推送及手动触发。本地仅静态检查，Windows 实际运行尚未完成，不声明原生接受；系统对话框、IME、剪贴板、默认 AppData 恢复与完整保真仍开放。见 [Windows 原生有界验收](docs/WINDOWS_WORD_NATIVE_ACCEPTANCE.md)。
+
+
 ## 发布 44（2026-10-16）：PDF 有界 ActualText 正文
 
 新增源 PDF 页面 Span 标记范围的有界 ActualText 提取，并以四态证据阻止 PDF.js 字形重提取覆盖已应用的语义正文；未知 / 不支持的恢复保持临时正文提示。受测两份中文 PDF 全文与字面查找修复，PDF 字节不变；没有 NFKC 或部首替换，重叠 / Form / 结构树等语义仍在范围外。详见 [PDF ActualText](docs/PDF_ACTUAL_TEXT.md)。

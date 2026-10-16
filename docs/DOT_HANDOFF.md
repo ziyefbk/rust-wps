@@ -1,5 +1,10 @@
 # dot 接手说明
 
+## Windows Word 原生门禁准备（2026-10-16）
+
+新增仅 `native-smoke` 可用的 DOCX 输出路径覆盖，原生脚本改为点击真实 Save / Tauri IPC，并检查独立 DOCX 读取、重开及重复保存拒绝覆盖。新增单一标准 Windows 托管作业，60 分钟上限、无缓存 / artifact；仅工作流文件的 main 推送及手动触发。本地仅静态检查，Windows 实际运行尚未完成，不声明原生接受；系统对话框、IME、剪贴板、默认 AppData 恢复与完整保真仍开放。见 [Windows 原生有界验收](WINDOWS_WORD_NATIVE_ACCEPTANCE.md)。
+
+
 ## 发布 44（2026-10-16）：PDF 有界 ActualText 正文
 
 本轮只消费已证明的源 ActualText：页面 Span / Tj / TJ、严格 PDFDocEncoding / UTF-16BE、具名属性及同页 Contents 数组；不做 NFKC / 部首替换，不改变源字节。重叠替换因独立读取器分歧收窄为 unsupported；Form / pattern / Type3 CharProc / 结构树替换及已知 ActualText 文档中的 XObject Do 仍在范围外。Type3 审计仅特认开头合法有限数值 d0 / d1；正文中的 d 仍保守为 unknown，文档有已知 ActualText 则 unsupported，不能称合法 dash 为损坏。详见 [PDF ActualText](PDF_ACTUAL_TEXT.md)。

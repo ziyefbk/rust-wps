@@ -1,5 +1,6 @@
 // Build the CLI and desktop with --features native-smoke before running.
-// Uses actual WebView2 editing, draft IPC, worker reopen, and native PDF output.
+// Uses actual WebView2 editing, Save/draft IPC, worker reopen, and native PDF output.
+// File paths are smoke-only overrides; no native dialog/IME/clipboard claims.
 import assert from 'node:assert/strict';
 import { chromium, expect } from '@playwright/test';
 import { spawn, execFileSync } from 'node:child_process';
@@ -8,6 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import path from 'node:path';
 
+assert.equal(process.platform, 'win32', 'This acceptance requires Windows WebView2');
 const profile = 'standard-v2';
 const probes = [
   { tag: 'p', text: 'BodyProbe 中文', marker: 'BodyProbe', points: 11 },
@@ -21,17 +23,28 @@ const directory = mkdtempSync(path.resolve('tmp/native-word-style/run-'));
 const output = path.join(directory, 'standard-v2.pdf');
 const docxPath = path.join(directory, 'standard-v2.docx');
 const draftPath = path.join(directory, 'draft-v1.json');
-const modelPath = path.join(directory, 'model.json');
-const python = path.join(process.env.USERPROFILE, '.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe');
+const python = process.env.RUST_WPS_SMOKE_PYTHON || 'python';
+const desktop = path.resolve('src-tauri/target/debug/rust-wps-desktop.exe');
+const cli = path.resolve('target/debug/rust-wps.exe');
+const runtime = {
+  commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+  node: process.version,
+  rust: execFileSync('rustc', ['--version', '--verbose'], { encoding: 'utf8' }).trim(),
+  python: JSON.parse(execFileSync(python, ['-c', 'import sys,json,docx,pypdf;print(json.dumps(dict(version=sys.version,executable=sys.executable,docx=docx.__version__,pypdf=pypdf.__version__)))'], { encoding: 'utf8', timeout: 30000 })),
+  desktopSha256: hash(readFileSync(desktop)), cliSha256: hash(readFileSync(cli)),
+};
+console.log(JSON.stringify({ runtime, directory }));
 const reservation = createServer();
 await new Promise((resolve, reject) => { reservation.once('error', reject); reservation.listen(0, '127.0.0.1', resolve); });
 const port = reservation.address().port;
 await new Promise((resolve, reject) => reservation.close(error => error ? reject(error) : resolve()));
-const child = spawn(path.resolve('src-tauri/target/debug/rust-wps-desktop.exe'), [], {
+const child = spawn(desktop, [], {
   windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   env: {
     ...process.env,
     RUST_WPS_SMOKE_PDF_OUTPUT: output,
+    RUST_WPS_SMOKE_DOCX_OUTPUT: docxPath,
+    WEBVIEW2_USER_DATA_FOLDER: path.join(directory, 'webview2-profile'),
     RUST_WPS_SMOKE_OPEN_INPUT: docxPath,
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-debugging-address=127.0.0.1`,
   },
@@ -105,6 +118,7 @@ try {
     catch { await new Promise(resolve => setTimeout(resolve, 300)); }
   }
   if (!browser) throw new Error('Native WebView2 CDP did not become ready');
+  runtime.webview2 = browser.version();
   const context = browser.contexts()[0];
   page = context.pages()[0] ?? await context.waitForEvent('page', { timeout: 10000 });
   page.on('pageerror', error => { log += `\nPage error: ${error.stack ?? error}\n`; });
@@ -132,10 +146,20 @@ try {
   const firstDraft = readFileSync(draftPath);
   const draft = JSON.parse(firstDraft.toString('utf8'));
   checkDraft(draft);
-  writeFileSync(modelPath, JSON.stringify(draft.document), { flag: 'wx' });
-  execFileSync(path.resolve('target/debug/rust-wps.exe'), ['create-docx', modelPath, docxPath],
-    { windowsHide: true, timeout: 30000 });
+  await page.locator('#edit-save').click();
+  await expect(page.locator('#notice')).toContainText('已导出 DOCX：', { timeout: 35000 });
+  await expect(page.locator('#draft-state')).toHaveText('DOCX 已导出');
+  await expect(page.locator('.tiptap')).toHaveAttribute('contenteditable', 'true');
   const docxHash = hash(readFileSync(docxPath));
+  // Exercise the same real Save handler twice. The second export must reject
+  // the existing destination rather than silently overwrite or truncate it.
+  await page.locator('#edit-save').click();
+  await expect(page.locator('#notice')).toContainText('DOCX 导出失败：', { timeout: 35000 });
+  await expect(page.locator('#notice')).toContainText('Output already exists; choose a new file');
+  await expect(page.locator('.tiptap')).toHaveAttribute('contenteditable', 'true');
+  await expect(page.locator('#edit-save')).toBeEnabled();
+  assert.equal(hash(readFileSync(docxPath)), docxHash, 'Repeated Save overwrote the DOCX');
+  await checkEditor();
   const docx = JSON.parse(execFileSync(python, ['-c', [
     'import sys,json,zipfile',
     'from docx import Document',
@@ -241,13 +265,14 @@ try {
   assert.ok(readFileSync(draftPath).equals(draftBeforePrint), 'Printing changed the document draft');
   assert.equal(hash(readFileSync(docxPath)), docxHash, 'Opening or printing changed the DOCX');
   const report = {
-    nativeWebView2: true, inputViaKeyboardAndStyleDropdown: true, profile,
+    nativeWebView2: true, nativeSaveIpc: true, repeatSaveRejectsOverwrite: true,
+    inputViaKeyboardAndStyleDropdown: true, profile, runtime,
     draftVersion: 2, trailingEmptyParagraphs: draft.document.content.length - probes.length,
     noExplicitFontSizeOrTextColor: true, workerReopenPreservesProfile: true,
     printLeavesDraftUnchanged: true, sourceDocxUnchanged: true, docxHash,
     thresholds: { fontSizePoints: 0.15, positionPoints: 1 },
     directory, docxPath, output, editorBeforeReopen, editorAfterReopen, docx, pdf,
-    limitation: 'One-page default style probe; Latin font identity/size, solid black fill and body left margin. Not full Word pagination, shaping or font-substitution equivalence.',
+    limitation: 'Smoke build with file-picker overrides and isolated draft/profile; no OS dialogs, IME, clipboard, installer or general fidelity acceptance. One-page default style probe; Latin font identity/size, solid black fill and body left margin. Not full Word pagination, shaping or font-substitution equivalence.',
   };
   saveReport('report.json', report);
   console.log(JSON.stringify(report, null, 2));
@@ -263,10 +288,24 @@ try {
   }
   throw error;
 } finally {
-  try { if (browser) await browser.close().catch(() => {}); }
-  finally {
-    if (child.exitCode === null && child.signalCode === null && !processError) child.kill();
-    await childClosed;
-    writeFileSync(path.join(directory, 'native-process.log'), log);
+  // Only terminate our owned app tree, never all WebView2/app processes.
+  // Kill the tree before disconnecting CDP so WebView children remain owned.
+  if (child.pid && child.exitCode === null && child.signalCode === null && !processError) {
+    try { execFileSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, timeout: 10000 }); }
+    catch (error) { log += `\nOwned process cleanup: ${String(error)}\n`; }
   }
+  const bounded = async (promise, ms) => {
+    let timer;
+    try { await Promise.race([promise, new Promise(resolve => { timer = setTimeout(resolve, ms); })]); }
+    finally { clearTimeout(timer); }
+  };
+  if (browser) await bounded(browser.close().catch(() => {}), 5000);
+  await bounded(childClosed, 5000);
+  if (child.exitCode === null && child.signalCode === null && !processError) {
+    child.stdout?.destroy(); child.stderr?.destroy(); child.unref();
+    process.exitCode = 1;
+    log += '\nFAIL: owned process did not close within cleanup deadline\n';
+  }
+  writeFileSync(path.join(directory, 'native-process.log'), log);
+  console.log(JSON.stringify({ nativeProcessLog: log, runtime }));
 }

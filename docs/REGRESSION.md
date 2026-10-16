@@ -1,5 +1,10 @@
 # 当前跨格式回归记录
 
+## Windows Word 原生门禁准备（2026-10-16）
+
+新增仅 `native-smoke` 可用的 DOCX 输出路径覆盖，原生脚本改为点击真实 Save / Tauri IPC，并检查独立 DOCX 读取、重开及重复保存拒绝覆盖。新增单一标准 Windows 托管作业，60 分钟上限、无缓存 / artifact；仅工作流文件的 main 推送及手动触发。本地仅静态检查，Windows 实际运行尚未完成，不声明原生接受；系统对话框、IME、剪贴板、默认 AppData 恢复与完整保真仍开放。见 [Windows 原生有界验收](WINDOWS_WORD_NATIVE_ACCEPTANCE.md)。
+
+
 ## 发布 44（2026-10-16）：PDF 有界 ActualText 正文
 
 基于发布 43 `0f361dc`，新增本地 vendored `pdf-extract 0.12.1` 有界标记内容替换、`Inspection.pdf_actual_text` 四态与前端重提取保护。当前记录最终冻结代 5 stable / MSRV、提取模块和前端 / 两工具链独立证据；实际 worker 22 项含 16 次 Open 往返已独立通过；原 9 组 Word 功能通过但原严格 checker 仍整体 FAIL。新章节只作插入，下方发布 43 原 FAIL 不改。实现、来源、准确命令和全部边界见 [PDF ActualText](PDF_ACTUAL_TEXT.md)。

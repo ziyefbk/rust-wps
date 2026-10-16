@@ -342,11 +342,16 @@ async fn save_new_document(
 ) -> Result<Option<ExportedDocument>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         rust_wps::document::validate(&doc).map_err(|e| format!("{e:#}"))?;
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("Word 文档", &["docx"])
-            .set_file_name("新文档.docx")
-            .save_file()
-        else {
+        #[cfg(feature = "native-smoke")]
+        let test_path = std::env::var_os("RUST_WPS_SMOKE_DOCX_OUTPUT").map(PathBuf::from);
+        #[cfg(not(feature = "native-smoke"))]
+        let test_path: Option<PathBuf> = None;
+        let Some(path) = test_path.or_else(|| {
+            rfd::FileDialog::new()
+                .add_filter("Word 文档", &["docx"])
+                .set_file_name("新文档.docx")
+                .save_file()
+        }) else {
             return Ok(None);
         };
         let report = rust_wps::document::export_docx(&doc, &path).map_err(|e| format!("{e:#}"))?;

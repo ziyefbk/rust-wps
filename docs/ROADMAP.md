@@ -1,5 +1,10 @@
 # 开发目标与阶段验收
 
+## Windows Word 原生门禁准备（2026-10-16）
+
+新增仅 `native-smoke` 可用的 DOCX 输出路径覆盖，原生脚本改为点击真实 Save / Tauri IPC，并检查独立 DOCX 读取、重开及重复保存拒绝覆盖。新增单一标准 Windows 托管作业，60 分钟上限、无缓存 / artifact；仅工作流文件的 main 推送及手动触发。本地仅静态检查，Windows 实际运行尚未完成，不声明原生接受；系统对话框、IME、剪贴板、默认 AppData 恢复与完整保真仍开放。见 [Windows 原生有界验收](WINDOWS_WORD_NATIVE_ACCEPTANCE.md)。
+
+
 ## 发布 44（2026-10-16）：PDF 有界 ActualText 正文
 
 针对发布 43 中文正文 / 精确查找错误，冻结代 5 stable 已证明：受支持页面 Span 的源替换语义恢复，applied 正文不被 PDF.js 字形重提取覆盖，缺证或范围外的恢复持续明确提示。两份中文工作流 PDF 全文 / 字面计数修复，普通表格 PDF 不变；无 NFKC、OCR 或字体全局部首映射。Type3 开头 d0 / d1 仅作窄审计兼容，剩余 d 保守未证明。范围见 [PDF ActualText](PDF_ACTUAL_TEXT.md)。
