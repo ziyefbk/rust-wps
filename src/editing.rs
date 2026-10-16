@@ -85,8 +85,9 @@ fn valid_xml_text(text: &str) -> bool {
 }
 
 // The upstream matcher concatenates w:t nodes, ignoring tabs, line breaks and
-// field/object markers. Refuse an edit if that would create a false contiguous
-// match across one of those boundaries.
+// field/object/hyphen/symbol markers. Refuse an edit if that would create a
+// false contiguous match or strand a discretionary hyphen at a new text offset.
+// Markers exactly at a match edge remain outside the replaced text.
 fn check_match_boundaries(xml: &[u8], find: &str) -> Result<()> {
     use quick_xml::events::Event;
     #[derive(Default)]
@@ -121,6 +122,9 @@ fn check_match_boundaries(xml: &[u8], find: &str) -> Result<()> {
                     "w:tab"
                         | "w:br"
                         | "w:cr"
+                        | "w:softHyphen"
+                        | "w:noBreakHyphen"
+                        | "w:sym"
                         | "w:fldChar"
                         | "w:instrText"
                         | "w:drawing"
@@ -165,7 +169,7 @@ fn check_match_boundaries(xml: &[u8], find: &str) -> Result<()> {
                 !p.boundaries
                     .iter()
                     .any(|&at| start < at && at < start + matched.len()),
-                "Search would cross a tab, break, field or embedded object; choose a smaller search phrase"
+                "Search would cross a tab, break, field, embedded object, hyphen or symbol marker; choose a smaller search phrase"
             );
         }
     }

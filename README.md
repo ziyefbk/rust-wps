@@ -1,5 +1,11 @@
 # Rust WPS exploration
 
+## 发布 42（2026-10-16）：DOCX 替换标记边界保护
+
+DOCX 原包文字替换新增对 `w:softHyphen`、`w:noBreakHyphen`、`w:sym` 的严格跨界拒绝；任一匹配内部含标记时，整次另存拒绝，原件不变且不创建输出。匹配恰好结束或开始于标记处仍可执行，标记保留；普通文字中的软连字符 / 不换行连字符仍按字面匹配。此项为不安全替换的保护，不新增标记编辑或完整 Office 兼容。 见 [DOCX 替换标记边界](docs/DOCX_REPLACEMENT_MARKERS.md)。
+
+stable 1.99.0 / MSRV 1.88.0 各 342 项 library + 10 项 editing 定向检查及 CLI 构建通过，格式检查通过；不是完整 884 项 Rust 套件。严格 scoped Clippy 的既有 lint 失败保留，仅精确历史 allowance 复跑通过；两工具链独立各 85 例及另 9 个不覆盖检查、当前 library 后端各 35 项与 stable 实际 Open 15 次往返通过；原有 826 个不同 headless 前端检查、TypeScript / production build 通过。
+
 ## 发布 41（2026-10-15）：PDF 正文空白兼容查找
 
 PDF 正文查找新增独立可选的“空白兼容匹配”：ASCII 空格 / Tab 连续段及最多含一个 CRLF / CR / LF 的连续段按单空格匹配，空行 / 多个换行与换页符仍为屏障。默认字面模式和独立连字选项保留，返回原文 UTF-16 范围并高亮未改写的正文。这不是阅读顺序修复；无 OCR、去断行连字符或大小写折叠。 见 [空白兼容查找](docs/PDF_WHITESPACE_SEARCH.md)。
