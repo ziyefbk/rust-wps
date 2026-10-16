@@ -36,7 +36,7 @@ Python 通过 `RUST_WPS_SMOKE_PYTHON` 明确指定，未指定时使用 PATH 中
 
 ```powershell
 cargo build --locked --bin rust-wps
-npm exec -- tauri build --debug --no-bundle --features native-smoke -- --locked
+node node_modules/@tauri-apps/cli/tauri.js build --debug --no-bundle --features native-smoke -- --locked
 $env:RUST_WPS_SMOKE_PYTHON = (Get-Command python).Source
 node scripts/native-word-style-smoke.mjs
 ```
@@ -52,3 +52,9 @@ Tauri CLI 执行生产前端 `npm run build` 并启用 custom protocol；产物�
 本轮本地 `node --check`、独立 `rustfmt --check`、YAML 解析 / 单作业 / timeout / SHA 约束与 `git diff --check` 通过；未运行 Windows、Cargo 编译、原生脚本或完整回归。
 
 本地只允许轻量静态检查，不在资源紧张的云 Linux 上启动完整 Cargo / Tauri 构建。发布、workflow 写权限、托管 runner 可用性、实际构建与完整脚本结果必须逐项核验；遇到权限拒绝停止，不扩大凭据。如果严格 PDF 或原生 UI 门禁失败，保留失败和测量，不把门禁降级为通过。
+
+## 首次托管运行失败与命令修复（2026-10-16）
+
+[首次运行 38893427886](https://github.com/ziyefbk/rust-wps/actions/runs/38893427886) 的源码为 `7969e31f3221763bb379974f0c20318f53f55eaf`。Rust 1.88.0 的根 CLI 已实际构建成功；随后 Windows 上 `npm exec -- tauri build ... -- --locked` 未将分隔符保留至 Tauri，报 `unexpected argument '--locked' found`。Tauri 桌面构建与原生 smoke 均未执行，不能称 Save / Open / PDF 验收通过。
+
+命令修复直接用 Node 调用 lockfile 安装的 `@tauri-apps/cli/tauri.js`，保留 `-- --locked`，不经 npm 的命令包装，不删除锁定要求。轻量本地验证调用实际 Tauri 2.11.5，覆盖 beforeBuild 为记录标记、runner 为只记录参数后退出 86 的脚本，观察到精确参数 `build --locked --bins --features native-smoke,tauri/custom-protocol`；没有运行 Cargo 编译。该验证只证明参数运输和 Tauri 构建钩子，不证明 Windows 构建；本地 Linux 的原 npm 命令也能正常运输，因此不能称本地复现 Windows 故障。修复后的托管运行仍需独立核验。

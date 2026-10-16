@@ -70,7 +70,7 @@ jobs:
         run: |
           cargo build --locked --bin rust-wps
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          npm exec -- tauri build --debug --no-bundle --features native-smoke -- --locked
+          node node_modules/@tauri-apps/cli/tauri.js build --debug --no-bundle --features native-smoke -- --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-FileHash target/debug/rust-wps.exe, src-tauri/target/debug/rust-wps-desktop.exe -Algorithm SHA256
       - name: Save, independently read, reopen and print through native IPC
