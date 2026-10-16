@@ -1,0 +1,21 @@
+{
+  "version": "0.12.1",
+  "crate_sha256": "e5c4820f5811e424ce037d08493ac87752ecc54339e0f1e40c3d17da93278861",
+  "git_commit": "47b792ba04c5f3b6e478072b2efb8e1a2a06ec7e",
+  "omitted": [
+    "Cargo.lock"
+  ],
+  "files": {
+    ".cargo_vcs_info.json": "a66d233e8fc3f68414061dd23ad0554a901f638cc5222314ce65bdc34da30074",
+    "Cargo.toml": "599882faaf5e74ee033d10c8a6f7a50bf49eb2c855631c1097074ff58000a016",
+    "Cargo.toml.orig": "58c439e4f241594ee5318cac623f17d28ed41ec6e7d67eaae1a84703691cd1d0",
+    "README.md": "3235d1c7543386ba27420db454f2d50cbaf964d278e2e08fd19af24a11c36041",
+    "src/core_fonts.rs": "13dbc1b13e3f716317ed299a73126c8675fddce3b5a40daba1b8157236ae7a9b",
+    "src/encodings.rs": "6c4a417812b2d9c5d61db6b719c590e0d9349996342701ee117ea832d1059fd7",
+    "src/glyphlist-export.py": "98c07dbe958eaebecaa056b698ad5b2f3989a292c0c7a09ad5182b4aa460cd93",
+    "src/glyphlist-extended.txt": "a6d243b6f4d8c6812278a590e2c7a68a3b27379d307fbbd5f12d060b747440c6",
+    "src/glyphnames.rs": "941e2d0d792ff2aac7b77a6d723ab59e2668f5ba72ca00543803a98a73673878",
+    "src/lib.rs": "c5ac8a5ab57745eb12ba44615d036b45f2545ab6fc47ebdedc0c32149b301f35",
+    "src/zapfglyphnames.rs": "85e41d1e618371c4f507efa30612116c66826f11eab8e98e4e4475989537be78"
+  }
+}

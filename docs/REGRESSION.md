@@ -1,5 +1,21 @@
 # 当前跨格式回归记录
 
+## 发布 44（2026-10-16）：PDF 有界 ActualText 正文
+
+基于发布 43 `0f361dc`，新增本地 vendored `pdf-extract 0.12.1` 有界标记内容替换、`Inspection.pdf_actual_text` 四态与前端重提取保护。当前记录最终冻结代 5 stable / MSRV、提取模块和前端 / 两工具链独立证据；实际 worker 22 项含 16 次 Open 往返已独立通过；原 9 组 Word 功能通过但原严格 checker 仍整体 FAIL。新章节只作插入，下方发布 43 原 FAIL 不改。实现、来源、准确命令和全部边界见 [PDF ActualText](PDF_ACTUAL_TEXT.md)。
+
+- stable / MSRV 各 366 项定向运行通过 = 342 library + 6 ActualText + 8 inspection + 10 editing；6 组 ActualText 覆盖仓库 107 输入，夹具不追加为独立测试。全 45 integration targets 与根 lib / bin 测试及 preview example 类型检查、CLI 构建和 fmt / diff 通过；preview example 仅 stable 另有二进制；只运行 3 个 integration harness，其余 42 个仅类型检查，不是完整 integration runtime suite
+- 两工具链严格 scoped Clippy 均返回 101，分别只有既有 stable `clippy::chunks_exact_to_as_chunks` / `src/spreadsheet_xls.rs` 或 MSRV `clippy::uninlined_format_args` / `src/presentation_import.rs`；各自精确 allowance 后通过，不称无 allowance 严格通过。低 debug 的实际 profile 和每阶段资源守卫均冻结
+- 同一独立 109 作者输入分别通过 stable / MSRV CLI 及 stable 生产 preview 路径；preview 是同一 109 输入，不记为 218 不同场景。每工具链 32 条字面 helper 断言与这些输入 / 工作流重叠，两工具链 inspection 除 elapsed_ms 外完全相同；无规范化，两个空替换精确为空，先成功后失败没有泄漏部分正文，来源散列 / 身份全部保持
+- 仓库 107 输入 = 65 初始作者 + 8 继承 + 31 Type3 + 3 Chromium；独立 109 作者 = 68 初始 + 8 继承 + 31 Type3 + 2 后成功失败。两集合共享 104 作者控制，不能简单累计
+- 3 份原工作流 PDF 保持源字节不变，两份中文全文 / 字面计数修复，表格精确旧正文及 not_detected 保持；6 份既有语料的 4 成功 / 2 已知编码拒绝保持。pypdf 和直接 PDF.js 的原局限及发布 43 严格 FAIL 保留
+- 最终前端 850 个不同名称通过 = 838 headless（原 826 + 新 12）+ 8 Save Chromium + 4 PDF 密码 Chromium，精确并集无重复，TypeScript / production build 通过；初步 89 项是子集，不追加
+- 最终候选实际 Chromium / UI 源码 / PDF.js 另有 12 个语义场景组通过并经独立复核，涵盖中文查找、防覆盖、空替换、真部首、拒绝 / unknown 恢复、重试 / 取消及源切换；运输 / token 为适配器，只有缺失状态 envelope 是模拟旧传输
+- 初代 E0603、第二代合法 Type3 d1 词法失败、第三代 known / unknown 状态不一致、第四代新增 unused-assignment Clippy 失败和初期浏览器启动失败全部保留；代 5 不用放宽文字预期或额外 allowance 掩盖。实际 worker 首轮两个错诊断子串断言及校正记录保留，只校正 harness 后 22 例复跑通过；Type3 正文 d 的合法 dash 也保守未证明，绝不称其损坏
+- 两工具链后端模块各 35 production worker/session + 15 native PDF-export 函数片段通过；连同根测试各 416 次运行，测试名完全一致，不是 832 个不同测试；stable 实际 worker 22/22 项通过（含 16 次 Open 子进程往返、同长度旧身份 read / rotate 拒绝及发布 fence），没有源字节或 staging 输出泄漏；原 9 组 Word 功能已通过，产品 / Poppler 三份新 PDF 全文均匹配，四页新光栅已独立查看，原 checker 仍因两份中文 pypdf 严格不一致整体 FAIL / exit 1。原生 GUI / IPC / WebView / IME / 系统对话框 / 剪贴板未运行；解析 / 解压仍非硬资源沙箱
+
+stable CLI SHA-256 `3d7542e583580849e7b5e4608da206480b7ed9e369cfdf823e1bceaf12ba690d`，preview SHA-256 `218a7d858d5ec27723dba715364e7a3b8629743040ec9432e71e10269571c646`。最终独立综合收据 SHA-256 `c54151d8918ccff27ea881ff410757b8a7857a9645a49cdc9fb69ede24bfc8af`；详细源 / 计划 / 结果身份见指南。
+
 ## 发布 43（2026-10-16）：文字工作流浏览器验收
 
 基于发布 42 `1e3df8d`，本轮新增真实 Chromium 工作流 harness 与独立 DOCX / PDF 检查，并修正保存期间的输入状态。原浏览器仍显示可编辑而事务保护丢弃输入；修正合同为显式只读锁及成功 / 取消 / 失败后恢复编辑，三种结果均已由实际浏览器验证。实际应用 UI / TipTap 由 Vite 开发转换运行，不是生产 dist；Tauri / 文件选择运输与磁盘 JSON 草稿为测试适配器，DOCX 操作使用冻结 release42 CLI。9 组流程及 6 份输出 DOCX 已独立接受，见 [文字工作流验收](WORD_WORKFLOW_ACCEPTANCE.md)。

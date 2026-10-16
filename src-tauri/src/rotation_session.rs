@@ -268,6 +268,7 @@ mod tests {
                 text: "unchanged text".into(),
                 warnings: vec![],
                 text_error: None,
+                pdf_actual_text: None,
             },
             authored: None,
             workbook: None,

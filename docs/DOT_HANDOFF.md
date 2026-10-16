@@ -1,5 +1,15 @@
 # dot 接手说明
 
+## 发布 44（2026-10-16）：PDF 有界 ActualText 正文
+
+本轮只消费已证明的源 ActualText：页面 Span / Tj / TJ、严格 PDFDocEncoding / UTF-16BE、具名属性及同页 Contents 数组；不做 NFKC / 部首替换，不改变源字节。重叠替换因独立读取器分歧收窄为 unsupported；Form / pattern / Type3 CharProc / 结构树替换及已知 ActualText 文档中的 XObject Do 仍在范围外。Type3 审计仅特认开头合法有限数值 d0 / d1；正文中的 d 仍保守为 unknown，文档有已知 ActualText 则 unsupported，不能称合法 dash 为损坏。详见 [PDF ActualText](PDF_ACTUAL_TEXT.md)。
+
+必须保持 `Inspection.pdf_actual_text` 四态，缺失或陌生传输值按 unknown。applied 包括有意空字符串，禁止自动、按钮及直接处理器覆盖；unknown / unsupported 的 PDF.js 完成不抹除语义错误或持久提示。来源对象、PDF 对象、会话 token 和尝试身份共同保护异步回写，后续失败不得泄漏先前成功部分。
+
+冻结代 5 stable / MSRV 各 366 定向运行 / 全根测试类型检查、各 35 worker/session + 15 PDF-export 模块检查及两工具链独立各 109 CLI、stable 同一 109 preview、各 32 字面断言、3 工作流 / 6 旧语料、12 组真实语义浏览器已通过；前端 850 不同名称及 TypeScript / build 通过。严格 Clippy 的既有失败与精确 allowance 分开记录，初步 89 项不追加计数。实际 worker 22 项含 16 次 Open 往返已独立通过；原 9 组 Word 功能重放通过，但两个中文 pypdf 严格比较使原 checker 仍整体 FAIL，只接受本轮有界功能范围。
+
+保留全部失败代与发布 43 双读取器 FAIL；不因产品有界修复声称 pypdf / 直接 PDF.js、原生 IPC / IME / 系统对话框或一般 PDF 兼容已完成，不把所有根测试类型检查写为完整运行。
+
 ## 发布 43（2026-10-16）：文字工作流浏览器验收
 
 本轮增加工作流验收，并有界修正保存期间的输入状态：保存中显式只读，结束后恢复编辑，保留快照与既有事务保护。真实 Chromium 执行应用 UI / TipTap 的 Vite 源码转换版本，冻结发布 42 CLI 执行 DOCX 工作；Tauri 运输、文件选择、持久 JSON 草稿、模拟关闭及故障注入均是测试适配器。9 组工作流及 6 份输出 DOCX 已独立接受，详见 [文字工作流验收](WORD_WORKFLOW_ACCEPTANCE.md)。

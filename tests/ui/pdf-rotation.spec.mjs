@@ -5,7 +5,7 @@ import ts from 'typescript';
 import { readFileSync } from 'node:fs';
 const source = readFileSync('ui/main.ts', 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
-const names = ['notice', 'controls', 'operation', 'rotateCurrentPdf', 'blockPdfRotationLeave', 'canLeaveWorkspace', 'protectPdfRotationUnload', 'currentDisplayedPdfPage', 'renderPage', 'clearPdf'];
+const names = ['pdfTextEvidence', 'pdfSemanticHint', 'notice', 'controls', 'operation', 'rotateCurrentPdf', 'blockPdfRotationLeave', 'canLeaveWorkspace', 'protectPdfRotationUnload', 'currentDisplayedPdfPage', 'renderPage', 'clearPdf'];
 const actual = names.map(name => {
   const node = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
   if (!node) throw new Error(`Missing production function ${name}`);
@@ -51,7 +51,7 @@ function harness({ current = owner(), pdf = proxy(), number = 2, desktop = true,
   };
   const build = new Function('deps', `
     let {current,pdf,pageNumber,mode,el,isTauri,canLeavePresentation,canLeaveWorkbook,invoke,pauses,events}=deps;
-    let busy=false,pdfRotationPending=false,displayedPdfPage=null,pdfRenderAttempt=null,renderTask=null,pdfLoadingTask=null,pdfLoadAttempt=null,cancelPdfPassword=null;
+    let pdfTextAttempt=null,stopText=false; let busy=false,pdfRotationPending=false,displayedPdfPage=null,pdfRenderAttempt=null,renderTask=null,pdfLoadingTask=null,pdfLoadAttempt=null,cancelPdfPassword=null;
     let paused=false,printing=false,leaving=false,saving=false,dirty=false,editor=null,draftTimer=null,draftQueue=Promise.resolve(),closingWindow=false;
     const pauseAuthoring=value=>{paused=value;pauses.push(['authoring',value]);},pauseWorkbook=value=>pauses.push(['workbook',value]),pausePresentation=value=>pauses.push(['presentation',value]);
     const updateToolbar=()=>{},writeDraft=async()=>{},snapshotDocument=()=>({});

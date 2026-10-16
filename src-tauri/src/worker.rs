@@ -225,6 +225,7 @@ fn execute(request: Request) -> Result<Response, String> {
                     text: String::new(),
                     warnings: report.warnings.clone(),
                     text_error: None,
+                    pdf_actual_text: None,
                 };
                 return Ok(Response::Opened {
                     pdf_identity: None,
@@ -289,6 +290,7 @@ fn execute(request: Request) -> Result<Response, String> {
                     text: String::new(),
                     warnings: workbook.warnings.clone(),
                     text_error: None,
+                    pdf_actual_text: None,
                 };
                 return Ok(Response::Opened {
                     pdf_identity: None,
@@ -478,6 +480,7 @@ mod tests {
                     text: "正文".into(),
                     warnings: vec![],
                     text_error: None,
+                    pdf_actual_text: None,
                 },
                 authored: None,
                 workbook: None,

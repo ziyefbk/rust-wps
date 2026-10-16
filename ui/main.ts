@@ -7,13 +7,13 @@ import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { initializeAuthoring, isAuthoring, canLeaveAuthoring, closeAuthoring, openAuthored, openImported, pauseAuthoring } from './authoring';
 import type { JSONContent } from '@tiptap/core';
-import { extractPdfText, textSummary } from './pdf-text';
+import { extractPdfText, textSummary, type PdfActualTextState } from './pdf-text';
 import { findReadingMatches } from './reading-search';
 import { initializeSpreadsheet, openWorkbook, closeWorkbook, pauseWorkbook, canLeaveWorkbook, workbookView, type Workbook } from './spreadsheet';
 import type { EditableWorkbook } from './workbook-model';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
-interface Inspection { format: string; backend: string; bytes: number; elapsed_ms: number; text: string; warnings: string[]; text_error?: string }
+interface Inspection { format: string; backend: string; bytes: number; elapsed_ms: number; text: string; warnings: string[]; text_error?: string; pdf_actual_text?: PdfActualTextState }
 interface OpenedDocument { session_token?: string; presentation_model?:PresentationModel|null; presentation?: Presentation | null; name: string; path: string; inspection: Inspection; authored?: JSONContent | null; workbook?: Workbook | null; workbook_model?: EditableWorkbook | null }
 interface SavedDocument { path: string; report: { replacements: number; preserved_parts: number; changed_parts: string[]; warnings: string[] } }
 interface SavedPdfRotation { path: string; page: number; pages: number; rotation: number }
@@ -31,12 +31,28 @@ let pdfLoadingTask: pdfjs.PDFDocumentLoadingTask | null = null;
 let pdfLoadAttempt: object | null = null;
 let cancelPdfPassword: (() => void) | null = null;
 let stopText = false;
+let pdfTextAttempt: object | null = null;
 let pdfRotationPending = false;
 let displayedPdfPage: DisplayedPdfPage | null = null;
 let pdfRenderAttempt: object | null = null;
 
 function notice(message: string, error = false) {
   const box = el('notice'); box.textContent = message; box.hidden = !message; box.classList.toggle('error', error);
+}
+function pdfTextEvidence(inspection?: Inspection): PdfActualTextState | null {
+  if (inspection?.format !== 'pdf') return null;
+  switch (inspection.pdf_actual_text) {
+    case 'not_detected': case 'applied': case 'unsupported': case 'unknown': return inspection.pdf_actual_text;
+    default: return 'unknown';
+  }
+}
+function pdfSemanticHint(inspection?: Inspection): string | null {
+  switch (pdfTextEvidence(inspection)) {
+    case 'applied': return '已使用源文件中受支持的 ActualText 语义文字；页面字体提取不会覆盖当前正文。文字顺序仍需核对。';
+    case 'unsupported': return '此 PDF 的 ActualText 语义文字超出支持范围；页面提取仅为临时字体正文，不能保证搜索或复制的文字正确。请核对原页面。';
+    case 'unknown': return '此 PDF 的 ActualText 语义文字尚未完成核对；页面提取仅为临时字体正文，不能保证搜索或复制的文字正确。请核对原页面。';
+    default: return null;
+  }
 }
 function controls() {
   const desktop = isTauri();
@@ -50,7 +66,10 @@ function controls() {
   el<HTMLButtonElement>('restore-draft').disabled = busy || !desktop;
   el<HTMLButtonElement>('text-view').disabled = busy || !current;
   el<HTMLButtonElement>('page-view').disabled = busy;
-  el<HTMLButtonElement>('extract-pdf-text').disabled = busy || !pdf;
+  el<HTMLButtonElement>('extract-pdf-text').disabled = busy || !pdf || pdfTextEvidence(current?.inspection) === 'applied';
+  const semanticHint = pdfSemanticHint(current?.inspection);
+  el('pdf-semantic-hint').hidden = !semanticHint;
+  el('pdf-semantic-hint').textContent = semanticHint ?? '';
   el('rotate-pdf-page').hidden = current?.inspection.format !== 'pdf' || mode !== 'page';
   el('pdf-rotation-hint').hidden = current?.inspection.format !== 'pdf' || mode !== 'page';
   el<HTMLButtonElement>('rotate-pdf-page').disabled = busy || pdfRotationPending || !desktop || !currentDisplayedPdfPage();
@@ -100,7 +119,7 @@ function renderText() {
   const query = el<HTMLInputElement>('search').value;
   const target = el('text-content'); target.replaceChildren();
   if (!text && current.inspection.format === 'pdf') {
-    target.textContent = pdfTextSummary ?? (current.inspection.text_error ? 'PDF 文字提取未成功。可尝试查看页面，解锁后可提取正文。' : '未提取到正文。扫描件需文字识别，仍可尝试查看 PDF 页面。');
+    target.textContent = pdfTextEvidence(current.inspection) === 'applied' ? '源 ActualText 提取后的正文为空；保留该语义结果，不改用页面字体文字。' : pdfTextSummary ?? (current.inspection.text_error ? 'PDF 文字提取未成功。可尝试查看页面，解锁后可提取正文。' : '未提取到正文。扫描件需文字识别，仍可尝试查看 PDF 页面。');
     el('match-count').textContent = ''; return;
   }
   // Use text nodes throughout: document text is never interpreted as HTML.
@@ -130,6 +149,7 @@ function setMode(next: 'text' | 'page') {
 async function clearPdf() {
   const old = pdf, loading = pdfLoadingTask;
   pdf = null; pdfLoadingTask = null; pdfLoadAttempt = null; displayedPdfPage = null; pdfRenderAttempt = null;
+  pdfTextAttempt = null; stopText = true; el('stop-pdf-text').hidden = true;
   cancelPdfPassword?.(); cancelPdfPassword = null;
   renderTask?.cancel(); renderTask = null;
   if (loading) { try { await loading.destroy(); } catch { /* obsolete load */ } }
@@ -235,24 +255,35 @@ async function showPdf() {
   setMode('page');
   try { await renderPage(); } catch (error) { if (!owns()) return; setMode('text'); throw error; }
   if (!owns()) return;
-  if (!pdfTextSummary && (!owner.inspection.text || owner.inspection.text_error)) await recoverPdfText();
-  if (owns()) notice(pdfTextSummary ?? '按原文件显示 PDF 页面。搜索请切换到正文；扫描件的文字识别尚未支持。');
+  if (pdfTextEvidence(owner.inspection) !== 'applied' && !pdfTextSummary && (!owner.inspection.text || owner.inspection.text_error)) await recoverPdfText();
+  if (owns()) notice(pdfTextSummary ?? pdfSemanticHint(owner.inspection) ?? '按原文件显示 PDF 页面。搜索请切换到正文；扫描件的文字识别尚未支持。');
 }
 async function recoverPdfText() {
-  const owner = current, documentPdf = pdf;
-  if (!documentPdf || !owner) return;
-  const owns = () => current === owner && pdf === documentPdf;
+  const owner = current, documentPdf = pdf, token = owner?.session_token;
+  if (!documentPdf || !owner || owner.inspection.format !== 'pdf') return;
+  // PDF.js does not expose ActualText. Even an intentional empty semantic
+  // result must not be replaced by its underlying glyph/font mapping.
+  if (pdfTextEvidence(owner.inspection) === 'applied') {
+    notice(pdfSemanticHint(owner.inspection)!); return;
+  }
+  const attempt = {}; pdfTextAttempt = attempt;
+  const owns = () => current === owner && pdf === documentPdf && owner.session_token === token && pdfTextAttempt === attempt;
   stopText = false; el('stop-pdf-text').hidden = false;
   try {
     const report = await extractPdfText(documentPdf, () => stopText || !owns(), page => { if (owns()) el('status').textContent = `正在提取正文 ${page}/${documentPdf.numPages} 页…`; });
     if (!owns()) return;
+    // Evidence is source-scoped, never inferred from PDF.js completion or
+    // warning wording. Re-check before accepting an asynchronous report.
+    const evidence = pdfTextEvidence(owner.inspection);
+    if (evidence === 'applied') { notice(pdfSemanticHint(owner.inspection)!); return; }
     // Preserve an earlier extraction if a retry fails before producing text.
     if (report.text || report.complete) owner.inspection.text = report.text;
-    if (report.complete) delete owner.inspection.text_error;
-    pdfTextSummary = textSummary(report);
+    if (report.complete && evidence === 'not_detected') delete owner.inspection.text_error;
+    const semanticHint = pdfSemanticHint(owner.inspection);
+    pdfTextSummary = semanticHint ? `${semanticHint} ${textSummary(report)}` : textSummary(report);
     renderText(); el('stats').textContent = `${owner.inspection.text.length.toLocaleString()} 字符 / ${documentPdf.numPages} 页`;
     notice(pdfTextSummary);
-  } finally { if (owns()) el('stop-pdf-text').hidden = true; }
+  } finally { if (owns()) { pdfTextAttempt = null; el('stop-pdf-text').hidden = true; } }
 }
 async function rotateCurrentPdf() {
   if (busy || pdfRotationPending) return;
@@ -473,7 +504,7 @@ el('import-document').addEventListener('click', () => operation('正在准备编
   dialog.showModal();
   if (await answer === 'import') await openImported(report.document, source.name);
 }));
-el('text-view').addEventListener('click', () => { setMode('text'); notice(pdfTextSummary ?? (current?.inspection.text_error ? '文字提取失败，正文搜索不可用；请查看 PDF 页面。' : '正文提取预览；原始版面请查看 PDF 页面或使用参考办公软件核对。')); });
+el('text-view').addEventListener('click', () => { setMode('text'); notice(pdfTextSummary ?? pdfSemanticHint(current?.inspection) ?? (current?.inspection.text_error ? '文字提取失败，正文搜索不可用；请查看 PDF 页面。' : '正文提取预览；原始版面请查看 PDF 页面或使用参考办公软件核对。')); });
 el('extract-pdf-text').addEventListener('click', () => operation('正在提取正文…', recoverPdfText));
 el('rotate-pdf-page').addEventListener('click', rotateCurrentPdf);
 el('stop-pdf-text').addEventListener('click', () => { stopText = true; });

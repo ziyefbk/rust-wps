@@ -1,0 +1,29 @@
+pdf-extract 0.12.1 local compatibility patch
+
+Upstream: https://github.com/jrmuizel/pdf-extract
+Published author: Jeff Muizelaar <jmuizelaar@mozilla.com>
+Published source commit: 47b792ba04c5f3b6e478072b2efb8e1a2a06ec7e
+Crates.io archive SHA-256:
+e5c4820f5811e424ce037d08493ac87752ecc54339e0f1e40c3d17da93278861
+
+The upstream Cargo.toml declares license = "MIT". Neither the published archive
+nor the upstream repository inspected for this patch includes a separate LICENSE
+or NOTICE file. LICENSE-MIT supplies the standard MIT terms corresponding to
+that declaration; this notice does not invent an upstream copyright year.
+All source comments and the original package metadata are retained.
+
+The archive was checked against the root Cargo.lock checksum before copying.
+The original Cargo.lock and Cargo cache marker were not copied. Original file
+hashes are recorded in ../pdf-extract-upstream-files.json. This directory alone
+contains local changes; the registry cache was not edited.
+
+Local addition: opt-in, bounded marked-content ActualText extraction. The
+original extraction APIs and the no-ActualText output path remain unchanged.
+This is not a new PDF parser, a renderer, OCR, a reading-order solver, or a
+sandbox for decompression and hostile PDF parsing.
+
+The Type3 audit recognizes a strictly validated leading d0/d1 width declaration
+because lopdf 0.42's content operator lexer does not accept digits. The complete
+remaining glyph program is strict-parsed; remaining Type3 d operators are
+conservatively unverified (including genuine dash-setting d). This helper does
+not edit source bytes, render glyphs, or change legacy text extraction.

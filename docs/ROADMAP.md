@@ -1,5 +1,13 @@
 # 开发目标与阶段验收
 
+## 发布 44（2026-10-16）：PDF 有界 ActualText 正文
+
+针对发布 43 中文正文 / 精确查找错误，冻结代 5 stable 已证明：受支持页面 Span 的源替换语义恢复，applied 正文不被 PDF.js 字形重提取覆盖，缺证或范围外的恢复持续明确提示。两份中文工作流 PDF 全文 / 字面计数修复，普通表格 PDF 不变；无 NFKC、OCR 或字体全局部首映射。Type3 开头 d0 / d1 仅作窄审计兼容，剩余 d 保守未证明。范围见 [PDF ActualText](PDF_ACTUAL_TEXT.md)。
+
+stable / MSRV 各 366 项定向 Rust、所有根测试 / example 类型检查，850 个不同前端检查与 TypeScript / build，以及独立 CLI / preview / 真实 PDF 和 12 组语义浏览器证据已完成；另两工具链各 35 worker/session + 15 PDF-export 模块检查通过，实际 worker 22 项（含 16 次 Open）已独立通过；原 9 组 Word 功能重放通过，原 checker 因两个中文 pypdf 严格比较仍整体 FAIL。原严格 Clippy 历史 lint 失败和单一 allowance 分开保留，不称完整 integration runtime 或原生接受。
+
+阶段 1 仍开放：真实第三方中文语料、一般 PDF 阅读顺序与字体映射、Form / 结构树 / 图片替换、OCR、原生 Windows IPC / WebView / IME / 系统复制与文件 / 打印对话框，以及生产草稿后端。重叠 ActualText 明确不支持；发布 43 pypdf 双读取器 FAIL 保留，不能用本轮有界结果把原门禁改成通过。
+
 ## 发布 43（2026-10-16）：文字工作流浏览器验收
 
 阶段 1 开始按日常操作闭环验收，已修正保存期间仍可聚焦输入却无声丢字的问题；合同为明确只读锁及结束后恢复编辑。真实 Chromium + 应用 UI 源码 + 冻结 CLI 的 9 组流程及 6 份输出 DOCX 已独立接受；文件选择、Tauri 运输与持久草稿使用测试适配器。范围和运行命令见 [文字工作流验收](WORD_WORKFLOW_ACCEPTANCE.md)。

@@ -42,6 +42,17 @@ pub mod spreadsheet_edit;
 pub mod spreadsheet_import;
 pub mod spreadsheet_xls;
 
+/// Evidence about marked-content replacement in the exact inspected PDF bytes.
+/// This does not certify visual equivalence, reading order, or all font mappings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PdfActualTextStatus {
+    NotDetected,
+    Applied,
+    Unsupported,
+    Unknown,
+}
+
 /// Extraction report, deliberately separate from an editable document model.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Inspection {
@@ -53,6 +64,8 @@ pub struct Inspection {
     pub warnings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pdf_actual_text: Option<PdfActualTextStatus>,
 }
 
 /// Constant-size identity of the exact validated bytes inspected for PDF preview.
@@ -170,5 +183,6 @@ fn inspect_with_policy(path: &Path, allow_pdf_text_failure: bool) -> Result<Insp
         text,
         warnings,
         text_error: None,
+        pdf_actual_text: None,
     })
 }

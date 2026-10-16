@@ -8,7 +8,7 @@ description = "Local office document compatibility exploration"
 [dependencies]
 anyhow = "1"
 office_oxide = { version = "=0.1.13", path = "vendor/office_oxide" }
-pdf-extract = "=0.12.1"
+pdf-extract = { version = "=0.12.1", path = "vendor/pdf-extract" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"

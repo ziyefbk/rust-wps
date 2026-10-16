@@ -1,5 +1,13 @@
 # Rust WPS exploration
 
+## 发布 44（2026-10-16）：PDF 有界 ActualText 正文
+
+新增源 PDF 页面 Span 标记范围的有界 ActualText 提取，并以四态证据阻止 PDF.js 字形重提取覆盖已应用的语义正文；未知 / 不支持的恢复保持临时正文提示。受测两份中文 PDF 全文与字面查找修复，PDF 字节不变；没有 NFKC 或部首替换，重叠 / Form / 结构树等语义仍在范围外。详见 [PDF ActualText](docs/PDF_ACTUAL_TEXT.md)。
+
+冻结代 5 stable / MSRV 各 366 项定向 Rust、全根测试 / example 类型检查和 fmt / diff 通过；严格 Clippy 仅保留既有 lint 失败，各自单一历史 allowance 复跑通过，另各 35 worker/session + 15 PDF-export 模块检查通过。两工具链独立各 109 作者 CLI、stable 同一 109 preview、各 32 条重叠字面断言、3 份工作流 PDF / 6 份旧语料预期，以及 12 组真实语义浏览器通过；前端 850 个不同测试名和 TypeScript / build 通过，不重复累计夹具 / 重叠检查。
+
+实际 worker 22 项含 16 次 Open 子进程往返已独立通过；原 9 组 Word 功能重放通过，原 checker 因两个中文 pypdf 严格比较仍整体 FAIL。Rust 采用低 debug、资源守卫和定向运行，不是完整 integration runtime suite；发布 43 原 pypdf 严格 FAIL、原生 GUI / IPC / IME / 系统对话框和日常可用缺口保留。
+
 ## 发布 43（2026-10-16）：文字工作流浏览器验收
 
 本轮用真实 Chromium 验收日常文字操作，并修正保存期间的输入状态：保存中显式只读，结束后恢复编辑，避免输入无声丢弃。实际应用 UI / TipTap 通过 Vite 源码转换运行，DOCX 调用冻结发布 42 CLI；Tauri 运输、文件选择与持久草稿为明确标注的测试适配器。9 组工作流及 6 份输出 DOCX 已独立接受，不能称原生桌面或生产包验收通过。见 [文字工作流验收](docs/WORD_WORKFLOW_ACCEPTANCE.md)。

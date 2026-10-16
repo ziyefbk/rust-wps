@@ -22,7 +22,7 @@
       <div class="view-switch"><button id="text-view" class="active" disabled>正文</button><button id="page-view" hidden>PDF 页面</button></div>
       <button id="replace-toggle" disabled>查找替换</button>
       <button id="import-document" disabled>导入编辑副本</button>
-      <button id="extract-pdf-text" hidden disabled>提取 PDF 正文</button><button id="stop-pdf-text" hidden>停止提取</button>
+      <button id="extract-pdf-text" hidden disabled aria-describedby="pdf-semantic-hint">提取 PDF 正文</button><button id="stop-pdf-text" hidden>停止提取</button>
       <label class="search"><span>查找</span><input id="search" type="search" placeholder="搜索正文" disabled aria-label="搜索正文"><span id="match-count" aria-live="polite" aria-atomic="true"></span></label>
       <label id="pdf-ligature-search-control" class="pdf-ligature-search" hidden><input id="pdf-ligature-search" type="checkbox" disabled aria-describedby="pdf-ligature-search-hint">连字兼容匹配</label>
       <label id="pdf-whitespace-search-control" class="pdf-ligature-search" hidden><input id="pdf-whitespace-search" type="checkbox" disabled aria-describedby="pdf-whitespace-search-hint">空白兼容匹配</label>
@@ -30,6 +30,7 @@
       <div id="page-nav" hidden><button id="prev-page" aria-label="上一页">‹</button><span id="page-position"></span><button id="next-page" aria-label="下一页">›</button></div>
       <button id="rotate-pdf-page" hidden disabled aria-describedby="pdf-rotation-hint">当前页顺时针旋转 90°，另存副本</button>
     </nav>
+    <p id="pdf-semantic-hint" class="pdf-action-hint" hidden aria-live="polite"></p>
     <p id="pdf-ligature-search-hint" class="pdf-action-hint" hidden>仅 PDF 正文：将 ﬀ / ﬁ / ﬂ / ﬃ / ﬄ / ﬅ / ﬆ / ſ 与 ff / fi / fl / ffi / ffl / st / st / s 等同匹配；高亮保留原文。区分大小写；仅此选项不合并空白，不含其他 Unicode 规范化或 OCR。</p>
     <p id="pdf-whitespace-search-hint" class="pdf-action-hint" hidden>仅 PDF 正文：将 ASCII 空格、制表符及最多一次换行组成的连续空白视作一个空格；空行和换页符阻断匹配，纯空白查询不匹配。可与连字选项组合，高亮保留原文；不识别段落、分栏或阅读顺序，不去除连字符，不修复提取结果。</p>
     <p id="pdf-rotation-hint" class="pdf-action-hint" hidden>仅支持可校验的简单 PDF；加密、已有增量修订、表单、批注等文件会被拒绝。另存副本暂不能再次旋转另存；原文件保持打开。</p>

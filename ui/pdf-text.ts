@@ -1,6 +1,10 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { TextItem, TextStyle } from 'pdfjs-dist/types/src/display/api';
 
+// Source inspection evidence belongs to one opened PDF session. Missing or
+// unrecognized transport values are handled as unknown by the reading UI.
+export type PdfActualTextState = 'not_detected' | 'applied' | 'unsupported' | 'unknown';
+
 export interface PdfTextReport { text: string; pages: number; total: number; failed: number[]; complete: boolean; stopped: boolean; truncated: boolean }
 
 // Only join an unseparated run when its horizontal LTR geometry proves that

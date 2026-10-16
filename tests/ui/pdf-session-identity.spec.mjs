@@ -6,13 +6,13 @@ const searchJs = ts.transpileModule(readFileSync('ui/reading-search.ts', 'utf8')
 const { findReadingMatches } = await import(`data:text/javascript;base64,${Buffer.from(searchJs).toString('base64')}`);
 const source = readFileSync('ui/main.ts', 'utf8');
 const ast = ts.createSourceFile('main.ts', source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
-const names = ['clearPdf', 'renderPage', 'showPdf', 'recoverPdfText', 'renderText', 'setMode', 'operation', 'openDocument', 'prepareEditorWorkspace', 'controls', 'currentDisplayedPdfPage'];
+const names = ['pdfTextEvidence', 'pdfSemanticHint', 'clearPdf', 'renderPage', 'showPdf', 'recoverPdfText', 'renderText', 'setMode', 'operation', 'openDocument', 'prepareEditorWorkspace', 'controls', 'currentDisplayedPdfPage'];
 const functions = names.map(name => ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name).getText(ast)).join('\n');
-const changeBinding = ['pdf-ligature-search', 'pdf-whitespace-search'].map(id => ast.statements.find(node => node.getText(ast).startsWith(`el('${id}').addEventListener`)).getText(ast)).join('\n');
+const changeBinding = ['pdf-ligature-search', 'pdf-whitespace-search', 'extract-pdf-text', 'stop-pdf-text', 'text-view'].map(id => ast.statements.find(node => node.getText(ast).startsWith(`el('${id}').addEventListener`)).getText(ast)).join('\n');
 const js = ts.transpileModule(functions + '\n' + changeBinding, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const owner = (token = '1', path = 'a.pdf') => ({ session_token: token, name: path, path, inspection: { format: 'pdf', text: 'retained Rust text', bytes: 10, warnings: [] } });
+const owner = (token = '1', path = 'a.pdf') => ({ session_token: token, name: path, path, inspection: { format: 'pdf', pdf_actual_text: 'not_detected', text: 'retained Rust text', bytes: 10, warnings: [] } });
 function proxy(extra = {}) { return { numPages: 1, destroyed: 0, async destroy() { this.destroyed++; }, async getPage(number) { return { pageNumber: number, ref: { num: number * 2 + 1, gen: 0 }, rotate: 0, getViewport: () => ({ width: 200, height: 300 }), render: () => ({ promise: Promise.resolve(), cancel() {} }), cleanup() {} }; }, ...extra }; }
 function loading() { const pending = deferred(); return { ...pending, destroyed: 0, async destroy() { this.destroyed++; pending.reject(new Error('Loading aborted')); } }; }
 function harness({ queuedClose = false, current = owner(), pdf = null, invoke = async () => Uint8Array.of(1, 2).buffer, task = loading(), extract = async () => ({ text: 'recovered', complete: true }) } = {}) {
@@ -21,7 +21,7 @@ function harness({ queuedClose = false, current = owner(), pdf = null, invoke = 
     if (!elements.has(id)) {
       const listeners = new Map();
       elements.set(id, { value: id === 'zoom' ? '1' : '', textContent: '', hidden: false, open: false, checked: false, disabled: false, nodes: [], style: {}, classList: { toggle() {} },
-        querySelectorAll: () => [], dispatch(type) { for (const fn of listeners.get(type) ?? []) fn(); }, replaceChildren(...nodes) { this.nodes = nodes; this.textContent = ''; }, append(node) { this.nodes.push(node); }, setAttribute() {}, getContext: () => ({}), focus() {},
+        querySelectorAll: () => [], dispatch(type) { return Promise.all([...listeners.get(type) ?? []].map(fn => fn())); }, replaceChildren(...nodes) { this.nodes = nodes; this.textContent = ''; }, append(node) { this.nodes.push(node); }, setAttribute() {}, getContext: () => ({}), focus() {},
         addEventListener(type, fn) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn); },
         removeEventListener(type, fn) { listeners.get(type)?.delete(fn); },
         showModal() { this.open = true; }, close(value) { this.open = false; this.returnValue = value; const dispatch = () => { for (const fn of [...listeners.get('close') ?? []]) fn(); }; if (queuedClose) closeEvents.push(dispatch); else dispatch(); },
@@ -36,7 +36,7 @@ function harness({ queuedClose = false, current = owner(), pdf = null, invoke = 
   };
   const build = new Function('deps', `
     let {current,pdf,findReadingMatches,el,document,window,invoke,pdfjs,extractPdfText,textSummary,notice}=deps;
-    let workspaceAttempt=null; let busy=false, mode='text', pageNumber=1, renderTask=null, pdfTextSummary=null, stopText=false;
+    let pdfTextAttempt=null; let workspaceAttempt=null; let busy=false, mode='text', pageNumber=1, renderTask=null, pdfTextSummary=null, stopText=false;
     let pdfLoadingTask=null,pdfLoadAttempt=null,cancelPdfPassword=null,displayedPdfPage=null,pdfRenderAttempt=null;
     const isTauri=()=>true; let pdfRotationPending=false; const pauseAuthoring=()=>{},pauseWorkbook=()=>{},pausePresentation=()=>{};
     const canLeaveAuthoring=async()=>true,closeAuthoring=()=>{},closeWorkbook=()=>{},closePresentation=()=>{},closePresentationEditor=()=>{};
@@ -293,4 +293,141 @@ test('PDF whitespace preference survives canceled extraction without using disca
   const run = app.recoverPdfText(); app.stop(); pending.resolve({ text: '', complete: false }); await run;
   expect(app.el('pdf-whitespace-search').checked).toBe(true); expect(app.state().current.inspection.text).toBe('a\nb');
   expect(app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent)).toEqual(['a\nb']);
+});
+
+// Per-source ActualText transport evidence is independent of PDF.js's page
+// completion. Exercise production entry points and DOM bindings, not a copied
+// replacement policy.
+test('PDF semantic evidence treats absent and malformed transport values as unknown', () => {
+  const app = harness();
+  for (const evidence of [undefined, null, '', 'APPLIED', true, 1, { applied: true }]) {
+    const inspection = { format: 'pdf', pdf_actual_text: evidence };
+    expect(app.pdfTextEvidence(inspection)).toBe('unknown');
+    expect(app.pdfSemanticHint(inspection)).toContain('尚未完成核对');
+  }
+  for (const evidence of ['not_detected', 'applied', 'unsupported', 'unknown']) {
+    expect(app.pdfTextEvidence({ format: 'pdf', pdf_actual_text: evidence })).toBe(evidence);
+  }
+  expect(app.pdfTextEvidence({ format: 'docx', pdf_actual_text: 'applied' })).toBeNull();
+  expect(app.pdfSemanticHint({ format: 'pdf', pdf_actual_text: 'not_detected' })).toBeNull();
+});
+
+test('PDF open consumes applied backend Chinese text and exact search without PDF.js overwrite', async () => {
+  const next = owner('9007199254740994', 'same.pdf');
+  next.inspection.text = '会议纪要：文件保存与用户反馈'; next.inspection.pdf_actual_text = 'applied';
+  let extracted = 0;
+  const app = harness({ invoke: async command => command === 'open_document' ? next : Uint8Array.of(1).buffer,
+    task: { promise: Promise.resolve(proxy()), async destroy() {} }, extract: async () => { extracted++; return { text: '⽂件保存与⽤户反馈', complete: true }; } });
+  await app.openDocument();
+  expect(extracted).toBe(0); expect(app.state().current).toBe(next);
+  expect(app.el('extract-pdf-text').disabled).toBe(true);
+  expect(app.el('pdf-semantic-hint').textContent).toContain('受支持的 ActualText');
+  await app.el('text-view').dispatch('click'); app.el('search').value = '用户反馈'; app.renderText();
+  expect(app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent)).toEqual(['用户反馈']);
+  for (let repeat = 0; repeat < 3; repeat++) await app.el('extract-pdf-text').dispatch('click');
+  expect(extracted).toBe(0); expect(next.inspection.text).toBe('会议纪要：文件保存与用户反馈');
+  expect(app.el('text-content').nodes.filter(node => node.tag === 'mark').map(node => node.textContent)).toEqual(['用户反馈']);
+});
+
+test('PDF applied intentionally empty text never falls back to font text or a scanning claim', async () => {
+  const current = owner(); current.inspection.pdf_actual_text = 'applied'; current.inspection.text = '';
+  current.inspection.text_error = 'retained diagnostic'; let extracted = 0;
+  const app = harness({ current, pdf: proxy(), extract: async () => { extracted++; return { text: 'hidden underlying glyph text', complete: true }; } });
+  await app.showPdf(); await app.recoverPdfText(); app.renderText(); app.controls();
+  expect(extracted).toBe(0); expect(current.inspection.text).toBe('');
+  expect(current.inspection.text_error).toBe('retained diagnostic');
+  expect(app.el('text-content').textContent).toContain('源 ActualText 提取后的正文为空');
+  expect(app.el('text-content').textContent).not.toContain('扫描');
+  expect(app.el('search').disabled).toBe(true); expect(app.el('extract-pdf-text').disabled).toBe(true);
+});
+
+for (const evidence of ['unsupported', 'unknown', undefined]) {
+  test(`PDF ${String(evidence)} evidence allows provisional text but keeps warning and error through repeated completion`, async () => {
+    const current = owner(); current.inspection.pdf_actual_text = evidence;
+    current.inspection.text = ''; current.inspection.text_error = 'Original semantic/parser refusal';
+    const app = harness({ current, pdf: proxy(), extract: async () => ({ text: 'provisional ⽂本', complete: true }) });
+    for (let repeat = 0; repeat < 2; repeat++) {
+      await app.el('extract-pdf-text').dispatch('click');
+      expect(current.inspection.text).toBe('provisional ⽂本');
+      expect(current.inspection.pdf_actual_text).toBe(evidence);
+      expect(current.inspection.text_error).toBe('Original semantic/parser refusal');
+      expect(app.state().pdfTextSummary).toContain('临时字体正文');
+      expect(app.el('pdf-semantic-hint').hidden).toBe(false);
+      expect(app.el('pdf-semantic-hint').textContent).toContain('不能保证搜索或复制');
+      expect(app.el('extract-pdf-text').disabled).toBe(false);
+    }
+    await app.el('text-view').dispatch('click'); expect(app.notices.at(-1)[0]).toContain('临时字体正文');
+    app.el('search').value = '⽂本'; app.renderText(); expect(app.el('match-count').textContent).toBe('1 处');
+    expect(current.inspection.text_error).toBe('Original semantic/parser refusal');
+  });
+}
+
+test('PDF not_detected keeps ordinary successful recovery and error clearing', async () => {
+  const current = owner(); current.inspection.text = ''; current.inspection.text_error = 'Extraction failed';
+  const app = harness({ current, pdf: proxy() });
+  await app.el('extract-pdf-text').dispatch('click');
+  expect(current.inspection.text).toBe('recovered'); expect(current.inspection.text_error).toBeUndefined();
+  expect(current.inspection.pdf_actual_text).toBe('not_detected');
+  expect(app.state().pdfTextSummary).toBe('complete'); expect(app.el('pdf-semantic-hint').hidden).toBe(true);
+  expect(app.el('extract-pdf-text').disabled).toBe(false);
+});
+
+test('PDF unsupported canceled retry keeps prior accepted text and its semantic refusal', async () => {
+  const current = owner(); current.inspection.pdf_actual_text = 'unsupported'; current.inspection.text_error = 'Unsupported ActualText';
+  const pending = deferred(); let canceled;
+  const app = harness({ current, pdf: proxy(), extract: async (_, stop) => { canceled = stop; return pending.promise; } });
+  const run = app.el('extract-pdf-text').dispatch('click'); await app.el('stop-pdf-text').dispatch('click');
+  expect(canceled()).toBe(true); pending.resolve({ text: '', complete: false, stopped: true }); await run;
+  expect(current.inspection.text).toBe('retained Rust text'); expect(current.inspection.text_error).toBe('Unsupported ActualText');
+  expect(app.el('stop-pdf-text').hidden).toBe(true); expect(app.el('pdf-semantic-hint').hidden).toBe(false);
+  expect(app.notices.at(-1)[0]).toContain('超出支持范围'); expect(app.state().busy).toBe(false);
+});
+
+test('PDF extraction rejects late same-owner session changes before text, progress, summary and controls', async () => {
+  const pending = deferred(); let canceled, progress;
+  const current = owner(); current.inspection.pdf_actual_text = 'unsupported';
+  const app = harness({ current, pdf: proxy(), extract: async (_, stop, update) => { canceled = stop; progress = update; return pending.promise; } });
+  const run = app.recoverPdfText(); app.setToken('2'); app.el('status').textContent = 'new session';
+  app.el('stop-pdf-text').hidden = false; progress(1);
+  expect(canceled()).toBe(true); pending.resolve({ text: 'late font text', complete: true }); await run;
+  expect(current.inspection.text).toBe('retained Rust text'); expect(app.el('status').textContent).toBe('new session');
+  expect(app.state().pdfTextSummary).toBeNull(); expect(app.notices).toHaveLength(0); expect(app.el('stop-pdf-text').hidden).toBe(false);
+});
+
+test('PDF newer extraction attempt owns repeated same-source completion and stop controls', async () => {
+  const first = deferred(), second = deferred(); const pending = [first, second]; const callbacks = [];
+  const app = harness({ pdf: proxy(), extract: async (_, stop, progress) => { callbacks.push({ stop, progress }); return pending.shift().promise; } });
+  const earlier = app.recoverPdfText(), newer = app.recoverPdfText();
+  expect(callbacks[0].stop()).toBe(true); expect(callbacks[1].stop()).toBe(false);
+  app.el('status').textContent = 'new extraction'; callbacks[0].progress(1);
+  first.resolve({ text: 'obsolete', complete: true }); await earlier;
+  expect(app.state().current.inspection.text).toBe('retained Rust text'); expect(app.el('status').textContent).toBe('new extraction');
+  expect(app.el('stop-pdf-text').hidden).toBe(false); expect(app.notices).toHaveLength(0);
+  second.resolve({ text: 'latest', complete: true }); await newer;
+  expect(app.state().current.inspection.text).toBe('latest'); expect(app.el('stop-pdf-text').hidden).toBe(true);
+});
+
+test('PDF applied evidence appearing before an asynchronous provisional result blocks its commit', async () => {
+  const pending = deferred(), current = owner(); current.inspection.pdf_actual_text = 'unknown';
+  const app = harness({ current, pdf: proxy(), extract: () => pending.promise });
+  const run = app.recoverPdfText(); current.inspection.pdf_actual_text = 'applied'; current.inspection.text = '真实语义';
+  pending.resolve({ text: 'wrong glyph text', complete: true }); await run;
+  expect(current.inspection.text).toBe('真实语义'); expect(app.state().pdfTextSummary).toBeNull();
+  expect(app.notices.at(-1)[0]).toContain('受支持的 ActualText');
+});
+
+test('PDF semantic warning follows committed source identity and survives canceled or failed opens', async () => {
+  for (const fails of [false, true]) {
+    const current = owner(); current.inspection.pdf_actual_text = 'unsupported';
+    const app = harness({ current, pdf: proxy(), invoke: async () => { if (fails) throw new Error('failed open'); return null; } });
+    app.controls(); const message = app.el('pdf-semantic-hint').textContent;
+    await app.openDocument(); expect(app.el('pdf-semantic-hint').textContent).toBe(message); expect(app.state().current).toBe(current);
+  }
+  const next = owner('2'); const app = harness({ invoke: async command => command === 'open_document' ? next : Uint8Array.of(1).buffer,
+    task: { promise: Promise.resolve(proxy()), async destroy() {} } });
+  app.state().current.inspection.pdf_actual_text = 'unsupported'; app.controls();
+  expect(app.el('pdf-semantic-hint').hidden).toBe(false); await app.openDocument();
+  expect(app.state().current).toBe(next); expect(app.el('pdf-semantic-hint').hidden).toBe(true);
+  expect(app.state().pdfTextSummary).toBeNull();
+  await app.prepareEditorWorkspace(); expect(app.el('pdf-semantic-hint').hidden).toBe(true);
 });

@@ -1,3 +1,8 @@
 * text=auto
+*.pdf binary
 vendor/office_oxide/** -text
+vendor/pdf-extract/** -text
+# Preserve verbatim upstream whitespace; local ActualText code is checked normally.
+vendor/pdf-extract/src/glyphlist-extended.txt whitespace=-blank-at-eol
+vendor/pdf-extract/src/lib.rs whitespace=-blank-at-eol
 *.patch text eol=lf

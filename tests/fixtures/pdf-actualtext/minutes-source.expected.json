@@ -1,0 +1,24 @@
+{
+  "nonempty_paragraphs": [
+    "项目会议纪要 MinutesSource",
+    "会议时间：2026年10月16日。参会人员：林舟、陈悦。讨论事项：文档编辑、保存与恢复。",
+    "行动安排：林舟整理测试结果，陈悦核对原始文件。请在周五前完成复核，并保留所有原件。"
+  ],
+  "tables": [],
+  "page_breaks": 0,
+  "page_points": [
+    595.28,
+    841.89
+  ],
+  "paragraph_styles": [
+    "Heading1",
+    "Normal",
+    "Normal"
+  ],
+  "margins_points": [
+    72,
+    72,
+    72,
+    72
+  ]
+}

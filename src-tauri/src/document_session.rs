@@ -171,6 +171,7 @@ mod tests {
                 text: "retained text".into(),
                 warnings: vec![],
                 text_error: None,
+                pdf_actual_text: None,
             },
             authored: None,
             workbook: None,

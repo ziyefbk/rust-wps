@@ -1,4 +1,4 @@
-use crate::{Inspection, PdfSourceIdentity};
+use crate::{Inspection, PdfActualTextStatus, PdfSourceIdentity};
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
 use std::{
@@ -28,8 +28,18 @@ pub(super) fn inspect_with_identity(
     allow_text_failure: bool,
     started: Instant,
 ) -> Result<(Inspection, PdfSourceIdentity)> {
-    inspect_identity_with_extractor(reader, allow_text_failure, started, |source| {
-        pdf_extract::extract_text_from_mem(source).map_err(Into::into)
+    inspect_identity_with_semantics(reader, allow_text_failure, started, |source| {
+        let result = pdf_extract::extract_text_from_mem_with_actual_text(source)?;
+        let status = match result.status {
+            pdf_extract::ActualTextStatus::NotDetected => PdfActualTextStatus::NotDetected,
+            pdf_extract::ActualTextStatus::Applied => PdfActualTextStatus::Applied,
+            pdf_extract::ActualTextStatus::Unknown => PdfActualTextStatus::Unknown,
+        };
+        Ok(TextExtraction {
+            text: result.text,
+            status,
+            diagnostic: result.diagnostic,
+        })
     })
 }
 
@@ -44,25 +54,58 @@ fn inspect_with_extractor(
         .map(|(report, _)| report)
 }
 
+struct TextExtraction {
+    text: String,
+    status: PdfActualTextStatus,
+    diagnostic: Option<String>,
+}
+
+#[cfg(test)]
 fn inspect_identity_with_extractor(
     reader: impl Read,
     allow_text_failure: bool,
     started: Instant,
     extract: impl FnOnce(&[u8]) -> Result<String> + UnwindSafe,
 ) -> Result<(Inspection, PdfSourceIdentity)> {
+    inspect_identity_with_semantics(reader, allow_text_failure, started, |source| {
+        extract(source).map(|text| TextExtraction {
+            text,
+            status: PdfActualTextStatus::NotDetected,
+            diagnostic: None,
+        })
+    })
+}
+
+fn inspect_identity_with_semantics(
+    reader: impl Read,
+    allow_text_failure: bool,
+    started: Instant,
+    extract: impl FnOnce(&[u8]) -> Result<TextExtraction> + UnwindSafe,
+) -> Result<(Inspection, PdfSourceIdentity)> {
     // Read/validation failures (including reader panics) are not extraction
     // failures and must never turn into preview candidates.
     let source = read_source(reader)?;
     let identity = source_identity(&source);
     let bytes = identity.bytes;
-    let mut text_error = None;
+    let text_error;
+    let mut actual_text = PdfActualTextStatus::Unknown;
     // Only the extractor sees this boundary: immutable validated bytes and
     // locally owned parser state. No shared mutable state is asserted safe.
     // The normal panic hook may still report to stderr. This catches unwinds,
     // not aborts, OOM, stack overflows, hangs, or excessive parser resources.
     let text = match catch_unwind(|| extract(&source)) {
-        Ok(Ok(text)) => text,
+        Ok(Ok(result)) => {
+            actual_text = result.status;
+            text_error = result.diagnostic;
+            result.text
+        }
         Ok(Err(error)) if allow_text_failure => {
+            if matches!(
+                error.downcast_ref::<pdf_extract::OutputError>(),
+                Some(pdf_extract::OutputError::ActualTextUnsupported(_))
+            ) {
+                actual_text = PdfActualTextStatus::Unsupported;
+            }
             text_error = Some(format!("{error}"));
             String::new()
         }
@@ -82,6 +125,12 @@ fn inspect_identity_with_extractor(
             .into(),
         "Scanned PDF requires OCR, which is not implemented".into(),
     ];
+    if matches!(
+        actual_text,
+        PdfActualTextStatus::Unknown | PdfActualTextStatus::Unsupported
+    ) {
+        warnings.push("PDF ActualText semantics could not be verified; alternative glyph extraction is provisional".into());
+    }
     if text.trim().is_empty() {
         warnings.push("No text extracted; this does not prove the document is empty".into());
     }
@@ -94,6 +143,7 @@ fn inspect_identity_with_extractor(
             text,
             warnings,
             text_error,
+            pdf_actual_text: Some(actual_text),
         },
         identity,
     ))
