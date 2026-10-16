@@ -1,5 +1,12 @@
 # dot 接手说明
 
+## Windows Word 单页原生闭环连续两次通过（2026-10-16）
+
+[第三次 Windows 运行 38895615373](https://github.com/ziyefbk/rust-wps/actions/runs/38895615373) 在同一提交 `93972c7af5a4b010f73b0823ef1bea94de40110d` 的 attempt 1 / 2 连续通过全部步骤（含清理）：实际 Tauri / WebView2 首次启动绑定成功且未 reload，真实 Save IPC → 独立 DOCX 读取 → worker 重开 → 原生 PDF 输出，以及重复保存拒绝覆盖、文件 / 草稿不变检查通过。范围是一页标准正文与三个标题探针；不计为完整回归或日常可用完成。见 [Windows 原生有界验收](WINDOWS_WORD_NATIVE_ACCEPTANCE.md)。
+
+两次先前失败记录保留；两次有界通过仍不能证明早先启动失败的根因或一般稳定性，二进制散列不同也不声明可复现构建。文件选择覆盖、隔离草稿 / WebView2 profile 仍为测试条件；无 artifact 上传或截图 / PDF 独立目视，系统对话框、IME、剪贴板、默认 AppData 恢复、安装包与一般 Office 保真仍未验收。
+
+
 ## Windows Word 原生门禁准备（2026-10-16）
 
 新增仅 `native-smoke` 可用的 DOCX 输出路径覆盖，原生脚本改为点击真实 Save / Tauri IPC，并检查独立 DOCX 读取、重开及重复保存拒绝覆盖。新增单一标准 Windows 托管作业，60 分钟上限、无缓存 / artifact；仅工作流文件的 main 推送及手动触发。本地仅静态检查，Windows 实际运行尚未完成，不声明原生接受；系统对话框、IME、剪贴板、默认 AppData 恢复与完整保真仍开放。见 [Windows 原生有界验收](WINDOWS_WORD_NATIVE_ACCEPTANCE.md)。

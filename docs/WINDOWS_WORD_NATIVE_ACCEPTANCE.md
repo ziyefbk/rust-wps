@@ -1,5 +1,37 @@
 # Windows Word 原生有界验收
 
+## 第三次托管运行及同提交复跑：单页原生闭环连续两次通过（2026-10-16）
+
+[运行 38895615373](https://github.com/ziyefbk/rust-wps/actions/runs/38895615373)，[提交 93972c7af5a4b010f73b0823ef1bea94de40110d](https://github.com/ziyefbk/rust-wps/commit/93972c7af5a4b010f73b0823ef1bea94de40110d)，attempt 1 job `116955251837` 与未改产品代码的 attempt 2 job `116958800901`：两次全部步骤成功，原生 acceptance 步骤均包含清理且结果为 `success`，不是仅依据清理前写入的 report.json。下方准备与前两次失败章节保留各自当时状态；本节为最新的有界结果。
+
+- Windows MSVC 的实际 Rust CLI 与 Tauri debug / native-smoke 构建通过；实际入口是生产 dist 的 `http://tauri.localhost/`，不是 Vite 模拟 IPC 页面。CLI 仅构建 / 记录散列，不代写本轮 Save 的 DOCX
+- 两次均为 `initialReady=true`、`diagnosticReload=false`；实际新建处理器存在后首次点击进入编辑，没有用重载掩盖启动失败。首次通过的启动事件仅记录正常资源响应；两次通过均未依靠 reload，仍不能反推早先启动失败的根因或宣称一般稳定性
+- 一页 `standard-v2` 探针：正文 `BodyProbe 中文`、三个英文标题与一个空尾段；实际键盘 / 样式下拉、CSS、真实 Rust 草稿后端、Save 按钮 / Tauri IPC 均通过。11 / 18 / 15 / 13 pt 默认字号与黑色保持，无显式字号或颜色标记
+- 第二次 Save 拒绝已有目标，DOCX 字节不变且编辑器恢复；独立 python-docx 完整正文 / 标题 / 默认字体 / 字号、A4 / 四边 25.4 mm 检查通过；实际 Open / worker 重开保持正文与样式
+- 原生 WebView2 PDF 输出与独立 pypdf 测量通过：一页约 594.960 × 841.920 pt，全文含中文，Arial / Microsoft YaHei 字体资源、受测 Latin 字号 / 黑色 / 左边界符合原阈值；打印不改草稿或 DOCX。没有放宽既有断言或作 Unicode 规范化
+
+实际工具：Rust 1.88.0 / LLVM 20.1.5，Node 22.14.0，Python 3.12.10，python-docx 1.1.2，pypdf 6.10.0，WebView2 131.0.2903.86；runner 映像与字体文件散列见 job log。没有因 WebView2 版本推测缺失 API：该次探针显示 `Promise.try` 存在，而 Map `getOrInsertComputed` / Uint8Array `fromBase64` 缺失；本次 Word 路径通过不证明这些 PDF.js 后续路径可用。
+
+attempt 1 证据身份：
+
+- 桌面二进制 SHA-256：`e3ce39b3312e8f8174e08efe5cfc97e10aea9ded777e2e21f6c2382a3c1227f5`
+- 根 CLI SHA-256：`32e9dda95c9edc429f7bf4f5f82fb807bcdbd3b738fe6ae53f607fe47e442258`
+- 输出 DOCX SHA-256：`cb294ca3cf42081dac9364fb6795e58592b171b188f338dedbf311e50b9f2562`
+- 保存的完整 job log SHA-256：`55bdd1a74b3ad7c5801da38d9444395b8d19fbee1e9cbf05df5e5fc0aa68043f`
+
+同提交 attempt 2 的工具版本相同，实际 Save / 拒绝覆盖 / 独立读取 / 重开 / 原 PDF 阈值及清理再次通过；输出 DOCX SHA-256 与 attempt 1 相同。两次是同一场景的重复执行，不计为新增不同测试：
+
+- attempt 2 桌面二进制 SHA-256：`b0354c9004ff93536037f9905d3fb95b6acd25366486089acc41517c7f29e5b6`
+- attempt 2 根 CLI SHA-256：`63530f5235a9f9439cd41a093cb535aa6a2fe7effe7c146c68a6934dcfa7670c`
+- attempt 2 完整 job log SHA-256：`a96ca8cb1654fca5b12bcf1728e401d6c3ec1af71df012933b5d7b528ad6b0d5`
+
+两轮二进制散列不同，未建立可复现构建；保留各自真实身份，不把同一源码等同相同二进制。
+
+接受范围仅为上述单页标准样式的原生闭环，不是完整回归、生产包或日常可用里程碑完成。路径选择仍为 smoke-only 覆盖，草稿及 WebView2 profile 是隔离目录；未验收系统文件 / 打印对话框、IME、剪贴板、默认 AppData 恢复、安装包、真实 Office 消费者或一般分页 / 字体替代保真。未上传 artifacts，因而没有可下载的本轮 DOCX / PDF / 截图，也未做独立视觉检查；日志中的文字 / 几何与文件散列不能替代目视。
+
+本次结果更新只改文档，不改变 workflow、不触发额外 Windows 作业，不重复计算历史 Rust / 前端测试。
+
+
 ## 状态与边界
 
 本轮准备可运行的 Windows 原生门禁；本地 Linux 环境只做静态检查，尚无本轮 Windows 运行结果，不能称原生通过。既有发布 44 / 43 的结果与失败记录不变。
