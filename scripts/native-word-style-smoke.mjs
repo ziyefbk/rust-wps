@@ -49,7 +49,11 @@ const child = spawn(desktop, [], {
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-debugging-address=127.0.0.1`,
   },
 });
-let processError, log = '', browser, page;
+let processError, log = '', browser, page, cdp;
+const startup = { initialReady: false, diagnosticReload: false, events: [] };
+const recordRuntime = (kind, detail) => {
+  if (startup.events.length < 300) startup.events.push({ kind, time: new Date().toISOString(), detail: String(detail).slice(0, 4000) });
+};
 child.on('error', error => { processError = error; });
 for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { log = (log + data.toString()).slice(-65536); });
 const childClosed = new Promise(resolve => child.once('close', resolve));
@@ -121,14 +125,72 @@ try {
   runtime.webview2 = browser.version();
   const context = browser.contexts()[0];
   page = context.pages()[0] ?? await context.waitForEvent('page', { timeout: 10000 });
-  page.on('pageerror', error => { log += `\nPage error: ${error.stack ?? error}\n`; });
+  page.on('pageerror', error => recordRuntime('pageerror', error.stack ?? error));
+  page.on('console', message => recordRuntime(`console:${message.type()}`, message.text()));
+  page.on('requestfailed', request => recordRuntime('requestfailed', `${request.url()} ${request.failure()?.errorText}`));
+  page.on('response', response => {
+    const type = response.request().resourceType();
+    if (type === 'document' || type === 'script' || response.status() >= 400) {
+      const headers = response.headers();
+      recordRuntime('response', JSON.stringify({ url: response.url(), status: response.status(), type,
+        contentType: headers['content-type'], csp: headers['content-security-policy'] }));
+    }
+  });
+  cdp = await context.newCDPSession(page);
+  cdp.on('Log.entryAdded', ({ entry }) => recordRuntime(`cdp-log:${entry.level}`, JSON.stringify(entry)));
+  cdp.on('Runtime.exceptionThrown', ({ exceptionDetails }) => recordRuntime('cdp-exception', JSON.stringify(exceptionDetails)));
+  await cdp.send('Log.enable'); // Also surfaces entries buffered before CDP attached.
+  await cdp.send('Runtime.enable');
+  await page.addInitScript(() => {
+    window.__nativeSmokeStartup = [];
+    const record = event => { if (window.__nativeSmokeStartup.length < 100) window.__nativeSmokeStartup.push(event); };
+    window.addEventListener('error', event => record({ kind: 'error', message: event.message?.slice(0, 4000), filename: event.filename, line: event.lineno }));
+    window.addEventListener('unhandledrejection', event => record({ kind: 'unhandledrejection', message: String(event.reason).slice(0, 4000) }));
+    window.addEventListener('securitypolicyviolation', event => record({ kind: 'csp', directive: event.effectiveDirective, blockedURI: event.blockedURI }));
+  });
+  const bootState = () => page.evaluate(() => ({
+    url: location.href, readyState: document.readyState,
+    scripts: [...document.scripts].map(script => ({ src: script.src, type: script.type })),
+    cspMeta: [...document.querySelectorAll('meta[http-equiv="Content-Security-Policy"]')].map(meta => meta.content),
+    resources: performance.getEntriesByType('resource').slice(0, 100).map(entry => ({ name: entry.name, duration: entry.duration, initiatorType: entry.initiatorType })),
+    pdfjsVersion: globalThis.pdfjsLib?.version ?? null,
+    tauriInvoke: typeof window.__TAURI_INTERNALS__?.invoke,
+    apiSupport: { promiseTry: typeof Promise.try, promiseWithResolvers: typeof Promise.withResolvers,
+      mapGetOrInsertComputed: typeof Map.prototype.getOrInsertComputed,
+      uint8FromBase64: typeof Uint8Array.fromBase64, urlParse: typeof URL.parse },
+    startupEvents: window.__nativeSmokeStartup ?? [],
+  }));
+  const hasNewDocumentHandler = async () => {
+    const { result } = await cdp.send('Runtime.evaluate', { expression: 'document.querySelector("#new-document")', objectGroup: 'smoke-readiness' });
+    try {
+      if (!result.objectId || result.subtype === 'null') return false;
+      const { listeners } = await cdp.send('DOMDebugger.getEventListeners', { objectId: result.objectId });
+      return listeners.some(listener => listener.type === 'click');
+    } finally { await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'smoke-readiness' }); }
+  };
   // This test owns an isolated draft. Accept only the app's unsaved-draft
   // confirmation when opening the DOCX generated below.
   page.on('dialog', async dialog => {
     if (dialog.type() === 'confirm' && dialog.message().includes('保存本地草稿后离开')) await dialog.accept();
     else { log += `\nUnexpected dialog: ${dialog.type()} ${dialog.message()}\n`; await dialog.dismiss(); }
   });
+  await page.locator('#new-document').waitFor({ state: 'attached', timeout: 15000 });
   await page.waitForLoadState('domcontentloaded');
+  // Static HTML renders this button enabled before application handlers exist.
+  // DOMContentLoaded waits for the entry module; require its actual click handler.
+  startup.initialState = await bootState();
+  startup.initialReady = await hasNewDocumentHandler();
+  if (!startup.initialReady) {
+    // No edit has happened. Replay the same real app URL once with diagnostic
+    // listeners installed before scripts, solely to capture missed boot errors.
+    // Recovery here NEVER converts the original failed launch into a pass.
+    startup.diagnosticReload = true;
+    await page.reload({ waitUntil: 'load', timeout: 15000 });
+    startup.reloadedState = await bootState();
+    startup.reloadedReady = await hasNewDocumentHandler();
+    throw new Error('Initial native application did not bind New Document; diagnostic reload captured startup evidence (not an acceptance retry)');
+  }
+  assert.equal(startup.initialState.tauriInvoke, 'function', 'Native Tauri invoke bridge is missing');
   await page.locator('#new-document').click();
   await page.locator('.tiptap').click();
   await page.keyboard.type('BodyProbe ');
@@ -266,7 +328,7 @@ try {
   assert.equal(hash(readFileSync(docxPath)), docxHash, 'Opening or printing changed the DOCX');
   const report = {
     nativeWebView2: true, nativeSaveIpc: true, repeatSaveRejectsOverwrite: true,
-    inputViaKeyboardAndStyleDropdown: true, profile, runtime,
+    inputViaKeyboardAndStyleDropdown: true, profile, runtime, startup,
     draftVersion: 2, trailingEmptyParagraphs: draft.document.content.length - probes.length,
     noExplicitFontSizeOrTextColor: true, workerReopenPreservesProfile: true,
     printLeavesDraftUnchanged: true, sourceDocxUnchanged: true, docxHash,
@@ -281,7 +343,8 @@ try {
     const state = await page.evaluate(() => ({ status: document.querySelector('#status')?.textContent,
       notice: document.querySelector('#notice')?.textContent, title: document.querySelector('#title')?.textContent,
       draftState: document.querySelector('#draft-state')?.textContent,
-      editor: document.querySelector('.tiptap')?.outerHTML })).catch(failure => ({ error: String(failure) }));
+      editor: document.querySelector('.tiptap')?.outerHTML, url: location.href, readyState: document.readyState,
+      startupEvents: window.__nativeSmokeStartup ?? [] })).catch(failure => ({ error: String(failure) }));
     saveReport('failure-state.json', state);
     console.error(JSON.stringify(state));
     await page.screenshot({ path: path.join(directory, 'failure.png'), fullPage: true }).catch(() => {});
@@ -306,6 +369,8 @@ try {
     process.exitCode = 1;
     log += '\nFAIL: owned process did not close within cleanup deadline\n';
   }
+  saveReport('startup-diagnostics.json', startup);
+  console.log(JSON.stringify({ startup }));
   writeFileSync(path.join(directory, 'native-process.log'), log);
   console.log(JSON.stringify({ nativeProcessLog: log, runtime }));
 }

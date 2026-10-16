@@ -58,3 +58,11 @@ Tauri CLI 执行生产前端 `npm run build` 并启用 custom protocol；产物�
 [首次运行 38893427886](https://github.com/ziyefbk/rust-wps/actions/runs/38893427886) 的源码为 `7969e31f3221763bb379974f0c20318f53f55eaf`。Rust 1.88.0 的根 CLI 已实际构建成功；随后 Windows 上 `npm exec -- tauri build ... -- --locked` 未将分隔符保留至 Tauri，报 `unexpected argument '--locked' found`。Tauri 桌面构建与原生 smoke 均未执行，不能称 Save / Open / PDF 验收通过。
 
 命令修复直接用 Node 调用 lockfile 安装的 `@tauri-apps/cli/tauri.js`，保留 `-- --locked`，不经 npm 的命令包装，不删除锁定要求。轻量本地验证调用实际 Tauri 2.11.5，覆盖 beforeBuild 为记录标记、runner 为只记录参数后退出 86 的脚本，观察到精确参数 `build --locked --bins --features native-smoke,tauri/custom-protocol`；没有运行 Cargo 编译。该验证只证明参数运输和 Tauri 构建钩子，不证明 Windows 构建；本地 Linux 的原 npm 命令也能正常运输，因此不能称本地复现 Windows 故障。修复后的托管运行仍需独立核验。
+
+## 第二次托管运行：构建通过，初始页面未进入编辑（2026-10-16）
+
+[运行 38894216388](https://github.com/ziyefbk/rust-wps/actions/runs/38894216388)，源码 `a6a87c7da74363f7916d0b2f4f08b7b920222799`：Rust CLI 与实际 Tauri debug/native-smoke 构建均成功，CDP 连接实际 WebView2 `131.0.2903.86`。点击新建按钮后 30 秒未出现 `.tiptap`，仍为初始“文档工作区 / 就绪”；Save、独立 DOCX、重开与 PDF 未执行。原进程日志为空，原 pageerror 监听可能错过连接前的启动异常。
+
+静态 HTML 中新建按钮一开始可点击，而应用模块完成初始化才注册处理器，因此点击返回不能证明启动完成。源检查未证明某个 PDF.js 新 API 导致启动失败；其部分新 API 出现在后续 PDF 操作中，不能仅依据 WebView2 版本归因。
+
+脚本现在先启用 CDP Log / Runtime 与 console / pageerror / requestfailed 诊断，记录真实页面 URL、脚本 / 资源、CSP meta、桥接及关键 API 支持状态；等待实际页面 DOMContentLoaded 后，用 CDP 检查真实新建 click 处理器，再进行原操作。初次启动未绑定处理器时，仅在尚未编辑前对同一真实应用地址做一次带预加载诊断监听的 reload，记录异常 / CSP 与是否恢复；即使 reload 恢复也仍判原始启动门禁失败，不转为接受。未加 polyfill、模拟 Tauri、绕过 CSP、放宽文字或 PDF 断言，也没有延长原编辑超时。新增诊断只改善定位，本轮原生功能结果仍待托管重跑。

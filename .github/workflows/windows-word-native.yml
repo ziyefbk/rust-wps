@@ -85,7 +85,7 @@ jobs:
         run: |
           if (Test-Path tmp/native-word-style) {
             Get-ChildItem tmp/native-word-style -Recurse -File | Where-Object {
-              $_.Name -in @('report.json', 'failure-state.json', 'docx-inspection.json', 'pdf-inspection.json', 'native-process.log')
+              $_.Name -in @('report.json', 'failure-state.json', 'docx-inspection.json', 'pdf-inspection.json', 'native-process.log', 'startup-diagnostics.json')
             } | ForEach-Object {
               Write-Output "EVIDENCE $($_.FullName)"
               Get-Content -LiteralPath $_.FullName -TotalCount 1500
